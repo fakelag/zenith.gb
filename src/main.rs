@@ -32,6 +32,7 @@ struct CPU {
     hl: u16,
     sp: u16,
     pc: u16,
+    cycles: u64,
 }
 
 impl Display for CPU {
@@ -47,6 +48,7 @@ impl Display for CPU {
             value = self.hl, high = get_high(self.hl), low = get_low(self.hl))?;
         writeln!(f, "sp={value:#06x} [{value:016b}]", value = self.sp)?;
         writeln!(f, "pc={value:#06x} [{value:016b}]", value = self.pc)?;
+        writeln!(f, "cycles={value}", value = self.cycles)?;
         Ok(())
     }
 }
@@ -60,6 +62,7 @@ impl CPU {
             hl: 0,
             sp: 0,
             pc: 0x100,
+            cycles: 0,
         }
     }
 }
@@ -125,6 +128,7 @@ impl Emu {
                     let low = self.bus_read(self.cpu.pc + 1);
                     let high = self.bus_read(self.cpu.pc + 2);
                     self.cpu.pc = value(high, low);
+                    self.cpu.cycles += 4;
                 }
                 /*
                     0xe  [00 001 110]
@@ -144,6 +148,7 @@ impl Emu {
 
                     self.write_r8(reg, n8);
                     self.cpu.pc += 2;
+                    self.cpu.cycles += if opcode == 0x36 { 3 } else { 2 };
                 }
                 _ => {
                     eprintln!("instruction not implemented: {:#x?}", opcode);
