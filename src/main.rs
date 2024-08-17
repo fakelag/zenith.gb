@@ -97,6 +97,24 @@ impl Emu {
         }
     }
 
+    fn write_r8(self: &mut Emu, r8_encoded: u8, val: u8) {
+        match r8_encoded {
+            0x7 => { set_high(&mut self.cpu.af, val); }
+            0x6 => {
+                // 0b110 writes to [HL] instead of a register
+                // https://gbdev.io/pandocs/CPU_Instruction_Set.html
+                self.bus_write(self.cpu.hl, val);
+            }
+            0x5 => { set_low(&mut self.cpu.hl, val); }
+            0x4 => { set_high(&mut self.cpu.hl, val); }
+            0x3 => { set_low(&mut self.cpu.de, val); }
+            0x2 => { set_high(&mut self.cpu.de, val); }
+            0x1 => { set_low(&mut self.cpu.bc, val); }
+            0x0 => { set_high(&mut self.cpu.bc, val); }
+            _ => { unreachable!() }
+        }
+    }
+
     fn run(self: &mut Emu) {
          loop {
             let opcode = self.bus_read(self.cpu.pc);
@@ -118,25 +136,13 @@ impl Emu {
                     0x26 [00 100 110]
                     0x36 [00 110 110]
                 */
-                0xE | 0x1E | 0x2E | 0x3E | 0x06 | 0x16 | 0x26 /* | 0x36 */ => {
+                0xE | 0x1E | 0x2E | 0x3E | 0x06 | 0x16 | 0x26 | 0x36 => {
                     // LD r, n8
                     // note: technically & 0x7 is not required as high 2 bits are always 0 for LD r, n8
                     let reg = (opcode >> 3) & 0x7;
                     let n8 = self.bus_read(self.cpu.pc + 1);
 
-                    match reg {
-                        0x7 => { set_high(&mut self.cpu.af, n8); }
-                        // 0x6 => { set_high(&mut self.cpu.af, n8); }
-                        0x5 => { set_low(&mut self.cpu.hl, n8); }
-                        0x4 => { set_high(&mut self.cpu.hl, n8); }
-                        0x3 => { set_low(&mut self.cpu.de, n8); }
-                        0x2 => { set_high(&mut self.cpu.de, n8); }
-                        0x1 => { set_low(&mut self.cpu.bc, n8); }
-                        0x0 => { set_high(&mut self.cpu.bc, n8); }
-                        _ => { unreachable!() }
-                    }
-
-                    println!("{:#x?} - {:?}", opcode, (opcode >> 3) & 0x7);
+                    self.write_r8(reg, n8);
                     self.cpu.pc += 2;
                 }
                 _ => {
