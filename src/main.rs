@@ -137,8 +137,6 @@ impl Emu {
                     }
 
                     println!("{:#x?} - {:?}", opcode, (opcode >> 3) & 0x7);
-
-                    set_high(&mut self.cpu.af, n8);
                     self.cpu.pc += 2;
                 }
                 _ => {
