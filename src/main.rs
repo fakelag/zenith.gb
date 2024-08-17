@@ -1,15 +1,30 @@
 use std::{
-    fmt, fs::{self, File},
+    fmt::{self, Display}, fs::{self},
 };
 
-fn high(value: u16) -> u8 {
+fn get_high(value: u16) -> u8 {
     (value >> 8) as u8
 }
 
-fn low(value: u16) -> u8 {
+fn get_low(value: u16) -> u8 {
     (value & 0xFF) as u8
 }
 
+fn set_high(dst: &mut u16, value: u8) -> u16 {
+    *dst = (*dst & 0xFF) | (u16::from(value) << 8);
+    *dst
+}
+
+fn set_low(dst: &mut u16, value: u8) -> u16 {
+    *dst = (*dst & 0xFF00) | u16::from(value);
+    *dst
+}
+
+fn value(high: u8, low: u8) -> u16 {
+    (u16::from(high) << 8) | u16::from(low)
+}
+
+#[derive(Debug)]
 struct CPU {
     af: u16,
     bc: u16,
@@ -17,6 +32,23 @@ struct CPU {
     hl: u16,
     sp: u16,
     pc: u16,
+}
+
+impl Display for CPU {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "CPU")?;
+        writeln!(f, "af={value:#06x} [{value:016b}], a={high:#x?} [{high:08b}], f={low:#x?} [{low:08b}]",
+            value = self.af, high = get_high(self.af), low = get_low(self.af))?;
+        writeln!(f, "bc={value:#06x} [{value:016b}], b={high:#x?} [{high:08b}], c={low:#x?} [{low:08b}]",
+            value = self.bc, high = get_high(self.bc), low = get_low(self.bc))?;
+        writeln!(f, "de={value:#06x} [{value:016b}], d={high:#x?} [{high:08b}], e={low:#x?} [{low:08b}]",
+            value = self.de, high = get_high(self.de), low = get_low(self.de))?;
+        writeln!(f, "hl={value:#06x} [{value:016b}], h={high:#x?} [{high:08b}], l={low:#x?} [{low:08b}]",
+            value = self.hl, high = get_high(self.hl), low = get_low(self.hl))?;
+        writeln!(f, "sp={value:#06x} [{value:016b}]", value = self.sp)?;
+        writeln!(f, "pc={value:#06x} [{value:016b}]", value = self.pc)?;
+        Ok(())
+    }
 }
 
 impl CPU {
@@ -27,7 +59,7 @@ impl CPU {
             de: 0,
             hl: 0,
             sp: 0,
-            pc: 0,
+            pc: 0x100,
         }
     }
 }
@@ -66,7 +98,57 @@ impl Emu {
     }
 
     fn run(self: &mut Emu) {
+         loop {
+            let opcode = self.bus_read(self.cpu.pc);
+            println!("opcode={:#x?} [{:08b}]", opcode, opcode);
 
+            match opcode {
+                0xC3 => {
+                    let low = self.bus_read(self.cpu.pc + 1);
+                    let high = self.bus_read(self.cpu.pc + 2);
+                    self.cpu.pc = value(high, low);
+                }
+                /*
+                    0xe  [00 001 110]
+                    0x1e [00 011 110]
+                    0x2e [00 101 110]
+                    0x3e [00 111 110]
+                    0x6  [00 000 110]
+                    0x16 [00 010 110]
+                    0x26 [00 100 110]
+                    0x36 [00 110 110]
+                */
+                0xE | 0x1E | 0x2E | 0x3E | 0x06 | 0x16 | 0x26 /* | 0x36 */ => {
+                    // LD r, n8
+                    // note: technically & 0x7 is not required as high 2 bits are always 0 for LD r, n8
+                    let reg = (opcode >> 3) & 0x7;
+                    let n8 = self.bus_read(self.cpu.pc + 1);
+
+                    match reg {
+                        0x7 => { set_high(&mut self.cpu.af, n8); }
+                        // 0x6 => { set_high(&mut self.cpu.af, n8); }
+                        0x5 => { set_low(&mut self.cpu.hl, n8); }
+                        0x4 => { set_high(&mut self.cpu.hl, n8); }
+                        0x3 => { set_low(&mut self.cpu.de, n8); }
+                        0x2 => { set_high(&mut self.cpu.de, n8); }
+                        0x1 => { set_low(&mut self.cpu.bc, n8); }
+                        0x0 => { set_high(&mut self.cpu.bc, n8); }
+                        _ => { unreachable!() }
+                    }
+
+                    println!("{:#x?} - {:?}", opcode, (opcode >> 3) & 0x7);
+
+                    set_high(&mut self.cpu.af, n8);
+                    self.cpu.pc += 2;
+                }
+                _ => {
+                    eprintln!("instruction not implemented: {:#x?}", opcode);
+                    break;
+                }
+            }
+        }
+
+        println!("{}", self.cpu);
     }
 }
 
@@ -152,7 +234,7 @@ fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
 }
 
 fn main() {
-    let cart = Cartridge::new("rom/gb_helloworld.gb");
+    let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
 
     let mut emu = Emu::new(cart);
 
