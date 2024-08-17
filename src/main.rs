@@ -2,6 +2,74 @@ use std::{
     fmt, fs::{self, File},
 };
 
+fn high(value: u16) -> u8 {
+    (value >> 8) as u8
+}
+
+fn low(value: u16) -> u8 {
+    (value & 0xFF) as u8
+}
+
+struct CPU {
+    af: u16,
+    bc: u16,
+    de: u16,
+    hl: u16,
+    sp: u16,
+    pc: u16,
+}
+
+impl CPU {
+    fn new() -> Self {
+        Self {
+            af: 0,
+            bc: 0,
+            de: 0,
+            hl: 0,
+            sp: 0,
+            pc: 0,
+        }
+    }
+}
+
+struct Emu {
+    cart: Cartridge,
+    cpu: CPU,
+}
+
+impl Emu {
+    fn new(cart: Cartridge) -> Self {
+        Self { cart, cpu: CPU::new() }
+    }
+    fn bus_read(self: &Emu, address: u16) -> u8 {
+        // https://gbdev.io/pandocs/Memory_Map.html
+        match address {
+            0x0000..=0x7FFF => {
+                // @todo - Check cartridge type
+                return self.cart.data[usize::from(address)];
+            }
+            _ => {
+                todo!();
+            }
+        }
+    }
+
+    fn bus_write(self: &Emu, address: u16, data: u8) -> u8 {
+        match address {
+            0x0000..=0x7FFF => {
+                todo!()
+            }
+            _ => {
+                todo!();
+            }
+        }
+    }
+
+    fn run(self: &mut Emu) {
+
+    }
+}
+
 struct Cartridge {
     data: Vec<u8>,
     header: CartridgeHeader,
@@ -84,9 +152,12 @@ fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
 }
 
 fn main() {
-    let cartridge = Cartridge::new("rom/gb_helloworld.gb");
+    let cart = Cartridge::new("rom/gb_helloworld.gb");
 
-    let hdr = cartridge.header;
-    println!("header={:?}", hdr);
+    let mut emu = Emu::new(cart);
+
+    println!("bus_read={:?}", emu.bus_read(0x14D));
+
+    emu.run();
 
 }
