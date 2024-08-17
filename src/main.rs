@@ -1,10 +1,24 @@
 use std::{
-    fs::File,
-    io::{self, Seek},
+    fmt, fs::{self, File},
 };
 
-use byteorder::ReadBytesExt;
+struct Cartridge {
+    data: Vec<u8>,
+    header: CartridgeHeader,
+}
 
+impl Cartridge {
+    fn new(file_path: &str) -> Self {
+        let data = fs::read(file_path).unwrap();
+        let header = read_cartridge_header(&data).unwrap();
+        Self {
+            data,
+            header,
+        }
+    }
+}
+
+#[derive(Debug)]
 struct CartridgeHeader {
     entrypoint: [u8; 4],
     logo: [u8; 48],
@@ -18,7 +32,7 @@ struct CartridgeHeader {
     lic_code_old: u8,
     rom_version_mask: u8,
     header_checksum: u8,
-    global_checksum: [u8; 2], // note: big endian
+    global_checksum: [u8; 2],
     header_checksum_verified: u8,
 }
 
@@ -43,66 +57,36 @@ impl Default for CartridgeHeader {
     }
 }
 
-fn read_cartridge_header(mut rdr: impl ReadBytesExt + Seek) -> std::io::Result<CartridgeHeader> {
-    rdr.seek(io::SeekFrom::Start(0x100)).unwrap();
+fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
+    let mut hdr = CartridgeHeader::default();
 
-    let mut header = CartridgeHeader::default();
-    rdr.read_exact(&mut header.entrypoint).unwrap();
-    rdr.read_exact(&mut header.logo).unwrap();
-    rdr.read_exact(&mut header.title).unwrap();
-    rdr.read_exact(&mut header.lic_code_new).unwrap();
-    header.sgb_flag = rdr.read_u8().unwrap();
-    header.cart_type = rdr.read_u8().unwrap();
-    header.rom_size = rdr.read_u8().unwrap();
-    header.ram_size = rdr.read_u8().unwrap();
-    header.dst_code = rdr.read_u8().unwrap();
-    header.lic_code_old = rdr.read_u8().unwrap();
-    header.rom_version_mask = rdr.read_u8().unwrap();
-    header.header_checksum = rdr.read_u8().unwrap();
-    rdr.read_exact(&mut header.global_checksum).unwrap();
+    hdr.entrypoint = data[0x100..0x104].try_into().unwrap();
+    hdr.logo = data[0x104..0x134].try_into().unwrap();
+    hdr.title = data[0x134..0x144].try_into().unwrap();
+    hdr.lic_code_new = data[0x144..0x146].try_into().unwrap();
+    hdr.sgb_flag = data[0x146].try_into().unwrap();
+    hdr.cart_type = data[0x147].try_into().unwrap();
+    hdr.rom_size = data[0x148].try_into().unwrap();
+    hdr.ram_size = data[0x149].try_into().unwrap();
+    hdr.dst_code = data[0x14A].try_into().unwrap();
+    hdr.lic_code_old = data[0x14B].try_into().unwrap();
+    hdr.rom_version_mask = data[0x14C].try_into().unwrap();
+    hdr.header_checksum = data[0x14D].try_into().unwrap();
+    hdr.global_checksum = data[0x14E..0x150].try_into().unwrap();
 
     let mut checksum: u8 = 0;
-    rdr.seek(io::SeekFrom::Start(0x0134)).unwrap();
-    for _address in 0..0x19 {
-        let val = rdr.read_u8().unwrap();
-        checksum = checksum.wrapping_sub(val).wrapping_sub(1);
+    for address in 0x0134..0x014D {
+        checksum = checksum.wrapping_sub(data[address]).wrapping_sub(1);
     }
-    header.header_checksum_verified = checksum;
+    hdr.header_checksum_verified = checksum;
 
-    Ok(header)
+    Ok(hdr)
 }
 
 fn main() {
-    let file = File::open("rom/gb_helloworld.gb").unwrap();
+    let cartridge = Cartridge::new("rom/gb_helloworld.gb");
 
-    let hdr = read_cartridge_header(file).unwrap();
+    let hdr = cartridge.header;
+    println!("header={:?}", hdr);
 
-    println!("==== CARTRIDGE HEADER ====");
-    println!("entrypoint={:x?}", hdr.entrypoint);
-    println!("logo={:x?}", hdr.logo);
-    println!(
-        "title={:?}",
-        String::from_utf8(hdr.title.to_vec())
-            .unwrap_or_else(|err| format!("<Invalid UTF-8 title: {:?}>", err))
-    );
-    println!("lic_code_new={:x?}", hdr.lic_code_new);
-    println!("sgb_flag={:x?}", hdr.sgb_flag);
-    println!("cart_type={:x?}", hdr.cart_type);
-    println!("rom_size={:x?}", hdr.rom_size);
-    println!("ram_size={:x?}", hdr.ram_size);
-    println!("dst_code={:x?}", hdr.dst_code);
-    println!("lic_code_old={:x?}", hdr.lic_code_old);
-    println!("rom_version_mask={:#02x}", hdr.rom_version_mask);
-    println!("header_checksum={:#02x}", hdr.header_checksum);
-    println!("global_checksum={:x?}", hdr.global_checksum);
-    println!("==========================");
-    println!("Verified checksum={:#02x}", hdr.header_checksum_verified);
-    println!(
-        "match: {:?}",
-        if hdr.header_checksum_verified == hdr.header_checksum {
-            "OK"
-        } else {
-            "MISMATCH"
-        }
-    );
 }
