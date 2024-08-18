@@ -70,11 +70,14 @@ impl CPU {
 struct Emu {
     cart: Cartridge,
     cpu: CPU,
+    // Main memory - indexed directly
+    // https://gbdev.io/pandocs/Memory_Map.html
+    memory: [u8; 0xFFFF],
 }
 
 impl Emu {
     fn new(cart: Cartridge) -> Self {
-        Self { cart, cpu: CPU::new() }
+        Self { cart, cpu: CPU::new(), memory: [0; 0xFFFF] }
     }
     fn bus_read(self: &Emu, address: u16) -> u8 {
         // https://gbdev.io/pandocs/Memory_Map.html
@@ -83,18 +86,84 @@ impl Emu {
                 // @todo - Check cartridge type
                 return self.cart.data[usize::from(address)];
             }
-            _ => {
+            0x8000..=0x9FFF => {
+                // 8 KiB Video RAM (VRAM)
+                return self.memory[usize::from(address)];
+            }
+            0xA000..=0xBFFF => {
+                // 8 KiB External RAM - From cartridge, switchable bank if any
+                todo!("External ram bank (if cart_type supports it)");
+            }
+            0xC000..=0xCFFF => {
+                // 4 KiB Work RAM (WRAM)
+                return self.memory[usize::from(address)];
+            }
+            0xD000..=0xDFFF => {
+                // 4 KiB Work RAM (WRAM) - In CGB mode, switchable bank 1–7
+                return self.memory[usize::from(address)];
+            }
+            0xE000..=0xFDFF => {
+                // Echo RAM
+                todo!("Implement echo ram");
+            }
+            0xFE00..=0xFE9F => {
+                // OAM - https://gbdev.io/pandocs/OAM.html#object-attribute-memory-oam
+                return self.memory[usize::from(address)];
+            }
+            0xFEA0..=0xFEFF => {
+                // unused
+                unreachable!();
+            }
+            0xFF00..=0xFF7F => {
+                // IO ranges
+                return self.memory[usize::from(address)];
+            }
+            // IO ranges & HRAM https://gbdev.io/pandocs/Hardware_Reg_List.html
+            0xFF80..=0xFFFE => {
+                // HRAM
+                return self.memory[usize::from(address)];
+            }
+            0xFFFF => {
+                // Interrupt
                 todo!();
             }
         }
     }
 
-    fn bus_write(self: &Emu, address: u16, data: u8) -> u8 {
+    fn bus_write(self: &mut Emu, address: u16, data: u8) {
         match address {
             0x0000..=0x7FFF => {
-                todo!()
+                unreachable!()
             }
-            _ => {
+            0x8000..=0x9FFF => {
+                self.memory[usize::from(address)] = data;
+            }
+            0xA000..=0xBFFF => {
+                todo!("External ram bank (if cart_type supports it)");
+            }
+            0xC000..=0xCFFF => {
+                self.memory[usize::from(address)] = data;
+            }
+            0xD000..=0xDFFF => {
+                self.memory[usize::from(address)] = data;
+            }
+            0xE000..=0xFDFF => {
+                todo!("Implement echo ram");
+            }
+            0xFE00..=0xFE9F => {
+                self.memory[usize::from(address)] = data;
+            }
+            0xFEA0..=0xFEFF => {
+                // unused
+                unreachable!();
+            }
+            0xFF00..=0xFF7F => {
+                self.memory[usize::from(address)] = data;
+            }
+            0xFF80..=0xFFFE => {
+                self.memory[usize::from(address)] = data;
+            }
+            0xFFFF => {
                 todo!();
             }
         }
@@ -150,6 +219,12 @@ impl Emu {
                     self.cpu.pc += 2;
                     self.cpu.cycles += if opcode == 0x36 { 3 } else { 2 };
                 }
+                0xE0 => {
+                    let addr = u16::from(self.bus_read(self.cpu.pc + 1)) | 0xFF00;
+                    self.bus_write(addr, get_high(self.cpu.af));
+                    self.cpu.pc += 2;
+                    self.cpu.cycles += 3;
+                }
                 _ => {
                     eprintln!("instruction not implemented: {:#x?}", opcode);
                     break;
@@ -182,6 +257,7 @@ struct CartridgeHeader {
     entrypoint: [u8; 4],
     logo: [u8; 48],
     title: [u8; 16],
+    cgb_flag: u8,
     lic_code_new: [u8; 2],
     sgb_flag: u8,
     cart_type: u8,
@@ -201,6 +277,7 @@ impl Default for CartridgeHeader {
             entrypoint: [0; 4],
             logo: [0; 48],
             title: [0; 16],
+            cgb_flag: 0,
             lic_code_new: [0; 2],
             sgb_flag: 0,
             cart_type: 0,
@@ -222,6 +299,7 @@ fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
     hdr.entrypoint = data[0x100..0x104].try_into().unwrap();
     hdr.logo = data[0x104..0x134].try_into().unwrap();
     hdr.title = data[0x134..0x144].try_into().unwrap();
+    hdr.cgb_flag = data[0x143].try_into().unwrap();
     hdr.lic_code_new = data[0x144..0x146].try_into().unwrap();
     hdr.sgb_flag = data[0x146].try_into().unwrap();
     hdr.cart_type = data[0x147].try_into().unwrap();
@@ -239,6 +317,14 @@ fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
     }
     hdr.header_checksum_verified = checksum;
 
+    if hdr.header_checksum_verified != hdr.header_checksum {
+        panic!("Invalid header checksum");
+    }
+
+    if hdr.cgb_flag == 0xC0 {
+        panic!("Cartridge is CGB only");
+    }
+
     Ok(hdr)
 }
 
@@ -246,8 +332,6 @@ fn main() {
     let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
 
     let mut emu = Emu::new(cart);
-
-    println!("bus_read={:?}", emu.bus_read(0x14D));
 
     emu.run();
 
