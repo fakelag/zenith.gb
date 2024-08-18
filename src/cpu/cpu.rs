@@ -92,7 +92,7 @@ impl CPU {
         // }
     }
 
-    fn write_r8(emu: &mut Emu, r8_encoded: u8, val: u8) {
+    pub fn write_r8(emu: &mut Emu, r8_encoded: u8, val: u8) {
         match r8_encoded {
             0x7 => { util::set_high(&mut emu.cpu.af, val); }
             0x6 => {
@@ -106,6 +106,25 @@ impl CPU {
             0x2 => { util::set_high(&mut emu.cpu.de, val); }
             0x1 => { util::set_low(&mut emu.cpu.bc, val); }
             0x0 => { util::set_high(&mut emu.cpu.bc, val); }
+            _ => { unreachable!() }
+        }
+    }
+
+    pub fn read_r8(emu: &mut Emu, r8_encoded: u8) -> u8 {
+        match r8_encoded {
+            0x7 => { return util::get_high(emu.cpu.af); }
+            0x6 => {
+                todo!("verify");
+                // 0b110 writes to [HL] instead of a register
+                // https://gbdev.io/pandocs/CPU_Instruction_Set.html
+                return emu.bus_read(emu.cpu.hl);
+            }
+            0x5 => { return util::get_low(emu.cpu.hl); }
+            0x4 => { return util::get_high(emu.cpu.hl); }
+            0x3 => { return util::get_low(emu.cpu.de); }
+            0x2 => { return util::get_high(emu.cpu.de); }
+            0x1 => { return util::get_low(emu.cpu.bc); }
+            0x0 => { return util::get_high(emu.cpu.bc); }
             _ => { unreachable!() }
         }
     }

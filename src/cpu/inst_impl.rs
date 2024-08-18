@@ -2,14 +2,109 @@ use crate::emu::emu::Emu;
 use crate::cpu::*;
 use crate::util::util;
 
-use super::inst_def::Instruction;
+use super::inst_def::*;
 
-pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
+pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { emu.cpu.cycles += u64::from(instr.2); }
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    // if opcode == 0x1 {
-    //     return
-    // }
-    todo!("0x01, 0x02, 0x06, 0x08, 0x0A, 0x0E, 0x11, 0x12, 0x16, 0x1A, 0x1E, 0x21, 0x22, 0x26, 0x2A, 0x2E, 0x31, 0x32, 0x36, 0x3A, 0x3E, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0xE2, 0xEA, 0xF2, 0xF8, 0xF9, 0xFA");
+    match instr.1 {
+        OperandKind::R8 => {
+            // 0b01xxxyyy
+            match instr.0 {
+                OperandKind::R8 => {
+                    let src_reg = opcode & 0x7;
+                    let val = cpu::CPU::read_r8(emu, src_reg);
+                    let dst_reg = (opcode >> 3) & 0x7;
+
+                    // note: reg2reg will never trigger 0x6 write to [hl]
+                    cpu::CPU::write_r8(emu, dst_reg, val);
+                }
+                OperandKind::R16_Addr => {
+                    match opcode {
+                        0x22 /* LD [HL+] A */ => {
+                            emu.bus_write(emu.cpu.hl, util::get_high(emu.cpu.af));
+                            emu.cpu.hl += 1;
+                        }
+                        0x32 /* LD [HL-] A */ => {
+                            emu.bus_write(emu.cpu.hl, util::get_high(emu.cpu.af));
+                            emu.cpu.hl -= 1;
+                        }
+                        0x02 /* LD [BC] A */ => {
+                            emu.bus_write(emu.cpu.bc, util::get_high(emu.cpu.af));
+                        }
+                        0x12 /* LD [DE] A */ => {
+                            emu.bus_write(emu.cpu.de, util::get_high(emu.cpu.af));
+                        }
+                        /* LD [HL], r8 */ _ => {
+                            let src_reg = opcode & 0x7;
+                            let val = cpu::CPU::read_r8(emu, src_reg);
+                            // let dst_reg = (opcode >> 3) & 0x7; // dst_reg will always be 0x6
+                            emu.bus_write(emu.cpu.hl, val);
+                        }
+                    }
+                }
+                _ => { todo!("r8 -> instr.1") }
+            }
+        }
+        _ => todo!("instr.0 -> any")
+    }
+
+    emu.cpu.cycles += u64::from(instr.2);
+    return;
+
+    // 0x0E | 0x1E | 0x2E | 0x3E | 0x06 | 0x16 | 0x26 | 0x36
+
+    /*
+    /* 0x01 LD BC n16    | - - - - */  Instruction(OperandKind::R16,        OperandKind::Imm16,      3,   opcode_ld),
+    /* 0x02 LD [BC] A    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x06 LD B n8      | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm8,       2,   opcode_ld),
+    /* 0x08 LD [a16] SP  | - - - - */  Instruction(OperandKind::Imm16_Addr, OperandKind::R16,        5,   opcode_ld),
+    /* 0x0A LD A [BC]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x0E LD C n8      | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm8,       2,   opcode_ld),
+    /* 0x11 LD DE n16    | - - - - */  Instruction(OperandKind::R16,        OperandKind::Imm16,      3,   opcode_ld),
+    /* 0x12 LD [DE] A    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x16 LD D n8      | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm8,       2,   opcode_ld),
+    /* 0x1A LD A [DE]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x1E LD E n8      | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm8,       2,   opcode_ld),
+    /* 0x21 LD HL n16    | - - - - */  Instruction(OperandKind::R16,        OperandKind::Imm16,      3,   opcode_ld),
+    /* 0x22 LD [HL+] A   | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x26 LD H n8      | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm8,       2,   opcode_ld),
+    /* 0x2A LD A [HL+]   | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x2E LD L n8      | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm8,       2,   opcode_ld),
+    /* 0x31 LD SP n16    | - - - - */  Instruction(OperandKind::R16,        OperandKind::Imm16,      3,   opcode_ld),
+    /* 0x32 LD [HL-] A   | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x36 LD [HL] n8   | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::Imm8,       3,   opcode_ld),
+    /* 0x3A LD A [HL-]   | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x3E LD A n8      | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm8,       2,   opcode_ld),
+    /* 0x46 LD B [HL]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x4E LD C [HL]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x56 LD D [HL]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x5E LD E [HL]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x66 LD H [HL]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x6E LD L [HL]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0x70 LD [HL] B    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x71 LD [HL] C    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x72 LD [HL] D    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x73 LD [HL] E    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x74 LD [HL] H    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x75 LD [HL] L    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x77 LD [HL] A    | - - - - */  Instruction(OperandKind::R16_Addr,   OperandKind::R8,         2,   opcode_ld),
+    /* 0x7E LD A [HL]    | - - - - */  Instruction(OperandKind::R8,         OperandKind::R16_Addr,   2,   opcode_ld),
+    /* 0xE2 LD [C] A     | - - - - */  Instruction(OperandKind::R8_Addr,    OperandKind::R8,         2,   opcode_ld),
+    /* 0xEA LD [a16] A   | - - - - */  Instruction(OperandKind::Imm16_Addr, OperandKind::R8,         4,   opcode_ld),
+    /* 0xF8 LD HL SP+    | 0 0 H C */  Instruction(OperandKind::R16,        OperandKind::R16,        3,   opcode_ld),
+    /* 0xF9 LD SP HL     | - - - - */  Instruction(OperandKind::R16,        OperandKind::R16,        2,   opcode_ld),
+    /* 0xFA LD A [a16]   | - - - - */  Instruction(OperandKind::R8,         OperandKind::Imm16_Addr, 4,   opcode_ld),
+    */
+    
+    todo!("0x01, 0x02, 0x06, 0x08, 0x0A, 0x0E, 0x11, 0x12, 0x16, 0x1A,
+           0x1E, 0x21, 0x22, 0x26, 0x2A, 0x2E, 0x31, 0x32, 0x36, 0x3A,
+           0x3E, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+           0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52,
+           0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C,
+           0x5D, 0x5E, 0x5F, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+           0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70,
+           0x71, 0x72, 0x73, 0x74, 0x75, 0x77, 0x78, 0x79, 0x7A, 0x7B,
+           0x7C, 0x7D, 0x7E, 0x7F, 0xE2, 0xEA, 0xF2, 0xF8, 0xF9, 0xFA");
 }
 pub fn opcode_inc(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x03, 0x04, 0x0C, 0x13, 0x14, 0x1C, 0x23, 0x24, 0x2C, 0x33, 0x34, 0x3C"); }
 pub fn opcode_dec(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x05, 0x0B, 0x0D, 0x15, 0x1B, 0x1D, 0x25, 0x2B, 0x2D, 0x35, 0x3B, 0x3D"); }
