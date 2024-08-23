@@ -4,51 +4,48 @@ use crate::util::util;
 
 use super::inst_def::*;
 
-pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { emu.cpu.cycles += u64::from(instr.2); }
+pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    match instr.1 {
-        OperandKind::R8 => {
+
+    match (instr.src, instr.dst) {
+        (OperandKind::R8, OperandKind::R8) => {
             // 0b01xxxyyy
-            match instr.0 {
-                OperandKind::R8 => {
+            let src_reg = opcode & 0x7;
+            let val = cpu::CPU::read_r8(emu, src_reg);
+            let dst_reg = (opcode >> 3) & 0x7;
+
+            // note: reg2reg will never trigger 0x6 write to [hl]
+            debug_assert!(dst_reg != 0x6);
+
+            cpu::CPU::write_r8(emu, dst_reg, val);
+        }
+        (OperandKind::R8, OperandKind::R16_Addr) => {
+            match opcode {
+                0x22 /* LD [HL+] A */ => {
+                    emu.bus_write(emu.cpu.hl, util::get_high(emu.cpu.af));
+                    emu.cpu.hl += 1;
+                }
+                0x32 /* LD [HL-] A */ => {
+                    emu.bus_write(emu.cpu.hl, util::get_high(emu.cpu.af));
+                    emu.cpu.hl -= 1;
+                }
+                0x02 /* LD [BC] A */ => {
+                    emu.bus_write(emu.cpu.bc, util::get_high(emu.cpu.af));
+                }
+                0x12 /* LD [DE] A */ => {
+                    emu.bus_write(emu.cpu.de, util::get_high(emu.cpu.af));
+                }
+                /* LD [HL], r8 */ _ => {
                     let src_reg = opcode & 0x7;
                     let val = cpu::CPU::read_r8(emu, src_reg);
-                    let dst_reg = (opcode >> 3) & 0x7;
-
-                    // note: reg2reg will never trigger 0x6 write to [hl]
-                    cpu::CPU::write_r8(emu, dst_reg, val);
+                    // let dst_reg = (opcode >> 3) & 0x7; // dst_reg will always be 0x6
+                    emu.bus_write(emu.cpu.hl, val);
                 }
-                OperandKind::R16_Addr => {
-                    match opcode {
-                        0x22 /* LD [HL+] A */ => {
-                            emu.bus_write(emu.cpu.hl, util::get_high(emu.cpu.af));
-                            emu.cpu.hl += 1;
-                        }
-                        0x32 /* LD [HL-] A */ => {
-                            emu.bus_write(emu.cpu.hl, util::get_high(emu.cpu.af));
-                            emu.cpu.hl -= 1;
-                        }
-                        0x02 /* LD [BC] A */ => {
-                            emu.bus_write(emu.cpu.bc, util::get_high(emu.cpu.af));
-                        }
-                        0x12 /* LD [DE] A */ => {
-                            emu.bus_write(emu.cpu.de, util::get_high(emu.cpu.af));
-                        }
-                        /* LD [HL], r8 */ _ => {
-                            let src_reg = opcode & 0x7;
-                            let val = cpu::CPU::read_r8(emu, src_reg);
-                            // let dst_reg = (opcode >> 3) & 0x7; // dst_reg will always be 0x6
-                            emu.bus_write(emu.cpu.hl, val);
-                        }
-                    }
-                }
-                _ => { todo!("r8 -> instr.1") }
             }
         }
-        _ => todo!("instr.0 -> any")
+        _ => todo!("instruction encoding not implemented for {:#x?}", opcode)
     }
 
-    emu.cpu.cycles += u64::from(instr.2);
     return;
 
     // 0x0E | 0x1E | 0x2E | 0x3E | 0x06 | 0x16 | 0x26 | 0x36
@@ -131,18 +128,8 @@ pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xC0,
 pub fn opcode_pop(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xC1, 0xD1, 0xE1, 0xF1"); }
 
 pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    /*
-        /* 0xC2 JP NZ a16    | - - - - */  Instruction(OperandKind::Flag_NZ,    OperandKind::Imm16_Addr, 4,   opcode_jp),
-        /* 0xC3 JP a16       | - - - - */  Instruction(OperandKind::Imm16_Addr, OperandKind::None,       4,   opcode_jp),
-        /* 0xCA JP Z a16     | - - - - */  Instruction(OperandKind::Flag_Z,     OperandKind::Imm16_Addr, 4,   opcode_jp),
-        /* 0xD2 JP NC a16    | - - - - */  Instruction(OperandKind::Flag_NC,    OperandKind::Imm16_Addr, 4,   opcode_jp),
-        /* 0xDA JP C a16     | - - - - */  Instruction(OperandKind::Flag_C,     OperandKind::Imm16_Addr, 4,   opcode_jp),
-        /* 0xE9 JP HL        | - - - - */  Instruction(OperandKind::R16,        OperandKind::None,       1,   opcode_jp),
-    */
-
     if opcode == 0xE9 /* JP HL */ {
         emu.cpu.pc = emu.cpu.hl;
-        emu.cpu.cycles += u64::from(instr.2);
         return;
     }
 
@@ -169,10 +156,8 @@ pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
         let low = emu.bus_read(emu.cpu.pc);
         let high = emu.bus_read(emu.cpu.pc + 1);
         emu.cpu.pc = util::value(high, low);
-        emu.cpu.cycles += u64::from(instr.2);
     } else {
-        // Only take 3 cycles if branch is skipped
-        emu.cpu.cycles += 3;
+        emu.cpu.jmp_skipped = true;
     }
 }
 

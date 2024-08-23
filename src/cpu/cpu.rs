@@ -17,6 +17,7 @@ pub struct CPU {
     pub sp: u16,
     pub pc: u16,
     pub cycles: u64,
+    pub jmp_skipped: bool,
 }
 
 impl Display for CPU {
@@ -47,16 +48,24 @@ impl CPU {
             sp: 0,
             pc: 0x100,
             cycles: 0,
+            jmp_skipped: false,
         }
     }
 
     pub fn step(emu: &mut Emu) {
+        emu.cpu.jmp_skipped = false;
+
         let opcode = emu.bus_read(emu.cpu.pc);
         let inst = inst_def::get_instruction(opcode);
+
         println!("opcode={:#x?} [{:08b}]", opcode, opcode);
         emu.cpu.pc += 1;
 
-        (inst.3)(emu, inst, opcode);
+        (inst.exec)(emu, inst, opcode);
+
+        let inst_cycles: u8 = if emu.cpu.jmp_skipped { inst.cycles_skipped } else { inst.cycles };
+        debug_assert!(inst_cycles != 0);
+        emu.cpu.cycles += u64::from(inst_cycles);
 
         // match opcode {
         //     /*
