@@ -4,6 +4,68 @@ use crate::util::util;
 
 use super::inst_def::*;
 
+fn rrc(emu: &mut Emu, value: u8) -> u8 {
+    let carry_bit = value & 0x1;
+
+    let val_full = (u16::from(value) >> 1) | (u16::from(carry_bit) << 7);
+
+    let result = util::get_low(val_full);
+
+    emu.cpu.set_flag(cpu::FLAG_Z, result == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_C, carry_bit == 0x1);
+
+    return result;
+}
+
+fn rr(emu: &mut Emu, value: u8) -> u8 {
+    let carry_flag: bool = emu.cpu.get_flag(cpu::FLAG_C);
+    let carry_next = value & 0x1;
+
+    let val_full = (u16::from(carry_flag) << 7) | (u16::from(value) >> 1);
+
+    let result = util::get_low(val_full);
+
+    emu.cpu.set_flag(cpu::FLAG_Z, result == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_C, carry_next == 0x1);
+
+    return result;
+}
+
+pub fn rlc(emu: &mut Emu, value: u8) -> u8 {
+    let carry_bit = value & 0x80;
+
+    let val_full = (u16::from(value) << 1) | (u16::from(carry_bit) >> 7);
+
+    let result = util::get_low(val_full);
+
+    emu.cpu.set_flag(cpu::FLAG_Z, result == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_C, carry_bit == 0x80);
+
+    return result;
+}
+
+fn rl(emu: &mut Emu, value: u8) -> u8 {
+    let carry_flag: bool = emu.cpu.get_flag(cpu::FLAG_C);
+    let carry_next = value & 0x80;
+
+    let val_full = (u16::from(value) << 1) | u16::from(carry_flag);
+
+    let result = util::get_low(val_full);
+
+    emu.cpu.set_flag(cpu::FLAG_Z, result == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_C, carry_next == 0x80);
+
+    return result;
+}
+
 pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
 
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
@@ -247,14 +309,38 @@ pub fn opcode_dec(emu: &mut Emu, instr: &Instruction, opcode: u8) {
 
 pub fn opcode_rlca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x7);
-    let val_shifted = u16::from(util::get_high(emu.cpu.af)) << 1;
-    let val_rotated = (val_shifted & 0xFF) | ((val_shifted & 0x100) >> 8);
 
-    util::set_high(&mut emu.cpu.af, util::get_low(val_rotated));
+    let result = rlc(emu, util::get_high(emu.cpu.af));
+
+    util::set_high(&mut emu.cpu.af, result);
     emu.cpu.set_flag(cpu::FLAG_Z, false);
-    emu.cpu.set_flag(cpu::FLAG_N, false);
-    emu.cpu.set_flag(cpu::FLAG_H, false);
-    emu.cpu.set_flag(cpu::FLAG_C, (val_shifted & 0x100) == 0x100);
+}
+
+pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    debug_assert!(opcode == 0x0F);
+
+    let result = rrc(emu, util::get_high(emu.cpu.af));
+
+    util::set_high(&mut emu.cpu.af, result);
+    emu.cpu.set_flag(cpu::FLAG_Z, false);
+}
+
+pub fn opcode_rla(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    debug_assert!(opcode == 0x17);
+
+    let result = rl(emu, util::get_high(emu.cpu.af));
+
+    util::set_high(&mut emu.cpu.af, result);
+    emu.cpu.set_flag(cpu::FLAG_Z, false);
+}
+
+pub fn opcode_rra(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    debug_assert!(opcode == 0x1F);
+
+    let result = rr(emu, util::get_high(emu.cpu.af));
+
+    util::set_high(&mut emu.cpu.af, result);
+    emu.cpu.set_flag(cpu::FLAG_Z, false);
 }
 
 pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
@@ -327,23 +413,12 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    debug_assert!(opcode == 0x0F);
-    let carry = util::get_high(emu.cpu.af) & 0x1;
-    let val_shifted = u16::from(util::get_high(emu.cpu.af)) >> 1;
-    let val_rotated = val_shifted | (u16::from(carry) << 7);
-
-    util::set_high(&mut emu.cpu.af, util::get_low(val_rotated));
-    emu.cpu.set_flag(cpu::FLAG_Z, false);
-    emu.cpu.set_flag(cpu::FLAG_N, false);
-    emu.cpu.set_flag(cpu::FLAG_H, false);
-    emu.cpu.set_flag(cpu::FLAG_C, carry == 1);
+pub fn opcode_stop(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    debug_assert!(opcode == 0x10);
+    // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
 }
 
-pub fn opcode_stop(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x10"); }
-pub fn opcode_rla(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x17"); }
 pub fn opcode_jr(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x18, 0x20, 0x28, 0x30, 0x38"); }
-pub fn opcode_rra(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x1F"); }
 pub fn opcode_daa(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x27"); }
 pub fn opcode_cpl(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x2F"); }
 pub fn opcode_scf(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x37"); }
