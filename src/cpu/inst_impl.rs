@@ -88,10 +88,8 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
 
                     emu.cpu.set_flag(cpu::FLAG_Z, false);
                     emu.cpu.set_flag(cpu::FLAG_N, false);
-                    emu.cpu.set_flag(cpu::FLAG_H, util::comp_flag_h(emu.cpu.sp, u16::from(val), sum));
-                    emu.cpu.set_flag(cpu::FLAG_C, util::comp_flag_c(emu.cpu.sp, u16::from(val), sum));
-                    // emu.cpu.set_flag(cpu::FLAG_H, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x10) == 0x10);
-                    // emu.cpu.set_flag(cpu::FLAG_C, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x100) == 0x100);
+                    emu.cpu.set_flag(cpu::FLAG_H, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x10) == 0x10);
+                    emu.cpu.set_flag(cpu::FLAG_C, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x100) == 0x100);
                 }
                 0xF9 /* LD SP HL  */=> {
                     emu.cpu.sp = emu.cpu.hl;
@@ -180,11 +178,11 @@ pub fn opcode_inc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             debug_assert!(dst_reg != 0x6);
 
             let curr_val = cpu::CPU::read_r8(emu, dst_reg);
-            let sum = curr_val.wrapping_add(1);
 
+            let sum = curr_val.wrapping_add(1);
             emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
             emu.cpu.set_flag(cpu::FLAG_N, false);
-            emu.cpu.set_flag(cpu::FLAG_H, util::comp_flag_h(curr_val, 1, sum));
+            emu.cpu.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
 
             cpu::CPU::write_r8(emu, dst_reg, sum);
         }
@@ -198,19 +196,55 @@ pub fn opcode_inc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             debug_assert!(opcode == 0x34);
 
             let curr_val = emu.bus_read(emu.cpu.hl);
+
             let sum = curr_val.wrapping_add(1);
-
-            emu.bus_write(emu.cpu.hl, sum);
-
             emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
             emu.cpu.set_flag(cpu::FLAG_N, false);
-            emu.cpu.set_flag(cpu::FLAG_H, util::comp_flag_h(curr_val, 1, sum));
+            emu.cpu.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
+
+            emu.bus_write(emu.cpu.hl, sum);
         }
         _ => unreachable!(),
     }
 }
 
-pub fn opcode_dec(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x05, 0x0B, 0x0D, 0x15, 0x1B, 0x1D, 0x25, 0x2B, 0x2D, 0x35, 0x3B, 0x3D"); }
+pub fn opcode_dec(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    match instr.dst {
+        OperandKind::R8 => {
+            let dst_reg = (opcode >> 3) & 0x7;
+            debug_assert!(dst_reg != 0x6);
+
+            let curr_val = cpu::CPU::read_r8(emu, dst_reg);
+
+            let sum = curr_val.wrapping_sub(1);
+            emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
+            emu.cpu.set_flag(cpu::FLAG_N, true);
+            emu.cpu.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
+
+            cpu::CPU::write_r8(emu, dst_reg, sum);
+        }
+        OperandKind::R16 => {
+            let dst_reg = (opcode >> 4) & 0x3;
+            let curr_val = cpu::CPU::read_r16(emu, dst_reg);
+            let sum = curr_val.wrapping_sub(1);
+            cpu::CPU::write_r16(emu, dst_reg, sum);
+        }
+        OperandKind::R16_Addr => {
+            debug_assert!(opcode == 0x35);
+
+            let curr_val = emu.bus_read(emu.cpu.hl);
+
+            let sum = curr_val.wrapping_sub(1);
+            emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
+            emu.cpu.set_flag(cpu::FLAG_N, true);
+            emu.cpu.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
+
+            emu.bus_write(emu.cpu.hl, sum);
+        }
+        _ => unreachable!(),
+    }
+}
+
 pub fn opcode_rlca(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x07"); }
 pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x09, 0x19, 0x29, 0x39, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0xC6, 0xE8"); }
 pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x0F"); }
