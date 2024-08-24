@@ -33,6 +33,7 @@ impl Display for CPU {
             value = self.hl, high = util::get_high(self.hl), low = util::get_low(self.hl))?;
         writeln!(f, "sp={value:#06x} [{value:016b}]", value = self.sp)?;
         writeln!(f, "pc={value:#06x} [{value:016b}]", value = self.pc)?;
+        writeln!(f, "Z={} N={} H={} C={}", self.get_flag(FLAG_Z), self.get_flag(FLAG_N), self.get_flag(FLAG_H), self.get_flag(FLAG_C))?;
         writeln!(f, "cycles={value}", value = self.cycles)?;
         Ok(())
     }
