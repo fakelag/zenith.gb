@@ -19,3 +19,13 @@ pub fn set_low(dst: &mut u16, value: u8) -> u16 {
 pub fn value(high: u8, low: u8) -> u16 {
     (u16::from(high) << 8) | u16::from(low)
 }
+
+pub fn comp_flag_h<T>(curr_val: T, add: T, sum: T) -> bool
+    where T: Into<u32> + Copy {
+    ((curr_val.into() ^ add.into() ^ sum.into()) & 0x10) == 0x10
+}
+
+pub fn comp_flag_c<T>(curr_val: T, add: T, sum: T) -> bool
+    where T: Into<u32> + Copy {
+    ((curr_val.into() ^ add.into() ^ sum.into()) & 0x100) == 0x100
+}

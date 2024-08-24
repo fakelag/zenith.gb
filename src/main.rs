@@ -14,5 +14,4 @@ fn main() {
     let mut emu = Emu::new(cart);
 
     emu.run();
-
 }
