@@ -257,7 +257,76 @@ pub fn opcode_rlca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_C, (val_shifted & 0x100) == 0x100);
 }
 
-pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x09, 0x19, 0x29, 0x39, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0xC6, 0xE8"); }
+pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    match (instr.dst, instr.src) {
+        (OperandKind::R8, OperandKind::R8 | OperandKind::R16_Addr) => {
+            // ADD A, r8
+            // ADD A, [HL]
+            let src_reg_or_hladdr = opcode & 0x7;
+
+            let dst_val = util::get_high(emu.cpu.af);
+            let src_val = cpu::CPU::read_r8(emu, src_reg_or_hladdr);
+
+            let sum = u16::from(dst_val) + u16::from(src_val);
+            emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
+            emu.cpu.set_flag(cpu::FLAG_N, false);
+            emu.cpu.set_flag(cpu::FLAG_H, (dst_val & 0xF) + (src_val & 0xF) > 0xF);
+            emu.cpu.set_flag(cpu::FLAG_C, sum > 0xFF);
+
+            util::set_high(&mut emu.cpu.af, util::get_low(sum));
+        }
+        (OperandKind::R16, OperandKind::R16) => {
+            // ADD HL r16
+            let src_reg = (opcode >> 4) & 0x3;
+            let src_val = cpu::CPU::read_r16(emu, src_reg);
+            let dst_val = emu.cpu.hl;
+
+            let sum: u32 = u32::from(src_val) + u32::from(dst_val);
+
+            emu.cpu.set_flag(cpu::FLAG_N, false);
+            emu.cpu.set_flag(cpu::FLAG_H, (dst_val & 0xFFF) + (src_val & 0xFFF) > 0xFFF);
+            emu.cpu.set_flag(cpu::FLAG_C, sum > 0xFFFF);
+
+            emu.cpu.hl = (sum & 0xFFFF) as u16;
+        }
+        (OperandKind::R8, OperandKind::Imm8) => {
+            debug_assert!(opcode == 0xC6);
+            let dst_val = util::get_high(emu.cpu.af);
+            let src_val = emu.bus_read(emu.cpu.pc);
+            emu.cpu.pc += 1;
+            
+            let sum: u16 = u16::from(src_val) + u16::from(dst_val);
+            emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
+            emu.cpu.set_flag(cpu::FLAG_N, false);
+            emu.cpu.set_flag(cpu::FLAG_H, (dst_val & 0xF) + (src_val & 0xF) > 0xF);
+            emu.cpu.set_flag(cpu::FLAG_C, sum > 0xFF);
+
+
+            util::set_high(&mut emu.cpu.af, util::get_low(sum));
+        }
+        (OperandKind::R16, OperandKind::Imm8) => {
+            // ADD SP e8
+            debug_assert!(opcode == 0xE8);
+
+            let e: i8;
+            let val = emu.bus_read(emu.cpu.pc);
+
+            unsafe { e = std::mem::transmute::<u8, i8>(val); }
+            emu.cpu.pc += 1;
+
+            let sum = emu.cpu.sp.wrapping_add_signed(e.into());
+
+            emu.cpu.set_flag(cpu::FLAG_Z, false);
+            emu.cpu.set_flag(cpu::FLAG_N, false);
+            emu.cpu.set_flag(cpu::FLAG_H, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x10) == 0x10);
+            emu.cpu.set_flag(cpu::FLAG_C, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x100) == 0x100);
+
+            emu.cpu.sp = sum;
+        }
+        _ => unreachable!(),
+    }
+}
+
 pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x0F"); }
 pub fn opcode_stop(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x10"); }
 pub fn opcode_rla(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x17"); }
