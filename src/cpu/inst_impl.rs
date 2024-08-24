@@ -327,7 +327,19 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x0F"); }
+pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    debug_assert!(opcode == 0x0F);
+    let carry = util::get_high(emu.cpu.af) & 0x1;
+    let val_shifted = u16::from(util::get_high(emu.cpu.af)) >> 1;
+    let val_rotated = val_shifted | (u16::from(carry) << 7);
+
+    util::set_high(&mut emu.cpu.af, util::get_low(val_rotated));
+    emu.cpu.set_flag(cpu::FLAG_Z, false);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_C, carry == 1);
+}
+
 pub fn opcode_stop(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x10"); }
 pub fn opcode_rla(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x17"); }
 pub fn opcode_jr(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x18, 0x20, 0x28, 0x30, 0x38"); }
