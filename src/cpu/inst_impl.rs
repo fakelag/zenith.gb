@@ -35,7 +35,7 @@ fn rr(emu: &mut Emu, value: u8) -> u8 {
     return result;
 }
 
-pub fn rlc(emu: &mut Emu, value: u8) -> u8 {
+fn rlc(emu: &mut Emu, value: u8) -> u8 {
     let carry_bit = value & 0x80;
 
     let val_full = (u16::from(value) << 1) | (u16::from(carry_bit) >> 7);
@@ -139,19 +139,15 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             debug_assert!([0xF8, 0xF9].contains(&opcode));
             match opcode {
                 0xF8 /* LD HL SP+ */ => {
-                    let e: i8;
-                    let val = emu.bus_read(emu.cpu.pc);
-
-                    unsafe { e = std::mem::transmute::<u8, i8>(val); }
-                    emu.cpu.pc += 1;
+                    let e: i8 = util::consume_signed_from_pc(emu);
 
                     let sum = emu.cpu.sp.wrapping_add_signed(e.into());
                     emu.cpu.hl = sum;
 
                     emu.cpu.set_flag(cpu::FLAG_Z, false);
                     emu.cpu.set_flag(cpu::FLAG_N, false);
-                    emu.cpu.set_flag(cpu::FLAG_H, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x10) == 0x10);
-                    emu.cpu.set_flag(cpu::FLAG_C, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x100) == 0x100);
+                    emu.cpu.set_flag(cpu::FLAG_H, ((emu.cpu.sp ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
+                    emu.cpu.set_flag(cpu::FLAG_C, ((emu.cpu.sp ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
                 }
                 0xF9 /* LD SP HL  */=> {
                     emu.cpu.sp = emu.cpu.hl;
@@ -394,18 +390,13 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             // ADD SP e8
             debug_assert!(opcode == 0xE8);
 
-            let e: i8;
-            let val = emu.bus_read(emu.cpu.pc);
-
-            unsafe { e = std::mem::transmute::<u8, i8>(val); }
-            emu.cpu.pc += 1;
-
+            let e: i8 = util::consume_signed_from_pc(emu);
             let sum = emu.cpu.sp.wrapping_add_signed(e.into());
 
             emu.cpu.set_flag(cpu::FLAG_Z, false);
             emu.cpu.set_flag(cpu::FLAG_N, false);
-            emu.cpu.set_flag(cpu::FLAG_H, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x10) == 0x10);
-            emu.cpu.set_flag(cpu::FLAG_C, ((emu.cpu.sp ^ u16::from(val) ^ sum) & 0x100) == 0x100);
+            emu.cpu.set_flag(cpu::FLAG_H, ((emu.cpu.sp ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
+            emu.cpu.set_flag(cpu::FLAG_C, ((emu.cpu.sp ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
 
             emu.cpu.sp = sum;
         }
@@ -418,7 +409,36 @@ pub fn opcode_stop(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
 }
 
-pub fn opcode_jr(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x18, 0x20, 0x28, 0x30, 0x38"); }
+pub fn opcode_jr(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let branch_taken = match opcode {
+        0x18 /* JR e8 */ => {
+            true
+        }
+        _ => {
+            debug_assert!([0x20, 0x28, 0x30, 0x38].contains(&opcode));
+            let flag = (opcode >> 3) & 0x3;
+
+            let cond = match flag {
+                0x3 => emu.cpu.get_flag(cpu::FLAG_C),
+                0x2 => !emu.cpu.get_flag(cpu::FLAG_C),
+                0x1 => emu.cpu.get_flag(cpu::FLAG_Z),
+                0x0 => !emu.cpu.get_flag(cpu::FLAG_Z),
+                _ => unreachable!(),
+            };
+
+            cond
+        }
+    };
+
+    if branch_taken {
+        let e: i8 = util::consume_signed_from_pc(emu);
+        emu.cpu.pc = emu.cpu.pc.wrapping_add_signed(e.into());
+    } else {
+        emu.cpu.jmp_skipped = true;
+        emu.cpu.pc += 1;
+    }
+}
+
 pub fn opcode_daa(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x27"); }
 pub fn opcode_cpl(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x2F"); }
 pub fn opcode_scf(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x37"); }
@@ -450,7 +470,7 @@ pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             true
         }
         _ => {
-            let flag = (opcode >> 3) & 0x7;
+            let flag = (opcode >> 3) & 0x3;
 
             let cond = match flag {
                 0x3 => emu.cpu.get_flag(cpu::FLAG_C),
@@ -470,6 +490,7 @@ pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
         emu.cpu.pc = util::value(high, low);
     } else {
         emu.cpu.jmp_skipped = true;
+        emu.cpu.pc += 2;
     }
 }
 
