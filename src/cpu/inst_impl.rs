@@ -68,14 +68,32 @@ fn rl(emu: &mut Emu, value: u8) -> u8 {
 
 fn add_a8(emu: &mut Emu, val: u8, carry: u8) {
     let dst_val = util::get_high(emu.cpu.af);
-    let sum = u16::from(dst_val) + u16::from(val) + u16::from(carry);
+
+    let sum_full = u16::from(dst_val) + u16::from(val) + u16::from(carry);
+    let sum_low = util::get_low(sum_full);
     
-    emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
+    emu.cpu.set_flag(cpu::FLAG_Z, sum_low == 0);
     emu.cpu.set_flag(cpu::FLAG_N, false);
     emu.cpu.set_flag(cpu::FLAG_H, ((dst_val & 0xF) + (val & 0xF) + carry) > 0xF);
-    emu.cpu.set_flag(cpu::FLAG_C, sum > 0xFF);
+    emu.cpu.set_flag(cpu::FLAG_C, sum_full > 0xFF);
 
-    util::set_high(&mut emu.cpu.af, util::get_low(sum));
+    util::set_high(&mut emu.cpu.af, sum_low);
+}
+
+fn sub_a8(emu: &mut Emu, val: u8, carry: u8) {
+    let dst_val = util::get_high(emu.cpu.af);
+
+    let res_full = i16::from(dst_val) - i16::from(val) - i16::from(carry);
+    let res_low = util::get_low(res_full as u16);
+
+    let half_carry = ((dst_val as i8) & 0xF) - ((val as i8) & 0xF) - (carry as i8);
+    
+    emu.cpu.set_flag(cpu::FLAG_Z, res_low == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, true);
+    emu.cpu.set_flag(cpu::FLAG_H, half_carry < 0);
+    emu.cpu.set_flag(cpu::FLAG_C, res_full < 0);
+
+    util::set_high(&mut emu.cpu.af, res_low);
 }
 
 pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
@@ -508,7 +526,28 @@ pub fn opcode_adc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     add_a8(emu, src_val, emu.cpu.get_flag(cpu::FLAG_C).into());
 }
 
-pub fn opcode_sub(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0xD6"); }
+pub fn opcode_sub(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let src_val = match instr.src {
+        OperandKind::R8 => {
+            let src_reg = opcode & 0x7;
+            debug_assert!(src_reg != 0x6);
+            cpu::CPU::read_r8(emu, src_reg)
+        }
+        OperandKind::R16_Addr => {
+            debug_assert!(opcode == 0x96);
+            emu.bus_read(emu.cpu.hl)
+        }
+        OperandKind::Imm8 => {
+            let val = emu.bus_read(emu.cpu.pc);
+            emu.cpu.pc += 1;
+            val
+        }
+        _ => unreachable!(),
+    };
+
+    sub_a8(emu, src_val, 0);
+}
+
 pub fn opcode_sbc(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F, 0xDE"); }
 pub fn opcode_and(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xE6"); }
 pub fn opcode_xor(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xEE"); }
