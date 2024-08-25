@@ -66,6 +66,27 @@ fn rl(emu: &mut Emu, value: u8) -> u8 {
     return result;
 }
 
+fn consume_src_r8_imm8_hladdr(emu: &mut Emu, src: OperandKind, opcode: u8) -> u8 {
+    let val = match src {
+        OperandKind::R8 => {
+            let src_reg = opcode & 0x7;
+            debug_assert!(src_reg != 0x6);
+            debug_assert!(src_reg < 0x8);
+            cpu::CPU::read_r8(emu, src_reg)
+        }
+        OperandKind::R16_Addr => {
+            emu.bus_read(emu.cpu.hl)
+        }
+        OperandKind::Imm8 => {
+            let val = emu.bus_read(emu.cpu.pc);
+            emu.cpu.pc += 1;
+            val
+        }
+        _ => unreachable!(),
+    };
+    val
+}
+
 fn add_a8(emu: &mut Emu, val: u8, carry: u8) {
     let dst_val = util::get_high(emu.cpu.af);
 
@@ -94,6 +115,39 @@ fn sub_a8(emu: &mut Emu, val: u8, carry: u8) {
     emu.cpu.set_flag(cpu::FLAG_C, res_full < 0);
 
     util::set_high(&mut emu.cpu.af, res_low);
+}
+
+fn and_a8(emu: &mut Emu, val: u8) {
+    let result = util::get_high(emu.cpu.af) & val;
+
+    emu.cpu.set_flag(cpu::FLAG_Z, result == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, true);
+    emu.cpu.set_flag(cpu::FLAG_C, false);
+
+    util::set_high(&mut emu.cpu.af, result);
+}
+
+fn xor_a8(emu: &mut Emu, val: u8) {
+    let result = util::get_high(emu.cpu.af) ^ val;
+
+    emu.cpu.set_flag(cpu::FLAG_Z, result == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_C, false);
+
+    util::set_high(&mut emu.cpu.af, result);
+}
+
+fn or_a8(emu: &mut Emu, val: u8) {
+    let result = util::get_high(emu.cpu.af) | val;
+
+    emu.cpu.set_flag(cpu::FLAG_Z, result == 0);
+    emu.cpu.set_flag(cpu::FLAG_N, false);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_C, false);
+
+    util::set_high(&mut emu.cpu.af, result);
 }
 
 pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
@@ -505,76 +559,35 @@ pub fn opcode_ccf(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
 pub fn opcode_halt(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x76"); }
 
 pub fn opcode_adc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    let src_val = match instr.src {
-        OperandKind::R8 => {
-            let src_reg = opcode & 0x7;
-            debug_assert!(src_reg != 0x6);
-            cpu::CPU::read_r8(emu, src_reg)
-        }
-        OperandKind::R16_Addr => {
-            debug_assert!(opcode == 0x8E);
-            emu.bus_read(emu.cpu.hl)
-        }
-        OperandKind::Imm8 => {
-            let val = emu.bus_read(emu.cpu.pc);
-            emu.cpu.pc += 1;
-            val
-        }
-        _ => unreachable!(),
-    };
-
+    let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
     add_a8(emu, src_val, emu.cpu.get_flag(cpu::FLAG_C).into());
 }
 
 pub fn opcode_sub(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    let src_val = match instr.src {
-        OperandKind::R8 => {
-            let src_reg = opcode & 0x7;
-            debug_assert!(src_reg != 0x6);
-            cpu::CPU::read_r8(emu, src_reg)
-        }
-        OperandKind::R16_Addr => {
-            debug_assert!(opcode == 0x96);
-            emu.bus_read(emu.cpu.hl)
-        }
-        OperandKind::Imm8 => {
-            debug_assert!(opcode == 0xD6);
-            let val = emu.bus_read(emu.cpu.pc);
-            emu.cpu.pc += 1;
-            val
-        }
-        _ => unreachable!(),
-    };
-
+    let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
     sub_a8(emu, src_val, 0);
 }
 
 pub fn opcode_sbc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    let src_val = match instr.src {
-        OperandKind::R8 => {
-            let src_reg = opcode & 0x7;
-            debug_assert!(src_reg != 0x6);
-            cpu::CPU::read_r8(emu, src_reg)
-        }
-        OperandKind::R16_Addr => {
-            debug_assert!(opcode == 0x9E);
-            emu.bus_read(emu.cpu.hl)
-        }
-        OperandKind::Imm8 => {
-            debug_assert!(opcode == 0xDE);
-            let val = emu.bus_read(emu.cpu.pc);
-            emu.cpu.pc += 1;
-            val
-        }
-        _ => unreachable!(),
-    };
-    
+    let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
     sub_a8(emu, src_val, emu.cpu.get_flag(cpu::FLAG_C).into());
 }
 
-pub fn opcode_and(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xE6"); }
-pub fn opcode_xor(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xEE"); }
-pub fn opcode_or(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xF6"); }
+pub fn opcode_and(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
+    and_a8(emu, src_val);
+}
+
+pub fn opcode_xor(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
+    xor_a8(emu, src_val);
+}
+
+pub fn opcode_or(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
+    or_a8(emu, src_val);
+}
+
 pub fn opcode_cp(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xFE"); }
 
 pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) {

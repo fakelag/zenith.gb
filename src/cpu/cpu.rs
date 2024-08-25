@@ -120,7 +120,7 @@ impl CPU {
         }
     }
 
-    pub fn read_r8(emu: &mut Emu, r8_encoded: u8) -> u8 {
+    pub fn read_r8(emu: &Emu, r8_encoded: u8) -> u8 {
         match r8_encoded {
             0x7 => { return util::get_high(emu.cpu.af); }
             0x6 => { return emu.bus_read(emu.cpu.hl); }
