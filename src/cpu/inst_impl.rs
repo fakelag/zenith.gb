@@ -469,7 +469,13 @@ pub fn opcode_daa(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_Z, daa_value == 0);
 }
 
-pub fn opcode_cpl(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x2F"); }
+pub fn opcode_cpl(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let val = !util::get_high(emu.cpu.af);
+    util::set_high(&mut emu.cpu.af, val);
+    emu.cpu.set_flag(cpu::FLAG_N, true);
+    emu.cpu.set_flag(cpu::FLAG_H, true);
+}
+
 pub fn opcode_scf(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x37"); }
 pub fn opcode_ccf(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x3F"); }
 pub fn opcode_halt(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x76"); }
