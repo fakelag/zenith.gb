@@ -439,7 +439,36 @@ pub fn opcode_jr(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_daa(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x27"); }
+pub fn opcode_daa(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let original_val = util::get_high(emu.cpu.af);
+    let flag_h = emu.cpu.get_flag(cpu::FLAG_H);
+    let flag_c = emu.cpu.get_flag(cpu::FLAG_C);
+    let flag_n = emu.cpu.get_flag(cpu::FLAG_N);
+
+    let mut offset: u8 = 0;
+    let mut carry_next = false;
+
+    if (!flag_n && (original_val & 0xF) > 0x9) || flag_h {
+        offset |= 0x6;
+    }
+
+    if (!flag_n && original_val > 0x99) || flag_c {
+        offset |= 0x60;
+        carry_next = true;
+    }
+
+    let daa_value = if flag_n {
+        original_val.wrapping_sub(offset)
+    } else {
+        original_val.wrapping_add(offset)
+    };
+
+    util::set_high(&mut emu.cpu.af, daa_value);
+    emu.cpu.set_flag(cpu::FLAG_C, carry_next);
+    emu.cpu.set_flag(cpu::FLAG_H, false);
+    emu.cpu.set_flag(cpu::FLAG_Z, daa_value == 0);
+}
+
 pub fn opcode_cpl(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x2F"); }
 pub fn opcode_scf(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x37"); }
 pub fn opcode_ccf(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x3F"); }
