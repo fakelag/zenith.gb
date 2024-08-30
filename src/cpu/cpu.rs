@@ -154,6 +154,26 @@ impl CPU {
         }
     }
 
+    pub fn read_r16stk(emu: &mut Emu, r16_encoded: u8) -> u16 {
+        match r16_encoded {
+            0x0 => emu.cpu.bc,
+            0x1 => emu.cpu.de,
+            0x2 => emu.cpu.hl,
+            0x3 => emu.cpu.af,
+            _ => { unreachable!() }
+        }
+    }
+
+    pub fn write_r16stk(emu: &mut Emu, r16_encoded: u8, val: u16) {
+        match r16_encoded {
+            0x0 => emu.cpu.bc = val,
+            0x1 => emu.cpu.de = val,
+            0x2 => emu.cpu.hl = val,
+            0x3 => emu.cpu.af = val,
+            _ => { unreachable!() }
+        }
+    }
+
     pub fn get_flag(&self, flag: u8) -> bool {
         return (util::get_low(self.af) & flag) != 0;
     }

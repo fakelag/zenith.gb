@@ -647,12 +647,14 @@ pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) {
 
 pub fn opcode_push(emu: &mut Emu, instr: &Instruction, opcode: u8) {
      let reg = (opcode >> 4) & 0x3;
-     let curr_val = cpu::CPU::read_r16(emu, reg);
+     let curr_val = cpu::CPU::read_r16stk(emu, reg);
      push_u16(emu, curr_val);
 }
 
 pub fn opcode_pop(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    todo!("0xC1, 0xD1, 0xE1, 0xF1");
+    let reg = (opcode >> 4) & 0x3;
+    let val = pop_u16(emu);
+    cpu::CPU::write_r16stk(emu, reg, val);
 }
 
 pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
