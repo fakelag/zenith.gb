@@ -74,7 +74,7 @@ fn consume_src_r8_imm8_hladdr(emu: &mut Emu, src: OperandKind, opcode: u8) -> u8
             debug_assert!(src_reg < 0x8);
             cpu::CPU::read_r8(emu, src_reg)
         }
-        OperandKind::R16_Addr => {
+        OperandKind::R16Addr => {
             emu.bus_read(emu.cpu.hl)
         }
         OperandKind::Imm8 => {
@@ -171,7 +171,7 @@ fn pop_u16(emu: &mut Emu) -> u16 {
     return util::value(msb, lsb);
 }
 
-pub fn opcode_nop(emu: &mut Emu, _instr: &Instruction, _opcode: u8) { }
+pub fn opcode_nop(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { }
 
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     match (instr.dst, instr.src) {
@@ -194,7 +194,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             debug_assert!(dst_reg != 0x6); // should only happen with 0x36
             cpu::CPU::write_r8(emu, dst_reg, n8);
         }
-        (OperandKind::R8, OperandKind::R16_Addr) => {
+        (OperandKind::R8, OperandKind::R16Addr) => {
             match opcode {
                 0x0A /* LD A [BC] */ => {
                     let val = emu.bus_read(emu.cpu.bc);
@@ -232,7 +232,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
                 }
             }
         }
-        (OperandKind::R8, OperandKind::Imm16_Addr) => {
+        (OperandKind::R8, OperandKind::Imm16Addr) => {
             debug_assert!(opcode == 0xFA /* LD A [a16] */);
             let lsb = emu.bus_read(emu.cpu.pc);
             let msb = emu.bus_read(emu.cpu.pc + 1);
@@ -270,7 +270,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
 
             cpu::CPU::write_r16(emu, dst_reg, util::value(msb, lsb));
         }
-        (OperandKind::R16_Addr, OperandKind::R8) => {
+        (OperandKind::R16Addr, OperandKind::R8) => {
             match opcode {
                 0x22 /* LD [HL+] A */ => {
                     emu.bus_write(emu.cpu.hl, util::get_high(emu.cpu.af));
@@ -298,7 +298,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
                 }
             }
         }
-        (OperandKind::Imm16_Addr, OperandKind::R16) => {
+        (OperandKind::Imm16Addr, OperandKind::R16) => {
             debug_assert!(opcode == 0x08);
 
             let lsb = emu.bus_read(emu.cpu.pc);
@@ -309,18 +309,18 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             emu.bus_write(addr, util::get_low(emu.cpu.sp));
             emu.bus_write(addr + 1, util::get_high(emu.cpu.sp));
         }
-        (OperandKind::R16_Addr, OperandKind::Imm8) => {
+        (OperandKind::R16Addr, OperandKind::Imm8) => {
             debug_assert!(opcode == 0x36); // could technically be decoded same as OperandKind::R8, OperandKind::Imm8
             let val = emu.bus_read(emu.cpu.pc);
             emu.cpu.pc += 1;
             cpu::CPU::write_r8(emu, 0x6, val);
         }
-        (OperandKind::R8_Addr, OperandKind::R8) => {
+        (OperandKind::R8Addr, OperandKind::R8) => {
             debug_assert!(opcode == 0xE2);
             let addr = u16::from(util::get_low(emu.cpu.bc)) | 0xFF00;
             emu.bus_write(addr, util::get_high(emu.cpu.af));
         }
-        (OperandKind::Imm16_Addr, OperandKind::R8) => {
+        (OperandKind::Imm16Addr, OperandKind::R8) => {
             debug_assert!(opcode == 0xEA);
 
             let lsb = emu.bus_read(emu.cpu.pc);
@@ -355,7 +355,7 @@ pub fn opcode_inc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             let sum = curr_val.wrapping_add(1);
             cpu::CPU::write_r16(emu, dst_reg, sum);
         }
-        OperandKind::R16_Addr => {
+        OperandKind::R16Addr => {
             debug_assert!(opcode == 0x34);
 
             let curr_val = emu.bus_read(emu.cpu.hl);
@@ -392,7 +392,7 @@ pub fn opcode_dec(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             let sum = curr_val.wrapping_sub(1);
             cpu::CPU::write_r16(emu, dst_reg, sum);
         }
-        OperandKind::R16_Addr => {
+        OperandKind::R16Addr => {
             debug_assert!(opcode == 0x35);
 
             let curr_val = emu.bus_read(emu.cpu.hl);
@@ -446,7 +446,7 @@ pub fn opcode_rra(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
 
 pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     match (instr.dst, instr.src) {
-        (OperandKind::R8, OperandKind::R8 | OperandKind::R16_Addr) => {
+        (OperandKind::R8, OperandKind::R8 | OperandKind::R16Addr) => {
             // ADD A, r8
             // ADD A, [HL]
             let src_reg_or_hladdr = opcode & 0x7;
@@ -493,7 +493,7 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_stop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
+pub fn opcode_stop(_emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x10);
     // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
 }
@@ -736,18 +736,15 @@ pub fn opcode_reti(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     emu.cpu.ime = true;
 }
 
-pub fn opcode_di(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_di(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     emu.cpu.ime = false;
 }
 
-pub fn opcode_ei(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_ei(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     emu.cpu.ime_next = true;
 }
 
-pub fn opcode_ldh(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    // /* 0xE0 LDH [a8] A   | - - - - */  Instruction{dst:OperandKind::Imm8_Addr,  src:OperandKind::R8,         cycles:3,   cycles_skipped:0,   exec:opcode_ldh},
-    // /* 0xF0 LDH A [a8]   | - - - - */  Instruction{dst:OperandKind::R8,         src:OperandKind::Imm8_Addr,  cycles:3,   cycles_skipped:0,   exec:opcode_ldh},
-
+pub fn opcode_ldh(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let addr_u8 = emu.bus_read(emu.cpu.pc);
     emu.cpu.pc += 1;
 
@@ -765,15 +762,15 @@ pub fn opcode_ldh(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_prefix(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xCB"); }
-pub fn opcode_illegal_d3(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xD3"); }
-pub fn opcode_illegal_db(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xDB"); }
-pub fn opcode_illegal_dd(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xDD"); }
-pub fn opcode_illegal_e3(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xE3"); }
-pub fn opcode_illegal_e4(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xE4"); }
-pub fn opcode_illegal_eb(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xEB"); }
-pub fn opcode_illegal_ec(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xEC"); }
-pub fn opcode_illegal_ed(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xED"); }
-pub fn opcode_illegal_f4(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xF4"); }
-pub fn opcode_illegal_fc(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xFC"); }
-pub fn opcode_illegal_fd(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xFD"); }
+pub fn opcode_prefix(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xCB"); }
+pub fn opcode_illegal_d3(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xD3"); }
+pub fn opcode_illegal_db(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xDB"); }
+pub fn opcode_illegal_dd(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xDD"); }
+pub fn opcode_illegal_e3(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xE3"); }
+pub fn opcode_illegal_e4(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xE4"); }
+pub fn opcode_illegal_eb(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xEB"); }
+pub fn opcode_illegal_ec(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xEC"); }
+pub fn opcode_illegal_ed(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xED"); }
+pub fn opcode_illegal_f4(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xF4"); }
+pub fn opcode_illegal_fc(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xFC"); }
+pub fn opcode_illegal_fd(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xFD"); }

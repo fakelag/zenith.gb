@@ -14,12 +14,9 @@ impl Emu {
     }
 
     pub fn run(self: &mut Emu) {
-        let mut c = &self.cpu;
         loop {
             CPU::step(self);
        }
-
-       println!("{}", self.cpu);
    }
 
     pub fn bus_read(self: &Emu, address: u16) -> u8 {

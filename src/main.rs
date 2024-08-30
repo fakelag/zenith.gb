@@ -1,7 +1,5 @@
 use cartridge::cartridge::Cartridge;
-use cpu::cpu::{CPU, FLAG_C, FLAG_H, FLAG_N, FLAG_Z};
 use emu::emu::Emu;
-use util::util::*;
 
 mod cpu;
 mod emu;
