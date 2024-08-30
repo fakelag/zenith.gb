@@ -18,6 +18,9 @@ pub struct CPU {
     pub pc: u16,
     pub cycles: u64,
     pub jmp_skipped: bool,
+
+    pub ime: bool,
+    pub ime_next: bool,
 }
 
 impl Display for CPU {
@@ -50,6 +53,8 @@ impl CPU {
             pc: 0x100,
             cycles: 0,
             jmp_skipped: false,
+            ime: false,
+            ime_next: false,
         }
     }
 
