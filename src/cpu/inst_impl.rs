@@ -163,6 +163,14 @@ fn push_u16(emu: &mut Emu, val: u16) {
     emu.bus_write(emu.cpu.sp, util::get_low(val));
 }
 
+fn pop_u16(emu: &mut Emu) -> u16 {
+    let lsb = emu.bus_read(emu.cpu.sp);
+    emu.cpu.sp += 1;
+    let msb = emu.bus_read(emu.cpu.sp);
+    emu.cpu.sp += 1;
+    return util::value(msb, lsb);
+}
+
 pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
 
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
@@ -570,7 +578,8 @@ pub fn opcode_ccf(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
 }
 
 pub fn opcode_halt(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    todo!("0x76");
+    println!("{}", emu.cpu);
+    todo!("0x76 - halted");
 }
 
 pub fn opcode_adc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
@@ -609,8 +618,31 @@ pub fn opcode_cp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
 }
 
 pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) {
-    println!("{}", emu.cpu);
-    todo!("0xC0, 0xC8, 0xC9, 0xD0, 0xD8");
+    let ret_taken = match opcode {
+        0xC9 /* RET */ => {
+            true
+        }
+        _ => {
+            debug_assert!([0xC0, 0xC8, 0xD0, 0xD8].contains(&opcode));
+            let flag = (opcode >> 3) & 0x3;
+
+            let cond = match flag {
+                0x3 => emu.cpu.get_flag(cpu::FLAG_C),
+                0x2 => !emu.cpu.get_flag(cpu::FLAG_C),
+                0x1 => emu.cpu.get_flag(cpu::FLAG_Z),
+                0x0 => !emu.cpu.get_flag(cpu::FLAG_Z),
+                _ => unreachable!(),
+            };
+
+            cond
+        }
+    };
+
+    if ret_taken {
+        emu.cpu.pc = pop_u16(emu);
+    } else {
+        emu.cpu.jmp_skipped = true;
+    }
 }
 
 pub fn opcode_pop(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xC1, 0xD1, 0xE1, 0xF1"); }
