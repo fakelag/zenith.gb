@@ -150,6 +150,12 @@ fn or_a8(emu: &mut Emu, val: u8) {
     util::set_high(&mut emu.cpu.af, result);
 }
 
+fn cp_a8(emu: &mut Emu, val: u8) {
+    let a_val = util::get_high(emu.cpu.af);
+    sub_a8(emu, val, 0);
+    util::set_high(&mut emu.cpu.af, a_val);
+}
+
 pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
 
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
@@ -556,7 +562,9 @@ pub fn opcode_ccf(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_H, false);
 }
 
-pub fn opcode_halt(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0x76"); }
+pub fn opcode_halt(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    todo!("0x76");
+}
 
 pub fn opcode_adc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
@@ -588,7 +596,10 @@ pub fn opcode_or(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     or_a8(emu, src_val);
 }
 
-pub fn opcode_cp(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xFE"); }
+pub fn opcode_cp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    let src_val = consume_src_r8_imm8_hladdr(emu, instr.src, opcode);
+    cp_a8(emu, src_val);
+}
 
 pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     println!("{}", emu.cpu);
