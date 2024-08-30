@@ -645,7 +645,15 @@ pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_pop(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xC1, 0xD1, 0xE1, 0xF1"); }
+pub fn opcode_push(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+     let reg = (opcode >> 4) & 0x3;
+     let curr_val = cpu::CPU::read_r16(emu, reg);
+     push_u16(emu, curr_val);
+}
+
+pub fn opcode_pop(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+    todo!("0xC1, 0xD1, 0xE1, 0xF1");
+}
 
 pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     if opcode == 0xE9 /* JP HL */ {
@@ -715,7 +723,6 @@ pub fn opcode_call(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_push(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xC5, 0xD5, 0xE5, 0xF5"); }
 pub fn opcode_rst(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF"); }
 pub fn opcode_prefix(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xCB"); }
 pub fn opcode_illegal_d3(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xD3"); }
