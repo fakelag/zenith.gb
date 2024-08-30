@@ -59,13 +59,21 @@ impl CPU {
     }
 
     pub fn step(emu: &mut Emu) {
+        // @todo - Interrupts
         emu.cpu.jmp_skipped = false;
 
-        let opcode = emu.bus_read(emu.cpu.pc);
-        let inst = inst_def::get_instruction(opcode);
+        let mut opcode = emu.bus_read(emu.cpu.pc);
+        emu.cpu.pc += 1;
+
+        let inst = if opcode == 0xCB {
+            opcode = emu.bus_read(emu.cpu.pc);
+            emu.cpu.pc += 1;
+            inst_def::get_instruction_cb(opcode)
+        } else {
+            inst_def::get_instruction(opcode)
+        };
 
         println!("opcode={:#x?} [{:08b}]", opcode, opcode);
-        emu.cpu.pc += 1;
 
         (inst.exec)(emu, inst, opcode);
 
