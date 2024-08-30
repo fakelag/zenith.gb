@@ -171,7 +171,7 @@ fn pop_u16(emu: &mut Emu) -> u16 {
     return util::value(msb, lsb);
 }
 
-pub fn opcode_nop(emu: &mut Emu, instr: &Instruction, opcode: u8) { }
+pub fn opcode_nop(emu: &mut Emu, _instr: &Instruction, _opcode: u8) { }
 
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     match (instr.dst, instr.src) {
@@ -408,7 +408,7 @@ pub fn opcode_dec(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_rlca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_rlca(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x7);
 
     let result = rlc(emu, util::get_high(emu.cpu.af));
@@ -417,7 +417,7 @@ pub fn opcode_rlca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_Z, false);
 }
 
-pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_rrca(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x0F);
 
     let result = rrc(emu, util::get_high(emu.cpu.af));
@@ -426,7 +426,7 @@ pub fn opcode_rrca(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_Z, false);
 }
 
-pub fn opcode_rla(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_rla(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x17);
 
     let result = rl(emu, util::get_high(emu.cpu.af));
@@ -435,7 +435,7 @@ pub fn opcode_rla(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_Z, false);
 }
 
-pub fn opcode_rra(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_rra(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x1F);
 
     let result = rr(emu, util::get_high(emu.cpu.af));
@@ -493,12 +493,12 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_stop(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_stop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x10);
     // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
 }
 
-pub fn opcode_jr(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_jr(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let branch_taken = match opcode {
         0x18 /* JR e8 */ => {
             true
@@ -528,7 +528,7 @@ pub fn opcode_jr(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_daa(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_daa(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     let original_val = util::get_high(emu.cpu.af);
     let flag_h = emu.cpu.get_flag(cpu::FLAG_H);
     let flag_c = emu.cpu.get_flag(cpu::FLAG_C);
@@ -577,7 +577,7 @@ pub fn opcode_ccf(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_H, false);
 }
 
-pub fn opcode_halt(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_halt(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     println!("{}", emu.cpu);
     todo!("0x76 - halted");
 }
@@ -617,7 +617,7 @@ pub fn opcode_cp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     cp_a8(emu, src_val);
 }
 
-pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_ret(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let ret_taken = match opcode {
         0xC9 /* RET */ => {
             true
@@ -645,19 +645,19 @@ pub fn opcode_ret(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_push(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_push(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
      let reg = (opcode >> 4) & 0x3;
      let curr_val = cpu::CPU::read_r16stk(emu, reg);
      push_u16(emu, curr_val);
 }
 
-pub fn opcode_pop(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_pop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = (opcode >> 4) & 0x3;
     let val = pop_u16(emu);
     cpu::CPU::write_r16stk(emu, reg, val);
 }
 
-pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_jp(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     if opcode == 0xE9 /* JP HL */ {
         emu.cpu.pc = emu.cpu.hl;
         return;
@@ -692,7 +692,7 @@ pub fn opcode_jp(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_call(emu: &mut Emu, instr: &Instruction, opcode: u8) {
+pub fn opcode_call(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let branch_taken = match opcode {
         0xCD /* CALL a16 */ => {
             true
@@ -725,7 +725,11 @@ pub fn opcode_call(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_rst(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF"); }
+pub fn opcode_rst(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
+    push_u16(emu, emu.cpu.pc);
+    emu.cpu.pc = util::value(0x0, opcode - 0xC7);
+}
+
 pub fn opcode_prefix(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xCB"); }
 pub fn opcode_illegal_d3(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xD3"); }
 pub fn opcode_reti(emu: &mut Emu, instr: &Instruction, opcode: u8) { todo!("0xD9"); }
