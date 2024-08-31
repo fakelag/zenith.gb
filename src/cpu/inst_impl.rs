@@ -742,7 +742,7 @@ pub fn opcode_di(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
 }
 
 pub fn opcode_ei(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
-    emu.cpu.ime_next = true;
+    emu.cpu.ime = true;
 }
 
 pub fn opcode_ldh(emu: &mut Emu, _instr: &Instruction, opcode: u8) {

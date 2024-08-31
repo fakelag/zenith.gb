@@ -19,8 +19,11 @@ pub struct CPU {
     pub cycles: u64,
     pub branch_skipped: bool,
 
+    // @todo - Enabling interrupts should have one instruction delay:
+    //  The effect of ei is delayed by one instruction.
+    //  This means that ei followed immediately by di does not allow any interrupts between them.
+    //  https://gbdev.io/pandocs/Interrupts.html
     pub ime: bool,
-    pub ime_next: bool,
 }
 
 impl Display for CPU {
@@ -54,13 +57,14 @@ impl CPU {
             cycles: 0,
             branch_skipped: false,
             ime: false,
-            ime_next: false,
         }
     }
 
     pub fn step(emu: &mut Emu) -> u8 {
         // @todo - Interrupts
         emu.cpu.branch_skipped = false;
+
+        CPU::handle_interrupt(emu);
 
         let mut opcode = emu.bus_read(emu.cpu.pc);
         emu.cpu.pc += 1;
@@ -80,6 +84,14 @@ impl CPU {
         emu.cpu.cycles += u64::from(inst_cycles);
 
         inst_cycles
+    }
+
+    fn handle_interrupt(emu: &mut Emu) {
+        if !emu.cpu.ime {
+            return;
+        }
+
+
     }
 
     pub fn write_r8(emu: &mut Emu, r8_encoded: u8, val: u8) {
