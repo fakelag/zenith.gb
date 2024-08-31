@@ -18,21 +18,21 @@ impl Cartridge {
 
 #[derive(Debug)]
 pub struct CartridgeHeader {
-    entrypoint: [u8; 4],
-    logo: [u8; 48],
-    title: [u8; 16],
-    cgb_flag: u8,
-    lic_code_new: [u8; 2],
-    sgb_flag: u8,
-    cart_type: u8,
-    rom_size: u8,
-    ram_size: u8,
-    dst_code: u8,
-    lic_code_old: u8,
-    rom_version_mask: u8,
-    header_checksum: u8,
-    global_checksum: [u8; 2],
-    header_checksum_verified: u8,
+    pub entrypoint: [u8; 4],
+    pub logo: [u8; 48],
+    pub title: [u8; 16],
+    pub cgb_flag: u8,
+    pub lic_code_new: [u8; 2],
+    pub sgb_flag: u8,
+    pub cart_type: u8,
+    pub rom_size: u8,
+    pub ram_size: u8,
+    pub dst_code: u8,
+    pub lic_code_old: u8,
+    pub rom_version_mask: u8,
+    pub header_checksum: u8,
+    pub global_checksum: [u8; 2],
+    pub header_checksum_verified: u8,
 }
 
 impl Default for CartridgeHeader {

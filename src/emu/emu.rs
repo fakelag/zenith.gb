@@ -1,13 +1,13 @@
 use std::{thread, time};
 
-use crate::{cartridge::cartridge::Cartridge, cpu::cpu::CPU, util::util};
+use crate::{cartridge::cartridge::Cartridge, cpu::cpu, util::util};
 
 pub struct Emu {
     cart: Cartridge,
-    pub cpu: CPU,
+    pub cpu: cpu::CPU,
     // Main memory - indexed directly
     // https://gbdev.io/pandocs/Memory_Map.html
-    memory: [u8; 0xFFFF],
+    memory: [u8; 0x10000],
 
     // debug
     pub start_at: time::Instant,
@@ -15,14 +15,11 @@ pub struct Emu {
 
 impl Emu {
     pub fn new(cart: Cartridge) -> Self {
-        Self { cart, cpu: CPU::new(), memory: [0; 0xFFFF], start_at: time::Instant::now() }
+        Self { cart, cpu: cpu::CPU::new(), memory: [0; 0x10000], start_at: time::Instant::now() }
     }
 
     pub fn run(self: &mut Emu) {
-
-        // boot https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
-        util::set_high(&mut self.cpu.af, 0x1);
-        self.bus_write(0xFF50, 0x1);
+        self.dmg_boot();
 
         // 4,194304 MHz
         // let cycles_in_one_nano = 0.004194304;
@@ -32,7 +29,7 @@ impl Emu {
 
         loop {
             // let cycle_start_at = time::Instant::now();
-            let cycles = CPU::step(self);
+            let cycles = cpu::CPU::step(self);
 
             // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
             // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
@@ -88,8 +85,8 @@ impl Emu {
                 return self.memory[usize::from(address)];
             }
             0xFFFF => {
-                // Interrupt
-                todo!();
+                // IE
+                return self.memory[usize::from(address)];
             }
         }
     }
@@ -128,8 +125,29 @@ impl Emu {
                 self.memory[usize::from(address)] = data;
             }
             0xFFFF => {
-                todo!();
+                self.memory[usize::from(address)] = data;
             }
         }
+    }
+
+    fn dmg_boot(&mut self) {
+        // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
+        util::set_high(&mut self.cpu.af, 0x1);
+        self.bus_write(0xFF50, 0x1);
+
+        util::set_high(&mut self.cpu.bc, 0);
+        util::set_low(&mut self.cpu.bc, 0x13);
+        util::set_high(&mut self.cpu.de, 0);
+        util::set_low(&mut self.cpu.de, 0xD8);
+        util::set_high(&mut self.cpu.hl, 0x1);
+        util::set_low(&mut self.cpu.hl, 0x4D);
+
+        self.cpu.sp = 0xFFFE;
+        self.cpu.pc = 0x100;
+
+        self.cpu.set_flag(cpu::FLAG_Z, true);
+        self.cpu.set_flag(cpu::FLAG_N, false);
+        self.cpu.set_flag(cpu::FLAG_H, if self.cart.header.header_checksum == 0x0 { false } else { true });
+        self.cpu.set_flag(cpu::FLAG_Z, if self.cart.header.header_checksum == 0x0 { false } else { true });
     }
 }
