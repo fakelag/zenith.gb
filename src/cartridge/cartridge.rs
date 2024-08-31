@@ -85,9 +85,10 @@ fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
         panic!("Invalid header checksum");
     }
 
-    if hdr.cgb_flag == 0xC0 {
-        panic!("Cartridge is CGB only");
-    }
+    // https://gbdev.io/pandocs/The_Cartridge_Header.html#0143--cgb-flag
+    // if hdr.cgb_flag == 0xC0 {
+    //     panic!("Cartridge is CGB only");
+    // }
 
     Ok(hdr)
 }

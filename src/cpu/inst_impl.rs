@@ -523,7 +523,7 @@ pub fn opcode_jr(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
         let e: i8 = util::consume_signed_from_pc(emu);
         emu.cpu.pc = emu.cpu.pc.wrapping_add_signed(e.into());
     } else {
-        emu.cpu.jmp_skipped = true;
+        emu.cpu.branch_skipped = true;
         emu.cpu.pc += 1;
     }
 }
@@ -641,7 +641,7 @@ pub fn opcode_ret(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     if ret_taken {
         emu.cpu.pc = pop_u16(emu);
     } else {
-        emu.cpu.jmp_skipped = true;
+        emu.cpu.branch_skipped = true;
     }
 }
 
@@ -687,7 +687,7 @@ pub fn opcode_jp(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
         let high = emu.bus_read(emu.cpu.pc + 1);
         emu.cpu.pc = util::value(high, low);
     } else {
-        emu.cpu.jmp_skipped = true;
+        emu.cpu.branch_skipped = true;
         emu.cpu.pc += 2;
     }
 }
@@ -720,7 +720,7 @@ pub fn opcode_call(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
         push_u16(emu, emu.cpu.pc + 2);
         emu.cpu.pc = util::value(msb, lsb);
     } else {
-        emu.cpu.jmp_skipped = true;
+        emu.cpu.branch_skipped = true;
         emu.cpu.pc += 2;
     }
 }

@@ -1,4 +1,4 @@
-use crate::{cartridge::cartridge::Cartridge, cpu::cpu::CPU};
+use crate::{cartridge::cartridge::Cartridge, cpu::cpu::CPU, util::util};
 
 pub struct Emu {
     cart: Cartridge,
@@ -14,6 +14,11 @@ impl Emu {
     }
 
     pub fn run(self: &mut Emu) {
+
+        // boot https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
+        util::set_high(&mut self.cpu.af, 0x1);
+        self.bus_write(0xFF50, 0x1);
+
         loop {
             CPU::step(self);
        }
