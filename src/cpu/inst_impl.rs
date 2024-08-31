@@ -72,7 +72,7 @@ fn consume_src_r8_imm8_hladdr(emu: &mut Emu, src: OperandKind, opcode: u8) -> u8
             let src_reg = opcode & 0x7;
             debug_assert!(src_reg != 0x6);
             debug_assert!(src_reg < 0x8);
-            cpu::CPU::read_r8(emu, src_reg)
+            cpu::read_r8(emu, src_reg)
         }
         OperandKind::R16Addr => {
             emu.bus_read(emu.cpu.hl)
@@ -164,12 +164,12 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             // 0b01xxxyyy
             let src_reg = opcode & 0x7;
             let dst_reg = (opcode >> 3) & 0x7;
-            let val = cpu::CPU::read_r8(emu, src_reg);
+            let val = cpu::read_r8(emu, src_reg);
 
             // note: reg2reg will never trigger 0x6 write to [hl]
             debug_assert!(dst_reg != 0x6);
 
-            cpu::CPU::write_r8(emu, dst_reg, val);
+            cpu::write_r8(emu, dst_reg, val);
         }
         (OperandKind::R8, OperandKind::Imm8) => {
             let dst_reg = (opcode >> 3) & 0x7;
@@ -177,7 +177,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             emu.cpu.pc += 1;
 
             debug_assert!(dst_reg != 0x6); // should only happen with 0x36
-            cpu::CPU::write_r8(emu, dst_reg, n8);
+            cpu::write_r8(emu, dst_reg, n8);
         }
         (OperandKind::R8, OperandKind::R16Addr) => {
             match opcode {
@@ -208,12 +208,12 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
                     debug_assert!(src_reg == 0x6);
 
                     let dst_reg = (opcode >> 3) & 0x7;
-                    let val = cpu::CPU::read_r8(emu, src_reg);
+                    let val = cpu::read_r8(emu, src_reg);
         
                     // note: r16addr2r8 will never trigger 0x6 write to [hl]
                     debug_assert!(dst_reg != 0x6);
         
-                    cpu::CPU::write_r8(emu, dst_reg, val);
+                    cpu::write_r8(emu, dst_reg, val);
                 }
             }
         }
@@ -253,7 +253,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             let msb = emu.bus_read(emu.cpu.pc + 1);
             emu.cpu.pc += 2;
 
-            cpu::CPU::write_r16(emu, dst_reg, util::value(msb, lsb));
+            cpu::write_r16(emu, dst_reg, util::value(msb, lsb));
         }
         (OperandKind::R16Addr, OperandKind::R8) => {
             match opcode {
@@ -275,7 +275,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
                     debug_assert!([0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77].contains(&opcode));
 
                     let src_reg = opcode & 0x7;
-                    let val = cpu::CPU::read_r8(emu, src_reg);
+                    let val = cpu::read_r8(emu, src_reg);
 
                     // dst_reg will always be 0x6
                     debug_assert!((opcode >> 3) & 0x7 == 0x6);
@@ -298,7 +298,7 @@ pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             debug_assert!(opcode == 0x36); // could technically be decoded same as OperandKind::R8, OperandKind::Imm8
             let val = emu.bus_read(emu.cpu.pc);
             emu.cpu.pc += 1;
-            cpu::CPU::write_r8(emu, 0x6, val);
+            cpu::write_r8(emu, 0x6, val);
         }
         (OperandKind::R8Addr, OperandKind::R8) => {
             debug_assert!(opcode == 0xE2);
@@ -325,20 +325,20 @@ pub fn opcode_inc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             let dst_reg = (opcode >> 3) & 0x7;
             debug_assert!(dst_reg != 0x6);
 
-            let curr_val = cpu::CPU::read_r8(emu, dst_reg);
+            let curr_val = cpu::read_r8(emu, dst_reg);
 
             let sum = curr_val.wrapping_add(1);
             emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
             emu.cpu.set_flag(cpu::FLAG_N, false);
             emu.cpu.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
 
-            cpu::CPU::write_r8(emu, dst_reg, sum);
+            cpu::write_r8(emu, dst_reg, sum);
         }
         OperandKind::R16 => {
             let dst_reg = (opcode >> 4) & 0x3;
-            let curr_val = cpu::CPU::read_r16(emu, dst_reg);
+            let curr_val = cpu::read_r16(emu, dst_reg);
             let sum = curr_val.wrapping_add(1);
-            cpu::CPU::write_r16(emu, dst_reg, sum);
+            cpu::write_r16(emu, dst_reg, sum);
         }
         OperandKind::R16Addr => {
             debug_assert!(opcode == 0x34);
@@ -362,20 +362,20 @@ pub fn opcode_dec(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             let dst_reg = (opcode >> 3) & 0x7;
             debug_assert!(dst_reg != 0x6);
 
-            let curr_val = cpu::CPU::read_r8(emu, dst_reg);
+            let curr_val = cpu::read_r8(emu, dst_reg);
 
             let sum = curr_val.wrapping_sub(1);
             emu.cpu.set_flag(cpu::FLAG_Z, sum == 0);
             emu.cpu.set_flag(cpu::FLAG_N, true);
             emu.cpu.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
 
-            cpu::CPU::write_r8(emu, dst_reg, sum);
+            cpu::write_r8(emu, dst_reg, sum);
         }
         OperandKind::R16 => {
             let dst_reg = (opcode >> 4) & 0x3;
-            let curr_val = cpu::CPU::read_r16(emu, dst_reg);
+            let curr_val = cpu::read_r16(emu, dst_reg);
             let sum = curr_val.wrapping_sub(1);
-            cpu::CPU::write_r16(emu, dst_reg, sum);
+            cpu::write_r16(emu, dst_reg, sum);
         }
         OperandKind::R16Addr => {
             debug_assert!(opcode == 0x35);
@@ -435,14 +435,14 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
             // ADD A, r8
             // ADD A, [HL]
             let src_reg_or_hladdr = opcode & 0x7;
-            let src_val = cpu::CPU::read_r8(emu, src_reg_or_hladdr);
+            let src_val = cpu::read_r8(emu, src_reg_or_hladdr);
 
             add_a8(emu, src_val, 0);
         }
         (OperandKind::R16, OperandKind::R16) => {
             // ADD HL r16
             let src_reg = (opcode >> 4) & 0x3;
-            let src_val = cpu::CPU::read_r16(emu, src_reg);
+            let src_val = cpu::read_r16(emu, src_reg);
             let dst_val = emu.cpu.hl;
 
             let sum: u32 = u32::from(src_val) + u32::from(dst_val);
@@ -639,7 +639,7 @@ pub fn opcode_ret(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     };
 
     if ret_taken {
-        emu.cpu.pc = cpu::CPU::pop_u16(emu);
+        emu.cpu.pc = cpu::pop_u16(emu);
     } else {
         emu.cpu.branch_skipped = true;
     }
@@ -647,14 +647,14 @@ pub fn opcode_ret(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
 
 pub fn opcode_push(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
      let reg = (opcode >> 4) & 0x3;
-     let curr_val = cpu::CPU::read_r16stk(emu, reg);
-     cpu::CPU::push_u16(emu, curr_val);
+     let curr_val = cpu::read_r16stk(emu, reg);
+     cpu::push_u16(emu, curr_val);
 }
 
 pub fn opcode_pop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = (opcode >> 4) & 0x3;
-    let val = cpu::CPU::pop_u16(emu);
-    cpu::CPU::write_r16stk(emu, reg, val);
+    let val = cpu::pop_u16(emu);
+    cpu::write_r16stk(emu, reg, val);
 }
 
 pub fn opcode_jp(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
@@ -717,7 +717,7 @@ pub fn opcode_call(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
         let lsb = emu.bus_read(emu.cpu.pc);
         let msb = emu.bus_read(emu.cpu.pc + 1);
 
-        cpu::CPU::push_u16(emu, emu.cpu.pc + 2);
+        cpu::push_u16(emu, emu.cpu.pc + 2);
         emu.cpu.pc = util::value(msb, lsb);
     } else {
         emu.cpu.branch_skipped = true;
@@ -726,13 +726,13 @@ pub fn opcode_call(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
 }
 
 pub fn opcode_rst(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
-    cpu::CPU::push_u16(emu, emu.cpu.pc);
+    cpu::push_u16(emu, emu.cpu.pc);
     emu.cpu.pc = util::value(0x0, opcode - 0xC7);
 }
 
 pub fn opcode_reti(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     // RET
-    emu.cpu.pc = cpu::CPU::pop_u16(emu);
+    emu.cpu.pc = cpu::pop_u16(emu);
     emu.cpu.ime = true;
 }
 
@@ -779,54 +779,54 @@ pub fn opcode_illegal_fd(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { to
 
 pub fn opcode_rlc(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
     let new_val = rlc(emu, val);
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_rrc(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
     let new_val = rrc(emu, val);
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_rl(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
     let new_val = rl(emu, val);
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_rr(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
     let new_val = rr(emu, val);
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_sla(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
 
     // Strip least significant bit
     let new_val = rlc(emu, val) & 0xFE;
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_sra(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
 
     let high_bit = val & 0x80;
 
     let new_val = (rrc(emu, val) & 0x7F) | high_bit;
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_swap(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
 
     let low_4 = val & 0xF;
     let new_val = (val >> 4) | (low_4 << 4);
@@ -836,22 +836,22 @@ pub fn opcode_swap(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     emu.cpu.set_flag(cpu::FLAG_H, false);
     emu.cpu.set_flag(cpu::FLAG_C, false);
 
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_srl(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
 
     let new_val = rrc(emu, val) & 0x7F;
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_bit(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
     let bit_index = (opcode >> 3) & 0x7;
 
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
     let bit_set = (val >> bit_index) & 0x1;
     
     emu.cpu.set_flag(cpu::FLAG_Z, bit_set == 0);
@@ -863,18 +863,18 @@ pub fn opcode_res(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
     let bit_index = (opcode >> 3) & 0x7;
 
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
     let new_val = val & !(0x1 << bit_index);
 
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }
 
 pub fn opcode_set(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = opcode & 0x7;
     let bit_index = (opcode >> 3) & 0x7;
 
-    let val = cpu::CPU::read_r8(emu, reg);
+    let val = cpu::read_r8(emu, reg);
     let new_val = val | (0x1 << bit_index);
 
-    cpu::CPU::write_r8(emu, reg, new_val);
+    cpu::write_r8(emu, reg, new_val);
 }

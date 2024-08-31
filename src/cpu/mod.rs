@@ -1,3 +1,3 @@
 pub mod cpu;
-pub mod inst_def;
-pub mod inst_impl;
+mod inst_def;
+mod inst_impl;

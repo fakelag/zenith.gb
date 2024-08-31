@@ -1,10 +1,16 @@
 use std::{thread, time};
 
-use crate::{cartridge::cartridge::Cartridge, cpu::cpu, util::util};
+use crate::{
+    cartridge::cartridge::*,
+    cpu::cpu,
+    ppu::ppu,
+    util::util,
+};
 
 pub struct Emu {
     cart: Cartridge,
     pub cpu: cpu::CPU,
+    pub ppu: ppu::PPU,
     // Main memory - indexed directly
     // https://gbdev.io/pandocs/Memory_Map.html
     memory: [u8; 0x10000],
@@ -15,7 +21,13 @@ pub struct Emu {
 
 impl Emu {
     pub fn new(cart: Cartridge) -> Self {
-        Self { cart, cpu: cpu::CPU::new(), memory: [0; 0x10000], start_at: time::Instant::now() }
+        Self {
+            cart,
+            cpu: cpu::CPU::new(),
+            ppu: ppu::PPU::new(),
+            memory: [0; 0x10000],
+            start_at: time::Instant::now(),
+        }
     }
 
     pub fn run(self: &mut Emu) {
@@ -29,7 +41,9 @@ impl Emu {
 
         loop {
             // let cycle_start_at = time::Instant::now();
-            let cycles = cpu::CPU::step(self);
+            let cycles = cpu::step(self);
+
+            ppu::step(self);
 
             // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
             // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
@@ -148,6 +162,6 @@ impl Emu {
         self.cpu.set_flag(cpu::FLAG_Z, true);
         self.cpu.set_flag(cpu::FLAG_N, false);
         self.cpu.set_flag(cpu::FLAG_H, if self.cart.header.header_checksum == 0x0 { false } else { true });
-        self.cpu.set_flag(cpu::FLAG_Z, if self.cart.header.header_checksum == 0x0 { false } else { true });
+        self.cpu.set_flag(cpu::FLAG_C, if self.cart.header.header_checksum == 0x0 { false } else { true });
     }
 }

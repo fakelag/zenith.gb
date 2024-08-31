@@ -2,6 +2,7 @@ use cartridge::cartridge::Cartridge;
 use emu::emu::Emu;
 
 mod cpu;
+mod ppu;
 mod emu;
 mod util;
 mod cartridge;
