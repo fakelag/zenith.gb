@@ -3,12 +3,23 @@ use std::fmt::{self, Display};
 use crate::{emu::emu::Emu, util::*};
 use super::inst_def;
 
-pub const FLAG_C: u8 = 0x1;
-pub const FLAG_H: u8 = 0x10;
-pub const FLAG_N: u8 = 0x20;
-pub const FLAG_Z: u8 = 0x40;
+pub const FLAG_C: u8 = 1 << 4;
+pub const FLAG_H: u8 = 1 << 5;
+pub const FLAG_N: u8 = 1 << 6;
+pub const FLAG_Z: u8 = 1 << 7;
 
-#[derive(Debug)]
+const INTERRUPT_BIT_VBLANK: u8  = 1 << 0;
+const INTERRUPT_BIT_LCD: u8     = 1 << 1;
+const INTERRUPT_BIT_TIMER: u8   = 1 << 2;
+const INTERRUPT_BIT_SERIAL: u8  = 1 << 3;
+const INTERRUPT_BIT_JOYPAD: u8  = 1 << 4;
+
+const INTERRUPT_ADDR_VBLANK: u16  = 0x40;
+const INTERRUPT_ADDR_LCD: u16     = 0x48;
+const INTERRUPT_ADDR_TIMER: u16   = 0x50;
+const INTERRUPT_ADDR_SERIAL: u16  = 0x58;
+const INTERRUPT_ADDR_JOYPAD: u16  = 0x60;
+
 pub struct CPU {
     pub af: u16,
     pub bc: u16,
@@ -53,7 +64,7 @@ impl CPU {
             de: 0,
             hl: 0,
             sp: 0,
-            pc: 0x100,
+            pc: 0,
             cycles: 0,
             branch_skipped: false,
             ime: false,
@@ -64,7 +75,7 @@ impl CPU {
         // @todo - Interrupts
         emu.cpu.branch_skipped = false;
 
-        CPU::handle_interrupt(emu);
+        CPU::check_interrupts(emu);
 
         let mut opcode = emu.bus_read(emu.cpu.pc);
         emu.cpu.pc += 1;
@@ -86,12 +97,52 @@ impl CPU {
         inst_cycles
     }
 
-    fn handle_interrupt(emu: &mut Emu) {
+    fn check_interrupts(emu: &mut Emu) {
+        // @todo Handle halt
+
         if !emu.cpu.ime {
             return;
         }
 
+        let ie_flags = emu.bus_read(0xFFFF);
+        let if_flags = emu.bus_read(0xFF0F);
 
+        let active_interrupts = ie_flags & if_flags;
+
+        if active_interrupts == 0x0 {
+            return;
+        }
+
+        if CPU::handle_interrupt(emu, active_interrupts, INTERRUPT_BIT_VBLANK, INTERRUPT_ADDR_VBLANK) {
+            return;
+        }
+        if CPU::handle_interrupt(emu, active_interrupts, INTERRUPT_BIT_LCD, INTERRUPT_ADDR_LCD) {
+            return;
+        }
+        if CPU::handle_interrupt(emu, active_interrupts, INTERRUPT_BIT_TIMER, INTERRUPT_ADDR_TIMER) {
+            return;
+        }
+        if CPU::handle_interrupt(emu, active_interrupts, INTERRUPT_BIT_SERIAL, INTERRUPT_ADDR_SERIAL) {
+            return;
+        }
+        if CPU::handle_interrupt(emu, active_interrupts, INTERRUPT_BIT_JOYPAD, INTERRUPT_ADDR_JOYPAD) {
+            return;
+        }
+    }
+
+    fn handle_interrupt(emu: &mut Emu, active_interrupts: u8, interrupt_bit: u8, interrupt_vec: u16) -> bool {
+        if active_interrupts & interrupt_bit == 0 {
+            return false;
+        }
+
+        CPU::push_u16(emu, emu.cpu.pc);
+        emu.cpu.pc = interrupt_vec;
+        emu.cpu.cycles += 5;
+        emu.cpu.ime = false;
+
+        let ie_flags = emu.bus_read(0xFF0F);
+        emu.bus_write(0xFF0F, ie_flags & !interrupt_bit);
+        return true;
     }
 
     pub fn write_r8(emu: &mut Emu, r8_encoded: u8, val: u8) {
@@ -178,5 +229,20 @@ impl CPU {
         } else {
             util::set_low(&mut self.af, val & !flag);
         }
+    }
+    
+    pub fn push_u16(emu: &mut Emu, val: u16) {
+        emu.cpu.sp -= 1;
+        emu.bus_write(emu.cpu.sp, util::get_high(val));
+        emu.cpu.sp -= 1;
+        emu.bus_write(emu.cpu.sp, util::get_low(val));
+    }
+    
+    pub fn pop_u16(emu: &mut Emu) -> u16 {
+        let lsb = emu.bus_read(emu.cpu.sp);
+        emu.cpu.sp += 1;
+        let msb = emu.bus_read(emu.cpu.sp);
+        emu.cpu.sp += 1;
+        return util::value(msb, lsb);
     }
 }

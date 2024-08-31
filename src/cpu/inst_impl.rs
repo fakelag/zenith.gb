@@ -156,21 +156,6 @@ fn cp_a8(emu: &mut Emu, val: u8) {
     util::set_high(&mut emu.cpu.af, a_val);
 }
 
-fn push_u16(emu: &mut Emu, val: u16) {
-    emu.cpu.sp -= 1;
-    emu.bus_write(emu.cpu.sp, util::get_high(val));
-    emu.cpu.sp -= 1;
-    emu.bus_write(emu.cpu.sp, util::get_low(val));
-}
-
-fn pop_u16(emu: &mut Emu) -> u16 {
-    let lsb = emu.bus_read(emu.cpu.sp);
-    emu.cpu.sp += 1;
-    let msb = emu.bus_read(emu.cpu.sp);
-    emu.cpu.sp += 1;
-    return util::value(msb, lsb);
-}
-
 pub fn opcode_nop(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { }
 
 pub fn opcode_ld(emu: &mut Emu, instr: &Instruction, opcode: u8) {
@@ -640,7 +625,7 @@ pub fn opcode_ret(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     };
 
     if ret_taken {
-        emu.cpu.pc = pop_u16(emu);
+        emu.cpu.pc = cpu::CPU::pop_u16(emu);
     } else {
         emu.cpu.branch_skipped = true;
     }
@@ -649,12 +634,12 @@ pub fn opcode_ret(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
 pub fn opcode_push(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
      let reg = (opcode >> 4) & 0x3;
      let curr_val = cpu::CPU::read_r16stk(emu, reg);
-     push_u16(emu, curr_val);
+     cpu::CPU::push_u16(emu, curr_val);
 }
 
 pub fn opcode_pop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     let reg = (opcode >> 4) & 0x3;
-    let val = pop_u16(emu);
+    let val = cpu::CPU::pop_u16(emu);
     cpu::CPU::write_r16stk(emu, reg, val);
 }
 
@@ -718,7 +703,7 @@ pub fn opcode_call(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
         let lsb = emu.bus_read(emu.cpu.pc);
         let msb = emu.bus_read(emu.cpu.pc + 1);
 
-        push_u16(emu, emu.cpu.pc + 2);
+        cpu::CPU::push_u16(emu, emu.cpu.pc + 2);
         emu.cpu.pc = util::value(msb, lsb);
     } else {
         emu.cpu.branch_skipped = true;
@@ -727,13 +712,13 @@ pub fn opcode_call(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
 }
 
 pub fn opcode_rst(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
-    push_u16(emu, emu.cpu.pc);
+    cpu::CPU::push_u16(emu, emu.cpu.pc);
     emu.cpu.pc = util::value(0x0, opcode - 0xC7);
 }
 
 pub fn opcode_reti(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     // RET
-    emu.cpu.pc = pop_u16(emu);
+    emu.cpu.pc = cpu::CPU::pop_u16(emu);
     emu.cpu.ime = true;
 }
 
