@@ -8,6 +8,9 @@ pub const FLAG_H: u8 = 1 << 5;
 pub const FLAG_N: u8 = 1 << 6;
 pub const FLAG_Z: u8 = 1 << 7;
 
+pub const HREG_IE: u16 = 0xFFFF;
+pub const HREG_IF: u16 = 0xFF0F;
+
 const INTERRUPT_BIT_VBLANK: u8  = 1 << 0;
 const INTERRUPT_BIT_LCD: u8     = 1 << 1;
 const INTERRUPT_BIT_TIMER: u8   = 1 << 2;
@@ -35,6 +38,7 @@ pub struct CPU {
     //  This means that ei followed immediately by di does not allow any interrupts between them.
     //  https://gbdev.io/pandocs/Interrupts.html
     pub ime: bool,
+    pub halted: bool,
 }
 
 impl Display for CPU {
@@ -68,14 +72,16 @@ impl CPU {
             cycles: 0,
             branch_skipped: false,
             ime: false,
+            halted: false,
         }
     }
 
     pub fn step(emu: &mut Emu) -> u8 {
-        // @todo - Interrupts
-        emu.cpu.branch_skipped = false;
-
         CPU::check_interrupts(emu);
+
+        if emu.cpu.halted {
+            return 1;
+        }
 
         let mut opcode = emu.bus_read(emu.cpu.pc);
         emu.cpu.pc += 1;
@@ -92,24 +98,28 @@ impl CPU {
 
         let inst_cycles: u8 = if emu.cpu.branch_skipped { inst.cycles_skipped } else { inst.cycles };
         debug_assert!(inst_cycles != 0);
+
         emu.cpu.cycles += u64::from(inst_cycles);
+        emu.cpu.branch_skipped = false;
 
         inst_cycles
     }
 
     fn check_interrupts(emu: &mut Emu) {
-        // @todo Handle halt
-
-        if !emu.cpu.ime {
-            return;
-        }
-
-        let ie_flags = emu.bus_read(0xFFFF);
-        let if_flags = emu.bus_read(0xFF0F);
+        let ie_flags = emu.bus_read(HREG_IE);
+        let if_flags = emu.bus_read(HREG_IF);
 
         let active_interrupts = ie_flags & if_flags;
 
         if active_interrupts == 0x0 {
+            return;
+        }
+
+        // https://gbdev.io/pandocs/halt.html
+        // The CPU wakes up as soon as an interrupt is pending, that is, when the bitwise AND of IE and IF is non-zero.
+        emu.cpu.halted = false;
+
+        if !emu.cpu.ime {
             return;
         }
 
@@ -140,8 +150,8 @@ impl CPU {
         emu.cpu.cycles += 5;
         emu.cpu.ime = false;
 
-        let ie_flags = emu.bus_read(0xFF0F);
-        emu.bus_write(0xFF0F, ie_flags & !interrupt_bit);
+        let if_flags = emu.bus_read(HREG_IF);
+        emu.bus_write(HREG_IF, if_flags & !interrupt_bit);
         return true;
     }
 

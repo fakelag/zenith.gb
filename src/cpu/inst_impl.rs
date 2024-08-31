@@ -478,8 +478,13 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_stop(_emu: &mut Emu, _instr: &Instruction, opcode: u8) {
+pub fn opcode_stop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x10);
+
+    println!("{}", emu.cpu);
+    println!("took {}ms", emu.start_at.elapsed().as_millis());
+    todo!("0x10");
+
     // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
 }
 
@@ -563,9 +568,18 @@ pub fn opcode_ccf(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
 }
 
 pub fn opcode_halt(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
-    println!("{}", emu.cpu);
-    println!("took {}ms", emu.start_at.elapsed().as_millis());
-    todo!("0x76 - halted");
+    if emu.cpu.ime {
+        emu.cpu.halted = true;
+        return;
+    }
+
+    if emu.bus_read(cpu::HREG_IE) & emu.bus_read(cpu::HREG_IF) == 0 {
+        emu.cpu.halted = true;
+        return;
+    }
+
+    // @todo Halt bug
+    // The CPU continues execution after the HALT, but the byte after it is read twice in a row (PC is not incremented, due to a hardware bug). 
 }
 
 pub fn opcode_adc(emu: &mut Emu, instr: &Instruction, opcode: u8) {
@@ -748,7 +762,7 @@ pub fn opcode_ldh(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     }
 }
 
-pub fn opcode_prefix(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xCB"); }
+pub fn opcode_prefix(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { unreachable!("0xCB prefix"); }
 pub fn opcode_illegal_d3(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xD3"); }
 pub fn opcode_illegal_db(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xDB"); }
 pub fn opcode_illegal_dd(_emu: &mut Emu, _instr: &Instruction, _opcode: u8) { todo!("0xDD"); }
