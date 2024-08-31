@@ -58,7 +58,7 @@ impl CPU {
         }
     }
 
-    pub fn step(emu: &mut Emu) {
+    pub fn step(emu: &mut Emu) -> u8 {
         // @todo - Interrupts
         emu.cpu.branch_skipped = false;
 
@@ -73,13 +73,13 @@ impl CPU {
             inst_def::get_instruction(opcode)
         };
 
-        println!("opcode={:#x?} [{:08b}]", opcode, opcode);
-
         (inst.exec)(emu, inst, opcode);
 
         let inst_cycles: u8 = if emu.cpu.branch_skipped { inst.cycles_skipped } else { inst.cycles };
         debug_assert!(inst_cycles != 0);
         emu.cpu.cycles += u64::from(inst_cycles);
+
+        inst_cycles
     }
 
     pub fn write_r8(emu: &mut Emu, r8_encoded: u8, val: u8) {

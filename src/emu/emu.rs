@@ -1,3 +1,5 @@
+use std::{thread, time};
+
 use crate::{cartridge::cartridge::Cartridge, cpu::cpu::CPU, util::util};
 
 pub struct Emu {
@@ -6,11 +8,14 @@ pub struct Emu {
     // Main memory - indexed directly
     // https://gbdev.io/pandocs/Memory_Map.html
     memory: [u8; 0xFFFF],
+
+    // debug
+    pub start_at: time::Instant,
 }
 
 impl Emu {
     pub fn new(cart: Cartridge) -> Self {
-        Self { cart, cpu: CPU::new(), memory: [0; 0xFFFF] }
+        Self { cart, cpu: CPU::new(), memory: [0; 0xFFFF], start_at: time::Instant::now() }
     }
 
     pub fn run(self: &mut Emu) {
@@ -19,8 +24,22 @@ impl Emu {
         util::set_high(&mut self.cpu.af, 0x1);
         self.bus_write(0xFF50, 0x1);
 
+        // 4,194304 MHz
+        // let cycles_in_one_nano = 0.004194304;
+        // let nanos_per_cycle = (1.0 / cycles_in_one_nano) as u64;
+
+        self.start_at = time::Instant::now();
+
         loop {
-            CPU::step(self);
+            // let cycle_start_at = time::Instant::now();
+            let cycles = CPU::step(self);
+
+            // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
+            // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
+
+            // if let Some(ns) = ns_to_sleep {
+            //     thread::sleep(time::Duration::from_nanos(ns));
+            // }
        }
    }
 

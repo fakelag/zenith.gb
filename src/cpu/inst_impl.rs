@@ -579,6 +579,7 @@ pub fn opcode_ccf(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
 
 pub fn opcode_halt(emu: &mut Emu, _instr: &Instruction, _opcode: u8) {
     println!("{}", emu.cpu);
+    println!("took {}ms", emu.start_at.elapsed().as_millis());
     todo!("0x76 - halted");
 }
 
