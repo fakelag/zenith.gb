@@ -7,6 +7,8 @@ const DOTS_PER_DRAW: u16 = 172; // min
 const DOTS_PER_HBLANK: u16 = 87; // min
 const DOTS_PER_VBLANK: u16 = 4560;
 
+const REG_LCDC: u16 = 0xFF40;
+
 #[derive(Debug)]
 pub enum PpuMode {
     PpuOamScan,
@@ -99,6 +101,13 @@ fn mode_draw(emu: &mut Emu, dots: u16) -> u16 {
         // println!("mode_draw - switching to PpuMode::PpuHBlank");
         return 0;
     }
+
+    // 1. Clock pixelfetchers
+    // 2. Check if any pixels in BG FIFO (if not, exit)
+    // 3. Check if any pixels in Sprite FIFO (if yes, merge with BG pixel)
+    // 4. Sprite fetching
+    // 5. Window fetching
+    // 6. End scanline
 
     return dots_to_spend;
 }
