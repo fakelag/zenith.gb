@@ -481,7 +481,7 @@ pub fn opcode_add(emu: &mut Emu, instr: &Instruction, opcode: u8) {
 pub fn opcode_stop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x10);
 
-    println!("{}", emu.cpu);
+    println!("{}", emu);
     println!("took {}ms", emu.start_at.elapsed().as_millis());
     todo!("0x10");
 

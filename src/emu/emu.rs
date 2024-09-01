@@ -1,4 +1,4 @@
-use std::{thread, time};
+use std::{fmt::{self, Display}, thread, time};
 
 use crate::{
     cartridge::cartridge::*,
@@ -17,6 +17,14 @@ pub struct Emu {
 
     // debug
     pub start_at: time::Instant,
+}
+
+impl Display for Emu {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.cpu.fmt(f)?;
+        self.ppu.fmt(f)?;
+        Ok(())
+    }
 }
 
 impl Emu {
@@ -43,7 +51,7 @@ impl Emu {
             // let cycle_start_at = time::Instant::now();
             let cycles = cpu::step(self);
 
-            ppu::step(self);
+            ppu::step(self, cycles);
 
             // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
             // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
