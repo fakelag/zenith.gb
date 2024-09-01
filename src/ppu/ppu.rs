@@ -18,20 +18,22 @@ pub enum PpuMode {
 pub struct PPU {
     pub mode: PpuMode,
     pub mode_dots: u16,
+    pub scanline_dots: u16,
 }
 
 impl Display for PPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "PPU")?;
         writeln!(f, "mode={:?}", self.mode)?;
-        writeln!(f, "scanline_dots={:?}", self.mode_dots)?;
+        writeln!(f, "mode_dots={:?}", self.mode_dots)?;
+        writeln!(f, "scanline_dots={:?}", self.scanline_dots)?;
         Ok(())
     }
 }
 
 impl PPU {
     pub fn new() -> Self {
-        Self { mode: PpuMode::PpuOamScan, mode_dots: 0 }
+        Self { mode: PpuMode::PpuOamScan, mode_dots: 0, scanline_dots: 0 }
     }
 }
 
@@ -45,6 +47,7 @@ pub fn step(emu: &mut Emu, cycles_passed: u8) -> u8 {
             PpuMode::PpuHBlank => { mode_hblank(emu, dots_budget) }
             PpuMode::PpuVBlank => { mode_vblank(emu, dots_budget) }
         };
+        emu.ppu.scanline_dots += dots_spent;
         emu.ppu.mode_dots += dots_spent;
         dots_budget -= dots_spent;
     }
@@ -118,6 +121,7 @@ fn mode_vblank(emu: &mut Emu, dots: u16) -> u16 {
 
     if dots_to_spend == 0 {
         emu.ppu.mode_dots = 0;
+        emu.ppu.scanline_dots = 0;
         emu.ppu.mode = PpuMode::PpuOamScan;
         println!("mode_vblank - switching to PpuMode::PpuOamScan");
         return 0;
