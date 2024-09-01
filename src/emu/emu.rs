@@ -23,6 +23,7 @@ impl Display for Emu {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.cpu.fmt(f)?;
         self.ppu.fmt(f)?;
+        println!("took {}ms", self.start_at.elapsed().as_millis());
         Ok(())
     }
 }

@@ -482,7 +482,6 @@ pub fn opcode_stop(emu: &mut Emu, _instr: &Instruction, opcode: u8) {
     debug_assert!(opcode == 0x10);
 
     println!("{}", emu);
-    println!("took {}ms", emu.start_at.elapsed().as_millis());
     todo!("0x10");
 
     // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
