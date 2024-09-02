@@ -22,6 +22,7 @@ pub struct PPU {
     dots_mode: u16,
     dots_scanline: u16,
     scanline_count: u8,
+    dots_leftover: u16,
 }
 
 impl Display for PPU {
@@ -42,39 +43,46 @@ impl PPU {
             dots_mode: 0,
             dots_scanline: 0,
             scanline_count: 0,
+            dots_leftover: 0,
         }
     }
 }
 
 pub fn step(emu: &mut Emu, cycles_passed: u8) -> u8 {
-    let mut dots_budget = u16::from(cycles_passed * 4);
+    let mut dots_budget = u16::from(cycles_passed * 4) + emu.ppu.dots_leftover;
 
     while dots_budget > 0 {
-        let dots_spent = match emu.ppu.mode {
+        let mode_result = match emu.ppu.mode {
             PpuMode::PpuOamScan => { mode_oam_scan(emu, dots_budget) }
             PpuMode::PpuDraw => { mode_draw(emu, dots_budget) }
             PpuMode::PpuHBlank => { mode_hblank(emu, dots_budget) }
             PpuMode::PpuVBlank => { mode_vblank(emu, dots_budget) }
         };
-        emu.ppu.dots_scanline += dots_spent;
-        emu.ppu.dots_mode += dots_spent;
-        dots_budget -= dots_spent;
+
+        if let Some(dots_spent) = mode_result {
+            emu.ppu.dots_scanline += dots_spent;
+            emu.ppu.dots_mode += dots_spent;
+            dots_budget -= dots_spent;
+        } else {
+            emu.ppu.dots_leftover = dots_budget;
+            break;
+        }
     }
 
     return 1;
 }
 
-fn mode_oam_scan(emu: &mut Emu, dots: u16) -> u16 {
+fn mode_oam_scan(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     let remaining_budget = DOTS_PER_OAM_SCAN - emu.ppu.dots_mode;
-    let dots_to_spend = cmp::min(remaining_budget, dots);
+    let dots = cmp::min(remaining_budget, dots_to_run);
 
     // println!("mode_oam_scan - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
 
-    if dots_to_spend == 0 {
+    if dots == 0 {
         emu.ppu.dots_mode = 0;
         emu.ppu.mode = PpuMode::PpuDraw;
         // println!("mode_oam_scan - switching to PpuMode::PpuDraw");
-        return 0;
+        return Some(0);
     }
 
     if emu.ppu.dots_mode == 0 {
@@ -84,22 +92,22 @@ fn mode_oam_scan(emu: &mut Emu, dots: u16) -> u16 {
          */
     }
 
-    return dots_to_spend;
+    return Some(dots);
 }
 
-fn mode_draw(emu: &mut Emu, dots: u16) -> u16 {
+fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     // @todo drawing takes 172–289 dots depending on factors
     // https://gbdev.io/pandocs/Rendering.html
     let remaining_budget = DOTS_PER_DRAW - emu.ppu.dots_mode;
-    let dots_to_spend = cmp::min(remaining_budget, dots);
+    let dots = cmp::min(remaining_budget, dots_to_run);
 
     // println!("mode_draw - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
 
-    if dots_to_spend == 0 {
+    if dots == 0 {
         emu.ppu.dots_mode = 0;
         emu.ppu.mode = PpuMode::PpuHBlank;
         // println!("mode_draw - switching to PpuMode::PpuHBlank");
-        return 0;
+        return Some(0);
     }
 
     // 1. Clock pixelfetchers
@@ -109,17 +117,17 @@ fn mode_draw(emu: &mut Emu, dots: u16) -> u16 {
     // 5. Window fetching
     // 6. End scanline
 
-    return dots_to_spend;
+    return Some(dots);
 }
 
-fn mode_hblank(emu: &mut Emu, dots: u16) -> u16 {
+fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     // @todo hblank takes 87–204 dots depending on length of drawing (376 - mode 3’s duration)
     let remaining_budget = DOTS_PER_HBLANK - emu.ppu.dots_mode;
-    let dots_to_spend = cmp::min(remaining_budget, dots);
+    let dots = cmp::min(remaining_budget, dots_to_run);
 
     // println!("mode_hblank - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
 
-    if dots_to_spend == 0 {
+    if dots == 0 {
         emu.ppu.dots_mode = 0;
         emu.ppu.scanline_count += 1;
 
@@ -130,26 +138,26 @@ fn mode_hblank(emu: &mut Emu, dots: u16) -> u16 {
         };
 
         // println!("mode_hblank - switching to {:?}", emu.ppu.mode);
-        return 0;
+        return Some(0);
     }
 
-    return dots_to_spend;
+    return Some(dots);
 }
 
-fn mode_vblank(emu: &mut Emu, dots: u16) -> u16 {
+fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     let remaining_budget = DOTS_PER_VBLANK - emu.ppu.dots_mode;
-    let dots_to_spend = cmp::min(remaining_budget, dots);
+    let dots = cmp::min(remaining_budget, dots_to_run);
 
     // println!("mode_vblank - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
 
-    if dots_to_spend == 0 {
+    if dots == 0 {
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
         emu.ppu.scanline_count = 0;
         emu.ppu.mode = PpuMode::PpuOamScan;
         // println!("mode_vblank - NEXT FRAME");
-        return 0;
+        return Some(0);
     }
 
-    return dots_to_spend;
+    return Some(dots);
 }
