@@ -8,6 +8,7 @@ const DOTS_PER_HBLANK: u16 = 87; // min
 const DOTS_PER_VBLANK: u16 = 4560;
 
 const REG_LCDC: u16 = 0xFF40;
+const REG_LY: u16 = 0xFF44;
 
 #[derive(Debug)]
 pub enum PpuMode {
@@ -21,7 +22,6 @@ pub struct PPU {
     mode: PpuMode,
     dots_mode: u16,
     dots_scanline: u16,
-    scanline_count: u8,
     dots_leftover: u16,
 }
 
@@ -29,9 +29,8 @@ impl Display for PPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "PPU")?;
         writeln!(f, "mode={:?}", self.mode)?;
-        writeln!(f, "mode_dots={:?}", self.dots_mode)?;
-        writeln!(f, "scanline_dots={:?}", self.dots_scanline)?;
-        writeln!(f, "scanline_count={:?}", self.scanline_count)?;
+        writeln!(f, "dots_mode={:?}", self.dots_mode)?;
+        writeln!(f, "dots_scanline={:?}", self.dots_scanline)?;
         Ok(())
     }
 }
@@ -42,7 +41,6 @@ impl PPU {
             mode: PpuMode::PpuOamScan,
             dots_mode: 0,
             dots_scanline: 0,
-            scanline_count: 0,
             dots_leftover: 0,
         }
     }
@@ -64,6 +62,7 @@ pub fn step(emu: &mut Emu, cycles_passed: u8) -> u8 {
             emu.ppu.dots_mode += dots_spent;
             dots_budget -= dots_spent;
         } else {
+            todo!("do we get here");
             emu.ppu.dots_leftover = dots_budget;
             break;
         }
@@ -129,9 +128,14 @@ fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
     if dots == 0 {
         emu.ppu.dots_mode = 0;
-        emu.ppu.scanline_count += 1;
+        emu.ppu.dots_scanline = 0;
 
-        emu.ppu.mode = if emu.ppu.scanline_count == 144 {
+        let current_ly = emu.bus_read(REG_LY);
+
+        let ly_next = current_ly + 1;
+        emu.bus_write(REG_LY, ly_next);
+
+        emu.ppu.mode = if current_ly == 143 {
             PpuMode::PpuVBlank
         } else {
             PpuMode::PpuOamScan
@@ -149,12 +153,25 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     let dots = cmp::min(remaining_budget, dots_to_run);
 
     // println!("mode_vblank - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
+    let ly_current = emu.bus_read(REG_LY);
 
-    if dots == 0 {
+    if emu.ppu.dots_mode != 0 && emu.ppu.dots_mode % 456 == 0 {
+        let ly_next = ly_current + 1;
+        emu.bus_write(REG_LY, ly_next);
+    }
+
+    // let vblank_end = dots == 0;
+    let vblank_end = emu.ppu.dots_mode % 456 == 0 && ly_current == 153;
+
+    if vblank_end {
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
-        emu.ppu.scanline_count = 0;
         emu.ppu.mode = PpuMode::PpuOamScan;
+
+        emu.bus_write(REG_LY, 0);
+
+        debug_assert!(dots == 0);
+
         // println!("mode_vblank - NEXT FRAME");
         return Some(0);
     }
