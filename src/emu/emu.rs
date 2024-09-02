@@ -159,6 +159,9 @@ impl Emu {
         util::set_high(&mut self.cpu.af, 0x1);
         self.bus_write(0xFF50, 0x1);
 
+        // 0x91 -> LCDC
+        self.bus_write(0xFF40, 0x91);
+
         util::set_high(&mut self.cpu.bc, 0);
         util::set_low(&mut self.cpu.bc, 0x13);
         util::set_high(&mut self.cpu.de, 0);

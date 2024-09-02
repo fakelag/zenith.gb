@@ -10,6 +10,15 @@ const DOTS_PER_VBLANK: u16 = 4560;
 const REG_LCDC: u16 = 0xFF40;
 const REG_LY: u16 = 0xFF44;
 
+const REG_SCY: u16 = 0xFF42;
+const REG_SCX: u16 = 0xFF43;
+
+const ADDR_TILESET_1: u16 = 0x9800;
+const ADDR_TILESET_2: u16 = 0x9C00;
+
+// TILE NUMBERS     $9800-$9BFF AND $9C00-$9FFF
+// TILE DATA        $8000-$97FF
+
 #[derive(Debug)]
 pub enum PpuMode {
     PpuOamScan,
@@ -23,6 +32,8 @@ pub struct PPU {
     dots_mode: u16,
     dots_scanline: u16,
     dots_leftover: u16,
+
+    fetcher_internal_x: u8, // @todo - better name
 }
 
 impl Display for PPU {
@@ -42,6 +53,7 @@ impl PPU {
             dots_mode: 0,
             dots_scanline: 0,
             dots_leftover: 0,
+            fetcher_internal_x: 0,
         }
     }
 }
@@ -96,7 +108,8 @@ fn mode_oam_scan(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
 fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     // @todo drawing takes 172–289 dots depending on factors
-    // https://gbdev.io/pandocs/Rendering.html
+    // Mode 3 Length: https://gbdev.io/pandocs/Rendering.html#mode-3-length
+    // 12 dots penalty at the start of scanline - https://hacktix.github.io/GBEDG/ppu/#background-pixel-fetching
     let remaining_budget = DOTS_PER_DRAW - emu.ppu.dots_mode;
     let dots = cmp::min(remaining_budget, dots_to_run);
 
@@ -109,7 +122,64 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
         return Some(0);
     }
 
-    // 1. Clock pixelfetchers
+    // @todo - DOTS consumption
+    // Number of available dots is unknown
+    // Action need to be taken only if required dots are available
+    //  - Otherwise return consumed dots or None to wait for more
+    //  - If there are no actions to take, return None to wait for more dots
+    //  if consume(dots, 4) { ...action } else { other action OR return None }
+
+    // 1. Clock pixelfetchers (2 dots each)
+
+    // 1) Fetch Tile No
+    let fetch_bg = true; // bg | window
+
+    let tileset_index = emu.bus_read(REG_LCDC) & (1 << 3); // (1 << 6) for window
+    let tileset_addr = if tileset_index == 0 {
+        ADDR_TILESET_1
+    } else {
+        ADDR_TILESET_2
+    };
+
+    let addressing_mode_8000 = emu.bus_read(REG_LCDC) & (1 << 4);
+
+    let mut current_tile_index: u16 = u16::from(emu.ppu.fetcher_internal_x);
+
+    let ly = emu.bus_read(REG_LY);
+    let scy = emu.bus_read(REG_SCY);
+
+    if fetch_bg {
+        // not in window
+        let scx = emu.bus_read(REG_SCX);
+        current_tile_index = (current_tile_index + u16::from(scx & 0x1F)) & 0x3FF;
+
+        current_tile_index += (32 * ((u16::from(ly + scy) & 0xFF) / 8)) & 0x3FF;
+    }
+
+    println!("{current_tile_index}");
+
+    let tile_addr = tileset_addr + current_tile_index.wrapping_add(u16::from(2 * ((ly + scy) % 8)));
+
+    // 2) Fetch Tile Data (Low)
+
+    let tile_lsb = emu.bus_read(tile_addr);
+
+    // 3) Fetch Tile Data (High)
+    let tile_msb = emu.bus_read(tile_addr + 1);
+
+    println!("{:#x?}", util::value(tile_msb, tile_lsb));
+    // panic!();
+
+    emu.ppu.fetcher_internal_x += 1;
+
+    if emu.ppu.fetcher_internal_x == 160 {
+        // reset, move to hblank
+        emu.ppu.fetcher_internal_x = 0;
+        emu.ppu.dots_mode = 0;
+        emu.ppu.mode = PpuMode::PpuHBlank;
+        return Some(dots); // @todo actual dots that need to be consumed
+    }
+
     // 2. Check if any pixels in BG FIFO (if not, exit)
     // 3. Check if any pixels in Sprite FIFO (if yes, merge with BG pixel)
     // 4. Sprite fetching
@@ -172,7 +242,7 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
         debug_assert!(dots == 0);
 
-        // println!("mode_vblank - NEXT FRAME");
+        println!("mode_vblank - NEXT FRAME");
         return Some(0);
     }
 
