@@ -10,11 +10,11 @@ const DOTS_PER_VBLANK: u16 = 4560;
 const REG_LCDC: u16 = 0xFF40;
 const REG_LY: u16 = 0xFF44;
 
-const REG_SCY: u16 = 0xFF42;
-const REG_SCX: u16 = 0xFF43;
+const REG_SCY: u16 = 0xFF42; // scroll y
+const REG_SCX: u16 = 0xFF43; // scroll x
 
-const ADDR_TILESET_1: u16 = 0x9800;
-const ADDR_TILESET_2: u16 = 0x9C00;
+const ADDR_TILEMAP_1: u16 = 0x9800;
+const ADDR_TILEMAP_2: u16 = 0x9C00;
 
 // TILE NUMBERS     $9800-$9BFF AND $9C00-$9FFF
 // TILE DATA        $8000-$97FF
@@ -33,7 +33,7 @@ pub struct PPU {
     dots_scanline: u16,
     dots_leftover: u16,
 
-    fetcher_internal_x: u8, // @todo - better name
+    fetcher_internal_x: u16, // @todo - better name
 }
 
 impl Display for PPU {
@@ -122,6 +122,13 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
         return Some(0);
     }
 
+    /*
+        The FIFO and Pixel Fetcher work together to ensure that the FIFO always contains at least 8 pixels at any given time,
+        as 8 pixels are required for the Pixel Rendering operation to take place.
+        Each FIFO is manipulated only during mode 3 (pixel transfer).
+        https://gbdev.io/pandocs/pixel_fifo.html#get-tile
+    */
+
     // @todo - DOTS consumption
     // Number of available dots is unknown
     // Action need to be taken only if required dots are available
@@ -134,16 +141,15 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     // 1) Fetch Tile No
     let fetch_bg = true; // bg | window
 
-    let tileset_index = emu.bus_read(REG_LCDC) & (1 << 3); // (1 << 6) for window
-    let tileset_addr = if tileset_index == 0 {
-        ADDR_TILESET_1
+    let tilemap_index = emu.bus_read(REG_LCDC) & (1 << 3); // (1 << 6) for window
+    let tilemap_addr = if tilemap_index == 0 {
+        ADDR_TILEMAP_1
     } else {
-        ADDR_TILESET_2
+        ADDR_TILEMAP_2
     };
 
-    let addressing_mode_8000 = emu.bus_read(REG_LCDC) & (1 << 4);
-
-    let mut current_tile_index: u16 = u16::from(emu.ppu.fetcher_internal_x);
+    let mut x_coord: u16 = 0;
+    let mut y_coord: u16 = 0;
 
     let ly = emu.bus_read(REG_LY);
     let scy = emu.bus_read(REG_SCY);
@@ -151,33 +157,74 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     if fetch_bg {
         // not in window
         let scx = emu.bus_read(REG_SCX);
-        current_tile_index = (current_tile_index + u16::from(scx & 0x1F)) & 0x3FF;
 
-        current_tile_index += (32 * ((u16::from(ly + scy) & 0xFF) / 8)) & 0x3FF;
+        x_coord = ((u16::from(scx) / 8) + emu.ppu.fetcher_internal_x) & 0x1F;
+        y_coord = (u16::from(ly) + u16::from(scy)) & 0xFF;
     }
 
-    println!("{current_tile_index}");
+    let current_tile_index = (x_coord + 32 * (y_coord / 8)) & 0x3FF;
+    // println!("{current_tile_index}: {y_coord} {x_coord}");
 
-    let tile_addr = tileset_addr + current_tile_index.wrapping_add(u16::from(2 * ((ly + scy) % 8)));
+    let tilemap_data_addr = tilemap_addr + current_tile_index;
+
+    let tile_number = emu.bus_read(tilemap_data_addr);
+
+    let addressing_mode_8000 = emu.bus_read(REG_LCDC) & (1 << 4);
 
     // 2) Fetch Tile Data (Low)
 
-    let tile_lsb = emu.bus_read(tile_addr);
+    let tile_lsb = if addressing_mode_8000 == 1 {
+        emu.bus_read(0x8000 + u16::from(tile_number))
+    } else {
+        // todo!("do we get here");
+        let e: i8;
+        unsafe { e = std::mem::transmute::<u8, i8>(tile_number); }
+        emu.bus_read((0x9000 as u16).wrapping_add_signed(e.into()))
+    };
 
     // 3) Fetch Tile Data (High)
-    let tile_msb = emu.bus_read(tile_addr + 1);
+    // Note: 12 dot penalty (this step is restarted, took 6 steps to get here, restart -> 12 steps to continue)
+    let tile_msb = if addressing_mode_8000 == 1 {
+        emu.bus_read(0x8000 + u16::from(tile_number) + 1)
+    } else {
+        // todo!("do we get here");
+        let e: i8;
+        unsafe { e = std::mem::transmute::<u8, i8>(tile_number); }
+        emu.bus_read((0x9000 as u16).wrapping_add_signed(e.into()) + 1)
+    };
 
-    println!("{:#x?}", util::value(tile_msb, tile_lsb));
+    // let tile_data = util::value(tile_msb, tile_lsb);
+    // println!("{:#x?}", tile_data);
+
+    // Decoding tile to pixels experiment
+    {
+        for bit_idx in (0..8).rev() {
+            let hb = (tile_msb >> bit_idx) & 0x1;
+            let lb = (tile_lsb >> bit_idx) & 0x1;
+            let color = lb | (hb << 1);
+            if color == 3 {
+                print!("#");
+            } else if color == 2 {
+                print!("*");
+            } else if color == 1 {
+                print!(".");
+            } else if color == 0 {
+                print!(" ");
+            }
+        }
+    }
+
     // panic!();
 
     emu.ppu.fetcher_internal_x += 1;
 
     if emu.ppu.fetcher_internal_x == 160 {
+        print!("\n");
         // reset, move to hblank
         emu.ppu.fetcher_internal_x = 0;
         emu.ppu.dots_mode = 0;
         emu.ppu.mode = PpuMode::PpuHBlank;
-        return Some(dots); // @todo actual dots that need to be consumed
+        return Some(0); // Some(dots); // @todo actual dots that need to be consumed
     }
 
     // 2. Check if any pixels in BG FIFO (if not, exit)
@@ -195,7 +242,7 @@ fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     let dots = cmp::min(remaining_budget, dots_to_run);
 
     // println!("mode_hblank - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
-
+    // panic!();
     if dots == 0 {
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
