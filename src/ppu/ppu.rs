@@ -154,12 +154,12 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     let ly = emu.bus_read(REG_LY);
     let scy = emu.bus_read(REG_SCY);
 
+    let scx = emu.bus_read(REG_SCX);
+
     if fetch_bg {
         // not in window
-        let scx = emu.bus_read(REG_SCX);
-
         x_coord = ((scx / 8) + emu.ppu.x) & 0x1F;
-        y_coord = (ly + scy) & 0xFF;
+        y_coord = (ly + scy) & 0xFF; // deadcscroll overflow
     }
 
     let current_tile_index = (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF;
@@ -173,7 +173,7 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
     // 2) Fetch Tile Data (Low)
 
-    let tile_number_with_offset = tile_number; //+ 2 * ((ly + scy) % 8);
+    let tile_number_with_offset = tile_number;
 
     let tile_lsb = if addressing_mode_8000 == 1 {
         let o = u8::from(2 * ((ly + scy) % 8));
@@ -210,6 +210,18 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
             let hb = (tile_msb >> bit_idx) & 0x1;
             let lb = (tile_lsb >> bit_idx) & 0x1;
             let color = lb | (hb << 1);
+
+            if emu.ppu.dots_mode == 0 {
+                let discard_count = scx % 8;
+                if bit_idx > (7 - discard_count) {
+                    continue;
+                }
+            }
+
+            if emu.ppu.fetcher_internal_x == 160 {
+                break;
+            }
+
             emu.ppu.rt[ly as usize][emu.ppu.fetcher_internal_x as usize] = color;
             emu.ppu.fetcher_internal_x += 1;
         }
@@ -300,7 +312,7 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
         debug_assert!(dots == 0);
 
-        std::thread::sleep(std::time::Duration::from_millis(1000 / 60));
+        std::thread::sleep(std::time::Duration::from_micros((16.6 * 1000.0) as u64));
         println!("mode_vblank - NEXT FRAME {}", emu.bus_read(REG_SCX));
         return Some(0);
     }

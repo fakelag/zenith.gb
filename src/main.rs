@@ -50,8 +50,8 @@ fn main() {
     let mut emu = Emu::new(cart, frame_sender);
     let emu_thread = std::thread::spawn(move || emu.run());
 
+    let mut last_frame = std::time::Instant::now();
     let mut event_pump = sdl_ctx.event_pump().unwrap();
-
     'eventloop: loop {
         for event in event_pump.poll_iter() {
             match event {
@@ -60,7 +60,6 @@ fn main() {
                 }
                 sdl2::event::Event::KeyDown {..} => {
                     println!("keydown lol");
-                    break 'eventloop;
                 },
                 _ => {}
             }
@@ -68,6 +67,10 @@ fn main() {
 
         match frame_receiver.recv() {
             Ok(rt) => {
+                let frame_time = last_frame.elapsed();
+                
+                canvas.window_mut().set_title(format!("fps={:?}", 1000 / std::cmp::max(frame_time.as_millis(), 1)).as_str()).unwrap();
+
                 texture.with_lock(None, |buffer, size| {
                     for x in 0..160 {
                         for y in 0..144 {
@@ -89,16 +92,17 @@ fn main() {
 
                 canvas.clear();
                 canvas.copy(&texture, None, None).unwrap();
-                canvas.copy_ex(
-                    &texture,
-                    None,
-                    None,
-                    0.0,
-                    None,
-                    false,
-                    false,
-                ).unwrap();
+                // canvas.copy_ex(
+                //     &texture,
+                //     None,
+                //     None,
+                //     0.0,
+                //     None,
+                //     false,
+                //     false,
+                // ).unwrap();
                 canvas.present();
+                last_frame = std::time::Instant::now();
             },
             Err(..) => break 'eventloop,
         }
