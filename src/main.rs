@@ -33,20 +33,18 @@ fn main() {
         for x in 0..160 {
             for y in 0..144 {
                 let color = rt[y][x];
-                // if color == 4 {
-                //     canvas.set_draw_color(sdl2::pixels::Color::RGB( 255, 0, 0));
-                // } else if color == 3 {
-                //     canvas.set_draw_color(sdl2::pixels::Color::RGB( 200, 0, 0));
-                // } else if color == 2 {
-                //     canvas.set_draw_color(sdl2::pixels::Color::RGB( 100, 0, 0));
-                // } else if color == 1 {
-                //     canvas.set_draw_color(sdl2::pixels::Color::RGB( 50, 0, 0));
-                // } else if color == 0 {
-                //     canvas.set_draw_color(sdl2::pixels::Color::RGB( 0, 0, 0));
-                // } else {
-                //     unreachable!();
-                // }
-                canvas.set_draw_color(sdl2::pixels::Color::RGB(color * 50, color * 50, color * 50));
+                if color == 3 {
+                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x1b, 0x2a, 0x09));
+                } else if color == 2 {
+                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x0e, 0x45, 0x0b));
+                } else if color == 1 {
+                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x49, 0x6b, 0x22));
+                } else if color == 0 {
+                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x9a, 0x9e, 0x3f));
+                } else {
+                    unreachable!();
+                }
+                // canvas.set_draw_color(sdl2::pixels::Color::RGB(color * 50, color * 50, color * 50));
                 canvas.draw_point(sdl2::rect::Point::new(x.try_into().unwrap(), y.try_into().unwrap())).unwrap();
             }
         }

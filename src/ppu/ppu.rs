@@ -57,8 +57,8 @@ impl PPU {
             dots_scanline: 0,
             dots_leftover: 0,
             fetcher_internal_x: 0,
-            rt: [[0; 160]; 144],
             x: 0,
+            rt: [[0; 160]; 144],
         }
     }
 }
@@ -120,12 +120,7 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
     // println!("mode_draw - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
 
-    if dots == 0 {
-        emu.ppu.dots_mode = 0;
-        emu.ppu.mode = PpuMode::PpuHBlank;
-        panic!("mode_draw - INTERRUPTED - switching to PpuMode::PpuHBlank");
-        return Some(0);
-    }
+    debug_assert!(dots > 0);
 
     /*
         The FIFO and Pixel Fetcher work together to ensure that the FIFO always contains at least 8 pixels at any given time,
@@ -161,9 +156,9 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
     if fetch_bg {
         // not in window
-        let scx = emu.bus_read(REG_SCX); // always 0
+        let scx = emu.bus_read(REG_SCX);
 
-        x_coord = ((scx / 8) + emu.ppu.fetcher_internal_x) & 0x1F;
+        x_coord = ((scx / 8) + emu.ppu.x) & 0x1F;
         y_coord = (ly + scy) & 0xFF;
     }
 
@@ -178,26 +173,32 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
     // 2) Fetch Tile Data (Low)
 
-    let tile_number_with_offset = tile_number; // + 2 * ((ly + scy) % 8);
+    let tile_number_with_offset = tile_number; //+ 2 * ((ly + scy) % 8);
 
     let tile_lsb = if addressing_mode_8000 == 1 {
-        emu.bus_read(0x8000 + u16::from(tile_number_with_offset))
+        let o = u8::from(2 * ((ly + scy) % 8));
+        emu.bus_read(0x8000 + u16::from(tile_number_with_offset * 16 + o))
     } else {
         // todo!("do we get here");
         let e: i8;
         unsafe { e = std::mem::transmute::<u8, i8>(tile_number_with_offset); }
-        emu.bus_read((0x9000 as u16).wrapping_add_signed(e.into()))
+        let base: u16 = 0x9000;
+        let o = i16::from(2 * ((ly + scy) % 8));
+        emu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o))
     };
 
     // 3) Fetch Tile Data (High)
     // Note: 12 dot penalty (this step is restarted, took 6 steps to get here, restart -> 12 steps to continue)
     let tile_msb = if addressing_mode_8000 == 1 {
-        emu.bus_read(0x8000 + u16::from(tile_number_with_offset) + 1)
+        let o = u8::from(2 * ((ly + scy) % 8));
+        emu.bus_read(0x8000 + u16::from(tile_number_with_offset * 16 + o) + 1)
     } else {
         // todo!("do we get here");
         let e: i8;
         unsafe { e = std::mem::transmute::<u8, i8>(tile_number_with_offset); }
-        emu.bus_read((0x9000 as u16).wrapping_add_signed(e.into()) + 1)
+        let base: u16 = 0x9000;
+        let o = i16::from(2 * ((ly + scy) % 8));
+        emu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o) + 1)
     };
 
     // let tile_data = util::value(tile_msb, tile_lsb);
@@ -209,26 +210,17 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
             let hb = (tile_msb >> bit_idx) & 0x1;
             let lb = (tile_lsb >> bit_idx) & 0x1;
             let color = lb | (hb << 1);
-            // if color == 3 {
-            //     print!("#");
-            // } else if color == 2 {
-            //     print!("*");
-            // } else if color == 1 {
-            //     print!(".");
-            // } else if color == 0 {
-            //     print!(" ");
-            // }
-            emu.ppu.rt[ly as usize][emu.ppu.x as usize] = color;
-            emu.ppu.x += 1;
+            emu.ppu.rt[ly as usize][emu.ppu.fetcher_internal_x as usize] = color;
+            emu.ppu.fetcher_internal_x += 1;
         }
     }
 
-    emu.ppu.fetcher_internal_x += 1;
+    emu.ppu.x += 1;
 
     // panic!();
 
-    if emu.ppu.x == 160 {
-        // print!("\n");
+    if emu.ppu.fetcher_internal_x == 160 {
+        // println!("DRAW -> HBlank");
         // reset, move to hblank
         emu.ppu.x = 0;
         emu.ppu.fetcher_internal_x = 0;
