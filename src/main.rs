@@ -49,7 +49,7 @@ fn main() {
 
     let mut emu = Emu::new(cart, frame_sender);
     let emu_thread = std::thread::spawn(move || emu.run());
-
+    
     let mut last_frame = std::time::Instant::now();
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     'eventloop: loop {

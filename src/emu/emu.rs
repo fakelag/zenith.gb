@@ -148,6 +148,9 @@ impl Emu {
                 unreachable!();
             }
             0xFF00..=0xFF7F => {
+                if address == 0xFF46 {
+                    todo!("dma transfer");
+                }
                 self.memory[usize::from(address)] = data;
             }
             0xFF80..=0xFFFE => {

@@ -1,4 +1,4 @@
-use std::{cmp, fmt::{self, Display}};
+use std::{borrow::Borrow, cmp, collections::VecDeque, fmt::{self, Display}};
 
 use crate::{cpu::{*}, emu::emu::Emu, util::*};
 
@@ -27,14 +27,29 @@ pub enum PpuMode {
     PpuVBlank
 }
 
+struct GbPixel {
+    pub color: u8,
+    pub palette: u8, // OBP0 / OBP1 for DMG, a value between 0 and 7 on CGB
+    // pub sprite_priority: u8, // CGB
+    pub bg_priority: u8,
+}
+
+struct Pixelfetcher {
+    pub current_step: u8,
+    pub fetcher_x: u8,
+}
+
 pub struct PPU {
     mode: PpuMode,
     dots_mode: u16,
     dots_scanline: u16,
     dots_leftover: u16,
 
-    fetcher_internal_x: u8, // @todo - better name
-    x: u8,
+    bg_fifo: VecDeque<GbPixel>,
+    scx_discard_count: u8,
+
+    pixelfetcher: Pixelfetcher,
+    current_x: u8, // @todo - better name
 
     rt: [[u8; 160]; 144],
 }
@@ -56,14 +71,26 @@ impl PPU {
             dots_mode: 0,
             dots_scanline: 0,
             dots_leftover: 0,
-            fetcher_internal_x: 0,
-            x: 0,
+            pixelfetcher: Pixelfetcher{
+                current_step: 0,
+                fetcher_x: 0,
+            },
+            current_x: 0,
+            bg_fifo: VecDeque::new(),
+            scx_discard_count: 0,
             rt: [[0; 160]; 144],
         }
     }
 }
 
 pub fn step(emu: &mut Emu, cycles_passed: u8) -> u8 {
+    let lcd_enable = emu.bus_read(REG_LCDC) & (1 << 7);
+    if lcd_enable == 0 {
+        return 0;
+    }
+
+    debug_assert!(emu.bus_read(REG_LY) <= 153);
+
     let mut dots_budget = u16::from(cycles_passed * 4) + emu.ppu.dots_leftover;
 
     while dots_budget > 0 {
@@ -136,106 +163,33 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     //  - If there are no actions to take, return None to wait for more dots
     //  if consume(dots, 4) { ...action } else { other action OR return None }
 
-    // 1. Clock pixelfetchers (2 dots each)
+    // 1. Clock pixelfetchers
+    Pixelfetcher::step(emu, dots_to_run);
 
-    // 1) Fetch Tile No
-    let fetch_bg = true; // bg | window
-
-    let tilemap_index = emu.bus_read(REG_LCDC) & (1 << 3); // (1 << 6) for window
-    let tilemap_addr = if tilemap_index == 0 {
-        ADDR_TILEMAP_1
-    } else {
-        ADDR_TILEMAP_2
-    };
-
-    let mut x_coord: u8 = 0;
-    let mut y_coord: u8 = 0;
-
-    let ly = emu.bus_read(REG_LY);
-    let scy = emu.bus_read(REG_SCY);
-
-    let scx = emu.bus_read(REG_SCX);
-
-    if fetch_bg {
-        // not in window
-        x_coord = ((scx / 8) + emu.ppu.x) & 0x1F;
-        y_coord = (ly + scy) & 0xFF; // deadcscroll overflow
+    if emu.ppu.dots_mode == 0 {
+        debug_assert!(emu.ppu.current_x == 0);
+        // Start of scanline, discard scx % 8 pixels
+        let scx = emu.bus_read(REG_SCX);
+        emu.ppu.scx_discard_count = scx % 8;
     }
+    
+    if let Some(pixel) = emu.ppu.bg_fifo.pop_front() {
+        if emu.ppu.scx_discard_count > 0 {
+            emu.ppu.scx_discard_count -= 1;
+        } else {
+            let ly = emu.bus_read(REG_LY);
 
-    let current_tile_index = (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF;
-    // println!("{current_tile_index}: {y_coord} {x_coord}");
-
-    let tilemap_data_addr = tilemap_addr + current_tile_index;
-
-    let tile_number = emu.bus_read(tilemap_data_addr);
-
-    let addressing_mode_8000 = emu.bus_read(REG_LCDC) & (1 << 4);
-
-    // 2) Fetch Tile Data (Low)
-
-    let tile_number_with_offset = tile_number;
-
-    let tile_lsb = if addressing_mode_8000 == 1 {
-        let o = u8::from(2 * ((ly + scy) % 8));
-        emu.bus_read(0x8000 + u16::from(tile_number_with_offset * 16 + o))
-    } else {
-        // todo!("do we get here");
-        let e: i8;
-        unsafe { e = std::mem::transmute::<u8, i8>(tile_number_with_offset); }
-        let base: u16 = 0x9000;
-        let o = i16::from(2 * ((ly + scy) % 8));
-        emu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o))
-    };
-
-    // 3) Fetch Tile Data (High)
-    // Note: 12 dot penalty (this step is restarted, took 6 steps to get here, restart -> 12 steps to continue)
-    let tile_msb = if addressing_mode_8000 == 1 {
-        let o = u8::from(2 * ((ly + scy) % 8));
-        emu.bus_read(0x8000 + u16::from(tile_number_with_offset * 16 + o) + 1)
-    } else {
-        // todo!("do we get here");
-        let e: i8;
-        unsafe { e = std::mem::transmute::<u8, i8>(tile_number_with_offset); }
-        let base: u16 = 0x9000;
-        let o = i16::from(2 * ((ly + scy) % 8));
-        emu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o) + 1)
-    };
-
-    // let tile_data = util::value(tile_msb, tile_lsb);
-    // println!("{:#x?}", tile_data);
-
-    // Decoding tile to pixels experiment
-    {
-        for bit_idx in (0..8).rev() {
-            let hb = (tile_msb >> bit_idx) & 0x1;
-            let lb = (tile_lsb >> bit_idx) & 0x1;
-            let color = lb | (hb << 1);
-
-            if emu.ppu.dots_mode == 0 {
-                let discard_count = scx % 8;
-                if bit_idx > (7 - discard_count) {
-                    continue;
-                }
-            }
-
-            if emu.ppu.fetcher_internal_x == 160 {
-                break;
-            }
-
-            emu.ppu.rt[ly as usize][emu.ppu.fetcher_internal_x as usize] = color;
-            emu.ppu.fetcher_internal_x += 1;
+            emu.ppu.rt[ly as usize][emu.ppu.current_x as usize] = pixel.color;
+            emu.ppu.current_x += 1;
         }
     }
 
-    emu.ppu.x += 1;
-
-    // panic!();
-
-    if emu.ppu.fetcher_internal_x == 160 {
-        // println!("DRAW -> HBlank");
+    if emu.ppu.current_x == 160 {
         // reset, move to hblank
-        emu.ppu.x = 0;
-        emu.ppu.fetcher_internal_x = 0;
+        emu.ppu.bg_fifo.clear();
+        emu.ppu.scx_discard_count = 0;
+        emu.ppu.pixelfetcher.reset();
+        emu.ppu.current_x = 0;
         emu.ppu.dots_mode = 0;
         emu.ppu.mode = PpuMode::PpuHBlank;
         return Some(1); // Some(dots); // @todo actual dots that need to be consumed
@@ -318,4 +272,90 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     }
 
     return Some(dots);
+}
+
+impl Pixelfetcher {
+    fn reset(&mut self) {
+        self.current_step = 0;
+        self.fetcher_x = 0;
+    }
+
+    fn step(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
+        if emu.ppu.bg_fifo.len() > 0 {
+            return Some(1);
+        }
+        // 1) Fetch Tile No
+        let tile_number = Pixelfetcher::fetch_tile_number(emu);
+
+        // 2) Fetch Tile Data (Low)
+        let tile_lsb = Pixelfetcher::fetch_tile_byte(emu, tile_number, 0);
+
+        // 3) Fetch Tile Data (High)
+        // Note: 12 dot penalty (this step is restarted, took 6 steps to get here, restart -> 12 steps to continue)
+        let tile_msb = Pixelfetcher::fetch_tile_byte(emu, tile_number, 1);
+
+        for bit_idx in (0..8).rev() {
+            let hb = (tile_msb >> bit_idx) & 0x1;
+            let lb = (tile_lsb >> bit_idx) & 0x1;
+            let color = lb | (hb << 1);
+
+            emu.ppu.bg_fifo.push_back(GbPixel{ color, palette: 0, bg_priority: 0 });
+        }
+
+        emu.ppu.pixelfetcher.fetcher_x += 1;
+
+        Some(1)
+    }
+
+    fn fetch_tile_number(emu: &mut Emu) -> u8 {
+        let fetch_bg = true;
+
+        let tilemap_index = emu.bus_read(REG_LCDC) & (1 << 3); // (1 << 6) for window
+        let tilemap_addr = if tilemap_index == 0 {
+            ADDR_TILEMAP_1
+        } else {
+            ADDR_TILEMAP_2
+        };
+
+        let mut x_coord: u8 = 0;
+        let mut y_coord: u8 = 0;
+
+        let ly = emu.bus_read(REG_LY);
+        let scy = emu.bus_read(REG_SCY);
+
+        let scx = emu.bus_read(REG_SCX);
+
+        if fetch_bg {
+            // not in window
+            x_coord = ((scx / 8) + emu.ppu.pixelfetcher.fetcher_x) & 0x1F;
+            y_coord = (ly + scy) & 0xFF; // deadcscroll overflow
+        }
+
+        let current_tile_index = (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF;
+        // println!("{current_tile_index}: {y_coord} {x_coord}");
+
+        let tilemap_data_addr = tilemap_addr + current_tile_index;
+
+        let tile_number = emu.bus_read(tilemap_data_addr);
+        tile_number
+    }
+
+    fn fetch_tile_byte(emu: &mut Emu, tile_number: u8, offset: u8) -> u8 {
+        let ly = emu.bus_read(REG_LY);
+        let scy = emu.bus_read(REG_SCY);
+        let addressing_mode_8000 = emu.bus_read(REG_LCDC) & (1 << 4);
+
+        let tile_byte = if addressing_mode_8000 == 1 {
+            let o = u8::from(2 * ((ly + scy) % 8));
+            emu.bus_read(0x8000 + u16::from(tile_number * 16 + o) + u16::from(offset))
+        } else {
+            let e: i8;
+            unsafe { e = std::mem::transmute::<u8, i8>(tile_number); }
+            let base: u16 = 0x9000;
+            let o = i16::from(2 * ((ly + scy) % 8));
+            emu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o) + u16::from(offset))
+        };
+
+        tile_byte
+    }
 }
