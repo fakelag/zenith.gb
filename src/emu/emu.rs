@@ -1,4 +1,4 @@
-use std::{fmt::{self, Display}, thread, time};
+use std::{fmt::{self, Display}, sync::mpsc::SyncSender, time};
 
 use crate::{
     cartridge::cartridge::*,
@@ -7,7 +7,7 @@ use crate::{
     util::util,
 };
 
-type RenderCallback = dyn FnMut([[u8; 160]; 144]); // + fn(rt: [[u8; 160]; 144]);
+pub type FrameBuffer = [[u8; 160]; 144];
 
 pub struct Emu {
     cart: Cartridge,
@@ -20,7 +20,7 @@ pub struct Emu {
     // debug
     pub start_at: time::Instant,
 
-    pub render_callback: Box<RenderCallback>,
+    pub frame_chan: SyncSender<FrameBuffer>,
 }
 
 impl Display for Emu {
@@ -34,46 +34,40 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(cart: Cartridge, render_cb: Box<RenderCallback>) -> Self {
+    pub fn new(cart: Cartridge, frame_chan: SyncSender<FrameBuffer>) -> Self {
         Self {
             cart,
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
             memory: [0; 0x10000],
             start_at: time::Instant::now(),
-            render_callback: render_cb,
+            frame_chan: frame_chan,
         }
     }
 
-    pub fn step(&mut self) {
-        // @todo refactors
-        let cycles = cpu::step(self);
-        ppu::step(self, cycles);
-    }
+    pub fn run(self: &mut Emu) {
+        self.dmg_boot();
 
-//     pub fn run(self: &mut Emu) {
-//         self.dmg_boot();
+        // 4,194304 MHz
+        // let cycles_in_one_nano = 0.004194304;
+        // let nanos_per_cycle = (1.0 / cycles_in_one_nano) as u64;
 
-//         // 4,194304 MHz
-//         // let cycles_in_one_nano = 0.004194304;
-//         // let nanos_per_cycle = (1.0 / cycles_in_one_nano) as u64;
+        self.start_at = time::Instant::now();
 
-//         self.start_at = time::Instant::now();
+        loop {
+            // let cycle_start_at = time::Instant::now();
+            let cycles = cpu::step(self);
 
-//         loop {
-//             // let cycle_start_at = time::Instant::now();
-//             let cycles = cpu::step(self);
+            ppu::step(self, cycles);
 
-//             ppu::step(self, cycles);
+            // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
+            // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
 
-//             // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
-//             // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
-
-//             // if let Some(ns) = ns_to_sleep {
-//             //     thread::sleep(time::Duration::from_nanos(ns));
-//             // }
-//        }
-//    }
+            // if let Some(ns) = ns_to_sleep {
+            //     thread::sleep(time::Duration::from_nanos(ns));
+            // }
+       }
+   }
 
     pub fn bus_read(self: &Emu, address: u16) -> u8 {
         // https://gbdev.io/pandocs/Memory_Map.html
@@ -165,7 +159,7 @@ impl Emu {
         }
     }
 
-    pub fn dmg_boot(&mut self) {
+    fn dmg_boot(&mut self) {
         // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
         util::set_high(&mut self.cpu.af, 0x1);
         self.bus_write(0xFF50, 0x1);

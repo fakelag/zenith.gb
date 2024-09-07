@@ -1,5 +1,4 @@
 use cartridge::cartridge::Cartridge;
-use emu::emu::Emu;
 
 mod cpu;
 mod ppu;
@@ -7,12 +6,18 @@ mod emu;
 mod util;
 mod cartridge;
 
+use emu::emu::{Emu, FrameBuffer};
+
 fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl) {
     let sdl_ctx = sdl2::init().unwrap();
+
     let video_subsystem = sdl_ctx.video().unwrap();
 
-    let window = video_subsystem.window("Gameboy", 160, 144)
+    let asp = 144.0 / 160.0;
+
+    let window = video_subsystem.window("Gameboy", 512, (512.0 * asp) as u32)
         .position_centered()
+        .opengl()
         .build()
         .expect("could not create window");
 
@@ -22,40 +27,28 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
     return (canvas, sdl_ctx);
 }
 
+const PALETTE: [sdl2::pixels::Color; 4] = [
+    sdl2::pixels::Color::RGB(0x9a, 0x9e, 0x3f),
+    sdl2::pixels::Color::RGB(0x49, 0x6b, 0x22),
+    sdl2::pixels::Color::RGB(0x0e, 0x45, 0x0b),
+    sdl2::pixels::Color::RGB(0x1b, 0x2a, 0x09)
+];
+
 fn main() {
     let (mut canvas, sdl_ctx) = sdl2_create_window();
 
     let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
 
-    let mut emu = Emu::new(cart, Box::new(move |rt| {
-        canvas.clear();
+    let texture_creator = canvas.texture_creator();
 
-        for x in 0..160 {
-            for y in 0..144 {
-                let color = rt[y][x];
-                if color == 3 {
-                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x1b, 0x2a, 0x09));
-                } else if color == 2 {
-                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x0e, 0x45, 0x0b));
-                } else if color == 1 {
-                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x49, 0x6b, 0x22));
-                } else if color == 0 {
-                    canvas.set_draw_color(sdl2::pixels::Color::RGB( 0x9a, 0x9e, 0x3f));
-                } else {
-                    unreachable!();
-                }
-                // canvas.set_draw_color(sdl2::pixels::Color::RGB(color * 50, color * 50, color * 50));
-                canvas.draw_point(sdl2::rect::Point::new(x.try_into().unwrap(), y.try_into().unwrap())).unwrap();
-            }
-        }
+    let mut texture = texture_creator
+        .create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24, 160, 144)
+        .unwrap();
 
-        canvas.present();
+    let (frame_sender, frame_receiver) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
 
-    }));
-
-    emu.dmg_boot();
-
-//    emu.run();
+    let mut emu = Emu::new(cart, frame_sender);
+    let emu_thread = std::thread::spawn(move || emu.run());
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();
 
@@ -73,19 +66,46 @@ fn main() {
             }
         }
 
-        // canvas.clear();
+        match frame_receiver.recv() {
+            Ok(rt) => {
+                texture.with_lock(None, |buffer, size| {
+                    for x in 0..160 {
+                        for y in 0..144 {
+                            let color = rt[y][x];
 
-        // for x in 0..160 {
-        //     for y in 0..144 {
-        //         canvas.set_draw_color(sdl2::pixels::Color::RGB(y, x, 0));
-        //         canvas.draw_point(sdl2::rect::Point::new(x.into(), y.into())).unwrap();
-        //     }
-        // }
+                            let index = y * size + x * 3;
+                            match color {
+                                0..=3 => {
+                                    let c = PALETTE[color as usize];
+                                    buffer[index] = c.r;
+                                    buffer[index+1] = c.g;
+                                    buffer[index+2] = c.b;
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                }).unwrap();
 
-        // canvas.present();
-
-        emu.step();
+                canvas.clear();
+                canvas.copy(&texture, None, None).unwrap();
+                canvas.copy_ex(
+                    &texture,
+                    None,
+                    None,
+                    0.0,
+                    None,
+                    false,
+                    false,
+                ).unwrap();
+                canvas.present();
+            },
+            Err(..) => break 'eventloop,
+        }
 
         // std::thread::sleep(std::time::Duration::from_millis(100));
     }
+
+    drop(frame_receiver);
+    emu_thread.join().unwrap();
 }

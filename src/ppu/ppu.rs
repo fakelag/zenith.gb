@@ -1,6 +1,6 @@
 use std::{cmp, fmt::{self, Display}};
 
-use crate::{emu::emu::Emu, util::*};
+use crate::{cpu::{*}, emu::emu::Emu, util::*};
 
 const DOTS_PER_OAM_SCAN: u16 = 80;
 const DOTS_PER_DRAW: u16 = 172; // min
@@ -245,6 +245,7 @@ fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
     // println!("mode_hblank - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
     // panic!();
+
     if dots == 0 {
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
@@ -255,7 +256,10 @@ fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
         emu.bus_write(REG_LY, ly_next);
 
         emu.ppu.mode = if current_ly == 143 {
-            (emu.render_callback)(emu.ppu.rt);
+            // set vblank interrupt
+            let flags_if = emu.bus_read(cpu::HREG_IF);
+            emu.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_VBLANK);
+
             PpuMode::PpuVBlank
         } else {
             PpuMode::PpuOamScan
@@ -284,6 +288,10 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     let vblank_end = emu.ppu.dots_mode % 456 == 0 && ly_current == 153;
 
     if vblank_end {
+        // @todo - Sending will fail when exiting the app.
+        // - A way to close emu thread and exit gracefully
+        emu.frame_chan.send(emu.ppu.rt).unwrap();
+
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
         emu.ppu.mode = PpuMode::PpuOamScan;
@@ -292,8 +300,8 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
         debug_assert!(dots == 0);
 
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        println!("mode_vblank - NEXT FRAME");
+        std::thread::sleep(std::time::Duration::from_millis(1000 / 60));
+        println!("mode_vblank - NEXT FRAME {}", emu.bus_read(REG_SCX));
         return Some(0);
     }
 
