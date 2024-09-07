@@ -23,10 +23,8 @@ pub fn value(high: u8, low: u8) -> u16 {
 }
 
 pub fn consume_signed_from_pc(emu: &mut Emu) -> i8 {
-    let e: i8;
     let val = emu.bus_read(emu.cpu.pc);
-
-    unsafe { e = std::mem::transmute::<u8, i8>(val); }
+    let e = val as i8;
     emu.cpu.pc += 1;
     return e;
 }

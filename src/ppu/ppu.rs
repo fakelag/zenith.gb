@@ -1,9 +1,9 @@
+use core::panic;
 use std::{borrow::Borrow, cmp, collections::VecDeque, fmt::{self, Display}};
 
 use crate::{cpu::{*}, emu::emu::Emu, util::*};
 
 const DOTS_PER_OAM_SCAN: u16 = 80;
-const DOTS_PER_DRAW: u16 = 172; // min
 const DOTS_PER_HBLANK: u16 = 87; // min
 const DOTS_PER_VBLANK: u16 = 4560;
 
@@ -34,9 +34,20 @@ struct GbPixel {
     pub bg_priority: u8,
 }
 
+enum PixelfetcherStep {
+    FetchTile,
+    TileDataLow,
+    TileDataHigh,
+    PushFifo,
+}
+
 struct Pixelfetcher {
-    pub current_step: u8,
-    pub fetcher_x: u8,
+    current_step: PixelfetcherStep,
+    fetcher_x: u8,
+    tile_number: u8,
+    tile_lsb: u8,
+    tile_msb: u8,
+    fresh_scanline: bool, 
 }
 
 pub struct PPU {
@@ -49,7 +60,7 @@ pub struct PPU {
     scx_discard_count: u8,
 
     pixelfetcher: Pixelfetcher,
-    current_x: u8, // @todo - better name
+    current_x: u8,
 
     rt: [[u8; 160]; 144],
 }
@@ -72,8 +83,12 @@ impl PPU {
             dots_scanline: 0,
             dots_leftover: 0,
             pixelfetcher: Pixelfetcher{
-                current_step: 0,
+                current_step: PixelfetcherStep::FetchTile,
                 fetcher_x: 0,
+                tile_number: 0,
+                tile_lsb: 0xFF,
+                tile_msb: 0xFF,
+                fresh_scanline: true,
             },
             current_x: 0,
             bg_fifo: VecDeque::new(),
@@ -106,7 +121,6 @@ pub fn step(emu: &mut Emu, cycles_passed: u8) -> u8 {
             emu.ppu.dots_mode += dots_spent;
             dots_budget -= dots_spent;
         } else {
-            todo!("do we get here");
             emu.ppu.dots_leftover = dots_budget;
             break;
         }
@@ -124,6 +138,12 @@ fn mode_oam_scan(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     if dots == 0 {
         emu.ppu.dots_mode = 0;
         emu.ppu.mode = PpuMode::PpuDraw;
+
+        // Start of scanline, discard scx % 8 pixels
+        debug_assert!(emu.ppu.current_x == 0);
+        let scx = emu.bus_read(REG_SCX);
+        emu.ppu.scx_discard_count = scx % 8;
+
         // println!("mode_oam_scan - switching to PpuMode::PpuDraw");
         return Some(0);
     }
@@ -141,13 +161,27 @@ fn mode_oam_scan(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     // @todo drawing takes 172–289 dots depending on factors
     // Mode 3 Length: https://gbdev.io/pandocs/Rendering.html#mode-3-length
-    // 12 dots penalty at the start of scanline - https://hacktix.github.io/GBEDG/ppu/#background-pixel-fetching
-    let remaining_budget = DOTS_PER_DRAW - emu.ppu.dots_mode;
-    let dots = cmp::min(remaining_budget, dots_to_run);
 
     // println!("mode_draw - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
 
-    debug_assert!(dots > 0);
+    debug_assert!(emu.ppu.dots_mode < 289);
+
+    if emu.ppu.current_x == 160 {
+        // Assert timing
+        debug_assert!(emu.ppu.dots_mode >= 172);
+        debug_assert!(emu.ppu.dots_mode <= 289);
+
+        println!("draw_duration={} dots", emu.ppu.dots_mode);
+
+        // reset, move to hblank
+        emu.ppu.bg_fifo.clear();
+        emu.ppu.scx_discard_count = 0;
+        emu.ppu.pixelfetcher.reset();
+        emu.ppu.current_x = 0;
+        emu.ppu.dots_mode = 0;
+        emu.ppu.mode = PpuMode::PpuHBlank;
+        return Some(0);
+    }
 
     /*
         The FIFO and Pixel Fetcher work together to ensure that the FIFO always contains at least 8 pixels at any given time,
@@ -156,43 +190,33 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
         https://gbdev.io/pandocs/pixel_fifo.html#get-tile
     */
 
-    // @todo - DOTS consumption
-    // Number of available dots is unknown
-    // Action need to be taken only if required dots are available
-    //  - Otherwise return consumed dots or None to wait for more
-    //  - If there are no actions to take, return None to wait for more dots
-    //  if consume(dots, 4) { ...action } else { other action OR return None }
-
     // 1. Clock pixelfetchers
-    Pixelfetcher::step(emu, dots_to_run);
+    let fetcher_run = Pixelfetcher::step(emu, dots_to_run);
 
-    if emu.ppu.dots_mode == 0 {
-        debug_assert!(emu.ppu.current_x == 0);
-        // Start of scanline, discard scx % 8 pixels
-        let scx = emu.bus_read(REG_SCX);
-        emu.ppu.scx_discard_count = scx % 8;
+    if !fetcher_run {
+        return None;
     }
-    
-    if let Some(pixel) = emu.ppu.bg_fifo.pop_front() {
-        if emu.ppu.scx_discard_count > 0 {
-            emu.ppu.scx_discard_count -= 1;
-        } else {
-            let ly = emu.bus_read(REG_LY);
 
-            emu.ppu.rt[ly as usize][emu.ppu.current_x as usize] = pixel.color;
-            emu.ppu.current_x += 1;
+    let fetcher_dots = 2;
+
+    for dot in 1..=fetcher_dots {
+        if let Some(pixel) = emu.ppu.bg_fifo.pop_front() {
+            // println!("first pixel {}", emu.ppu.dots_mode);
+            // panic!("first pixel");
+
+            if emu.ppu.scx_discard_count > 0 {
+                emu.ppu.scx_discard_count -= 1;
+            } else {
+                let ly = emu.bus_read(REG_LY);
+
+                emu.ppu.rt[ly as usize][emu.ppu.current_x as usize] = pixel.color;
+                emu.ppu.current_x += 1;
+            }
         }
-    }
 
-    if emu.ppu.current_x == 160 {
-        // reset, move to hblank
-        emu.ppu.bg_fifo.clear();
-        emu.ppu.scx_discard_count = 0;
-        emu.ppu.pixelfetcher.reset();
-        emu.ppu.current_x = 0;
-        emu.ppu.dots_mode = 0;
-        emu.ppu.mode = PpuMode::PpuHBlank;
-        return Some(1); // Some(dots); // @todo actual dots that need to be consumed
+        if emu.ppu.current_x == 160 {
+            return Some(dot);
+        }
     }
 
     // 2. Check if any pixels in BG FIFO (if not, exit)
@@ -201,7 +225,7 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     // 5. Window fetching
     // 6. End scanline
 
-    return Some(1);
+    return Some(fetcher_dots);
 }
 
 fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
@@ -213,6 +237,9 @@ fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     // panic!();
 
     if dots == 0 {
+        debug_assert!(emu.ppu.dots_mode >= 87);
+        debug_assert!(emu.ppu.dots_mode <= 204);
+
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
 
@@ -276,35 +303,58 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
 impl Pixelfetcher {
     fn reset(&mut self) {
-        self.current_step = 0;
+        self.current_step = PixelfetcherStep::FetchTile;
         self.fetcher_x = 0;
+        self.tile_number = 0;
+        self.tile_lsb = 0xFF;
+        self.tile_msb = 0xFF;
+        self.fresh_scanline = true;
     }
 
-    fn step(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
-        if emu.ppu.bg_fifo.len() > 0 {
-            return Some(1);
-        }
-        // 1) Fetch Tile No
-        let tile_number = Pixelfetcher::fetch_tile_number(emu);
-
-        // 2) Fetch Tile Data (Low)
-        let tile_lsb = Pixelfetcher::fetch_tile_byte(emu, tile_number, 0);
-
-        // 3) Fetch Tile Data (High)
-        // Note: 12 dot penalty (this step is restarted, took 6 steps to get here, restart -> 12 steps to continue)
-        let tile_msb = Pixelfetcher::fetch_tile_byte(emu, tile_number, 1);
-
-        for bit_idx in (0..8).rev() {
-            let hb = (tile_msb >> bit_idx) & 0x1;
-            let lb = (tile_lsb >> bit_idx) & 0x1;
-            let color = lb | (hb << 1);
-
-            emu.ppu.bg_fifo.push_back(GbPixel{ color, palette: 0, bg_priority: 0 });
+    fn step(emu: &mut Emu, dots_to_run: u16) -> bool {
+        if dots_to_run < 2 {
+            return false;
         }
 
-        emu.ppu.pixelfetcher.fetcher_x += 1;
+        match emu.ppu.pixelfetcher.current_step {
+            PixelfetcherStep::FetchTile => {
+                emu.ppu.pixelfetcher.tile_number = Pixelfetcher::fetch_tile_number(emu);
+                emu.ppu.pixelfetcher.current_step = PixelfetcherStep::TileDataLow;
+            }
+            PixelfetcherStep::TileDataLow => {
+                emu.ppu.pixelfetcher.tile_lsb = Pixelfetcher::fetch_tile_byte(emu, emu.ppu.pixelfetcher.tile_number, 0);
+                emu.ppu.pixelfetcher.current_step = PixelfetcherStep::TileDataHigh;
+            }
+            PixelfetcherStep::TileDataHigh => {
+                if emu.ppu.pixelfetcher.fresh_scanline {
+                    emu.ppu.pixelfetcher.reset();
+                    emu.ppu.pixelfetcher.fresh_scanline = false;
+                    return true;
+                }
 
-        Some(1)
+                emu.ppu.pixelfetcher.tile_msb = Pixelfetcher::fetch_tile_byte(emu, emu.ppu.pixelfetcher.tile_number, 1);
+                emu.ppu.pixelfetcher.current_step = PixelfetcherStep::PushFifo;
+            }
+            PixelfetcherStep::PushFifo => {
+                if emu.ppu.bg_fifo.len() > 0 {
+                    todo!("push fifo should restart 2 times");
+                    return true;
+                }
+                // println!("push fifo success");
+                for bit_idx in (0..8).rev() {
+                    let hb = (emu.ppu.pixelfetcher.tile_msb >> bit_idx) & 0x1;
+                    let lb = (emu.ppu.pixelfetcher.tile_lsb >> bit_idx) & 0x1;
+                    let color = lb | (hb << 1);
+
+                    emu.ppu.bg_fifo.push_back(GbPixel{ color, palette: 0, bg_priority: 0 });
+                }
+
+                emu.ppu.pixelfetcher.fetcher_x += 1;
+                emu.ppu.pixelfetcher.current_step = PixelfetcherStep::FetchTile;
+            }
+        }
+
+        true
     }
 
     fn fetch_tile_number(emu: &mut Emu) -> u8 {
@@ -349,8 +399,7 @@ impl Pixelfetcher {
             let o = u8::from(2 * ((ly + scy) % 8));
             emu.bus_read(0x8000 + u16::from(tile_number * 16 + o) + u16::from(offset))
         } else {
-            let e: i8;
-            unsafe { e = std::mem::transmute::<u8, i8>(tile_number); }
+            let e: i8 = tile_number as i8;
             let base: u16 = 0x9000;
             let o = i16::from(2 * ((ly + scy) % 8));
             emu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o) + u16::from(offset))
