@@ -4,7 +4,6 @@ use std::{borrow::Borrow, cmp, collections::VecDeque, fmt::{self, Display}};
 use crate::{cpu::{*}, emu::emu::Emu, util::*};
 
 const DOTS_PER_OAM_SCAN: u16 = 80;
-const DOTS_PER_HBLANK: u16 = 87; // min
 const DOTS_PER_VBLANK: u16 = 4560;
 
 const REG_LCDC: u16 = 0xFF40;
@@ -57,7 +56,7 @@ pub struct PPU {
     dots_leftover: u16,
 
     bg_fifo: VecDeque<GbPixel>,
-    scx_discard_count: u8,
+    bg_scroll_count: u8,
 
     pixelfetcher: Pixelfetcher,
     current_x: u8,
@@ -92,7 +91,7 @@ impl PPU {
             },
             current_x: 0,
             bg_fifo: VecDeque::new(),
-            scx_discard_count: 0,
+            bg_scroll_count: 0,
             rt: [[0; 160]; 144],
         }
     }
@@ -142,7 +141,7 @@ fn mode_oam_scan(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
         // Start of scanline, discard scx % 8 pixels
         debug_assert!(emu.ppu.current_x == 0);
         let scx = emu.bus_read(REG_SCX);
-        emu.ppu.scx_discard_count = scx % 8;
+        emu.ppu.bg_scroll_count = scx % 8;
 
         // println!("mode_oam_scan - switching to PpuMode::PpuDraw");
         return Some(0);
@@ -159,24 +158,16 @@ fn mode_oam_scan(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 }
 
 fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
-    // @todo drawing takes 172–289 dots depending on factors
-    // Mode 3 Length: https://gbdev.io/pandocs/Rendering.html#mode-3-length
-
-    // println!("mode_draw - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
-
     debug_assert!(emu.ppu.dots_mode < 289);
 
     if emu.ppu.current_x == 160 {
-        // Assert timing
         debug_assert!(emu.ppu.dots_mode >= 172);
         debug_assert!(emu.ppu.dots_mode <= 289);
 
-        println!("draw_duration={} dots", emu.ppu.dots_mode);
-
         // reset, move to hblank
         emu.ppu.bg_fifo.clear();
-        emu.ppu.scx_discard_count = 0;
         emu.ppu.pixelfetcher.reset();
+        emu.ppu.bg_scroll_count = 0;
         emu.ppu.current_x = 0;
         emu.ppu.dots_mode = 0;
         emu.ppu.mode = PpuMode::PpuHBlank;
@@ -201,11 +192,8 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
     for dot in 1..=fetcher_dots {
         if let Some(pixel) = emu.ppu.bg_fifo.pop_front() {
-            // println!("first pixel {}", emu.ppu.dots_mode);
-            // panic!("first pixel");
-
-            if emu.ppu.scx_discard_count > 0 {
-                emu.ppu.scx_discard_count -= 1;
+            if emu.ppu.bg_scroll_count > 0 {
+                emu.ppu.bg_scroll_count -= 1;
             } else {
                 let ly = emu.bus_read(REG_LY);
 
@@ -229,16 +217,14 @@ fn mode_draw(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 }
 
 fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
-    // @todo hblank takes 87–204 dots depending on length of drawing (376 - mode 3’s duration)
-    let remaining_budget = DOTS_PER_HBLANK - emu.ppu.dots_mode;
-    let dots = cmp::min(remaining_budget, dots_to_run);
-
-    // println!("mode_hblank - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
-    // panic!();
+    let mode3_duration = emu.ppu.dots_scanline - DOTS_PER_OAM_SCAN;
+    let remaining_dots = 376 - mode3_duration;
+    let dots = cmp::min(remaining_dots, dots_to_run);
 
     if dots == 0 {
         debug_assert!(emu.ppu.dots_mode >= 87);
         debug_assert!(emu.ppu.dots_mode <= 204);
+        debug_assert!(emu.ppu.dots_scanline == 456);
 
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
@@ -249,6 +235,10 @@ fn mode_hblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
         emu.bus_write(REG_LY, ly_next);
 
         emu.ppu.mode = if current_ly == 143 {
+            // @todo - Sending will fail when exiting the app.
+            // - A way to close emu thread and exit gracefully
+            emu.frame_chan.send(emu.ppu.rt).unwrap();
+
             // set vblank interrupt
             let flags_if = emu.bus_read(cpu::HREG_IF);
             emu.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_VBLANK);
@@ -269,7 +259,6 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     let remaining_budget = DOTS_PER_VBLANK - emu.ppu.dots_mode;
     let dots = cmp::min(remaining_budget, dots_to_run);
 
-    // println!("mode_vblank - remaining_budget={}, dots_to_spend={}, budget={}", remaining_budget, dots_to_spend, dots);
     let ly_current = emu.bus_read(REG_LY);
 
     if emu.ppu.dots_mode != 0 && emu.ppu.dots_mode % 456 == 0 {
@@ -277,13 +266,11 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
         emu.bus_write(REG_LY, ly_next);
     }
 
-    // let vblank_end = dots == 0;
     let vblank_end = emu.ppu.dots_mode % 456 == 0 && ly_current == 153;
 
     if vblank_end {
-        // @todo - Sending will fail when exiting the app.
-        // - A way to close emu thread and exit gracefully
-        emu.frame_chan.send(emu.ppu.rt).unwrap();
+        debug_assert!(dots == 0);
+        debug_assert!(emu.ppu.dots_mode == DOTS_PER_VBLANK);
 
         emu.ppu.dots_mode = 0;
         emu.ppu.dots_scanline = 0;
@@ -291,10 +278,8 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
 
         emu.bus_write(REG_LY, 0);
 
-        debug_assert!(dots == 0);
-
-        std::thread::sleep(std::time::Duration::from_micros((16.6 * 1000.0) as u64));
-        println!("mode_vblank - NEXT FRAME {}", emu.bus_read(REG_SCX));
+        std::thread::sleep(std::time::Duration::from_micros((16.0 * 1000.0) as u64));
+        // println!("mode_vblank - NEXT FRAME {}", emu.bus_read(REG_SCX));
         return Some(0);
     }
 
