@@ -7,6 +7,7 @@ const DOTS_PER_OAM_SCAN: u16 = 80;
 const DOTS_PER_VBLANK: u16 = 4560;
 
 const REG_LCDC: u16 = 0xFF40;
+const REG_STAT: u16 = 0xFF41;
 const REG_LY: u16 = 0xFF44;
 
 const REG_SCY: u16 = 0xFF42; // scroll y
@@ -15,15 +16,21 @@ const REG_SCX: u16 = 0xFF43; // scroll x
 const ADDR_TILEMAP_1: u16 = 0x9800;
 const ADDR_TILEMAP_2: u16 = 0x9C00;
 
+const STAT_SELECT_LYC: u8 = 1 << 6;
+const STAT_SELECT_MODE2: u8 = 1 << 5;
+const STAT_SELECT_MODE1: u8 = 1 << 4;
+const STAT_SELECT_MODE0: u8 = 1 << 3;
+
 // TILE NUMBERS     $9800-$9BFF AND $9C00-$9FFF
 // TILE DATA        $8000-$97FF
 
-#[derive(Debug)]
+#[repr(u8)]
+#[derive(Debug, Clone, Copy)]
 pub enum PpuMode {
-    PpuOamScan,
-    PpuDraw,
-    PpuHBlank,
-    PpuVBlank
+    PpuOamScan = 2,
+    PpuDraw = 3,
+    PpuHBlank = 0,
+    PpuVBlank = 1,
 }
 
 struct GbPixel {
@@ -55,6 +62,9 @@ pub struct PPU {
     dots_scanline: u16,
     dots_leftover: u16,
 
+    stat_interrupt: u8,
+    stat_interrupt_prev: u8,
+
     bg_fifo: VecDeque<GbPixel>,
     bg_scroll_count: u8,
 
@@ -81,6 +91,8 @@ impl PPU {
             dots_mode: 0,
             dots_scanline: 0,
             dots_leftover: 0,
+            stat_interrupt: 0,
+            stat_interrupt_prev: 0,
             pixelfetcher: Pixelfetcher{
                 current_step: PixelfetcherStep::FetchTile,
                 fetcher_x: 0,
@@ -115,6 +127,15 @@ pub fn step(emu: &mut Emu, cycles_passed: u8) -> u8 {
             PpuMode::PpuVBlank => { mode_vblank(emu, dots_budget) }
         };
 
+        // @todo better hooks and abstractions
+        // @todo LY=LYC is constantly updated
+        // let mut stat = emu.bus_read(REG_STAT);
+
+        // let ly = emu.bus_read(REG_LY);
+        // let lyc = emu.bus_read(REG_LYC);
+
+        // emu.bus_write(REG_STAT, stat);
+
         if let Some(dots_spent) = mode_result {
             emu.ppu.dots_scanline += dots_spent;
             emu.ppu.dots_mode += dots_spent;
@@ -124,6 +145,14 @@ pub fn step(emu: &mut Emu, cycles_passed: u8) -> u8 {
             break;
         }
     }
+
+    // @todo - Use mode directly from REG_STAT
+    let mut stat = emu.bus_read(REG_STAT);
+    stat &= 0xFC;
+    stat |= emu.ppu.mode as u8 & 0x3;
+    emu.bus_write(REG_STAT, stat);
+
+    handle_stat_interrupt(emu);
 
     return 1;
 }
@@ -286,6 +315,43 @@ fn mode_vblank(emu: &mut Emu, dots_to_run: u16) -> Option<u16> {
     return Some(dots);
 }
 
+fn handle_stat_interrupt(emu: &mut Emu) {
+    let stat = emu.bus_read(REG_STAT);
+
+    emu.ppu.stat_interrupt = 0;
+
+    if stat & STAT_SELECT_LYC != 0 {
+        todo!("test this");
+        emu.ppu.stat_interrupt |= if stat & (1 << 2) != 0 { STAT_SELECT_LYC } else { 0 };
+    }
+
+    let mode_bits = stat & 0x3;
+
+    // @todo - Write in a less confusing way
+
+    if stat & STAT_SELECT_MODE2 != 0 {
+        emu.ppu.stat_interrupt |= if mode_bits == PpuMode::PpuOamScan as u8 { STAT_SELECT_MODE2 } else { 0 };
+    }
+
+    if stat & STAT_SELECT_MODE1 != 0 {
+        emu.ppu.stat_interrupt |= if mode_bits == PpuMode::PpuVBlank as u8 { STAT_SELECT_MODE1 } else { 0 };
+    }
+
+    if stat & STAT_SELECT_MODE0 != 0 {
+        emu.ppu.stat_interrupt |= if mode_bits == PpuMode::PpuHBlank as u8 { STAT_SELECT_MODE0 } else { 0 };
+    }
+
+    // low to high transition
+    if emu.ppu.stat_interrupt_prev == 0 && emu.ppu.stat_interrupt != 0 {
+        // set stat interrupt
+        // println!("STAT interrupt rising edge {:#x?} -> {:#x?}", emu.ppu.stat_interrupt_prev, emu.ppu.stat_interrupt);
+        let flags_if = emu.bus_read(cpu::HREG_IF);
+        emu.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_LCD);
+    }
+
+    emu.ppu.stat_interrupt_prev = emu.ppu.stat_interrupt;
+}
+
 impl Pixelfetcher {
     fn reset(&mut self) {
         self.current_step = PixelfetcherStep::FetchTile;
@@ -325,7 +391,7 @@ impl Pixelfetcher {
                     todo!("push fifo should restart 2 times");
                     return true;
                 }
-                // println!("push fifo success");
+
                 for bit_idx in (0..8).rev() {
                     let hb = (emu.ppu.pixelfetcher.tile_msb >> bit_idx) & 0x1;
                     let lb = (emu.ppu.pixelfetcher.tile_lsb >> bit_idx) & 0x1;
