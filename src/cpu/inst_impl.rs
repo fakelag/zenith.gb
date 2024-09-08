@@ -22,8 +22,7 @@ impl cpu::CPU {
             }
             (OperandKind::R8, OperandKind::Imm8) => {
                 let dst_reg = (opcode >> 3) & 0x7;
-                let n8 = mmu.bus_read(self.pc);
-                self.pc += 1;
+                let n8 = self.consume_byte_from_pc(mmu);
 
                 debug_assert!(dst_reg != 0x6); // should only happen with 0x36
                 self.write_r8(mmu, dst_reg, n8);
@@ -68,9 +67,8 @@ impl cpu::CPU {
             }
             (OperandKind::R8, OperandKind::Imm16Addr) => {
                 debug_assert!(opcode == 0xFA /* LD A [a16] */);
-                let lsb = mmu.bus_read(self.pc);
-                let msb = mmu.bus_read(self.pc + 1);
-                self.pc += 2;
+                let lsb = self.consume_byte_from_pc(mmu);
+                let msb = self.consume_byte_from_pc(mmu);
                 let val = mmu.bus_read(util::value(msb, lsb));
                 util::set_high(&mut self.af, val);
             }
@@ -98,9 +96,8 @@ impl cpu::CPU {
                 debug_assert!([0x01, 0x11, 0x21, 0x31].contains(&opcode));
                 let dst_reg = (opcode >> 4) & 0x3;
 
-                let lsb = mmu.bus_read(self.pc);
-                let msb = mmu.bus_read(self.pc + 1);
-                self.pc += 2;
+                let lsb = self.consume_byte_from_pc(mmu);
+                let msb = self.consume_byte_from_pc(mmu);
 
                 self.write_r16(dst_reg, util::value(msb, lsb));
             }
@@ -135,9 +132,8 @@ impl cpu::CPU {
             (OperandKind::Imm16Addr, OperandKind::R16) => {
                 debug_assert!(opcode == 0x08);
 
-                let lsb = mmu.bus_read(self.pc);
-                let msb = mmu.bus_read(self.pc + 1);
-                self.pc += 2;
+                let lsb = self.consume_byte_from_pc(mmu);
+                let msb = self.consume_byte_from_pc(mmu);
 
                 let addr = util::value(msb, lsb);
                 mmu.bus_write(addr, util::get_low(self.sp));
@@ -145,8 +141,7 @@ impl cpu::CPU {
             }
             (OperandKind::R16Addr, OperandKind::Imm8) => {
                 debug_assert!(opcode == 0x36); // could technically be decoded same as OperandKind::R8, OperandKind::Imm8
-                let val = mmu.bus_read(self.pc);
-                self.pc += 1;
+                let val = self.consume_byte_from_pc(mmu);
                 self.write_r8(mmu, 0x6, val);
             }
             (OperandKind::R8Addr, OperandKind::R8) => {
@@ -157,9 +152,8 @@ impl cpu::CPU {
             (OperandKind::Imm16Addr, OperandKind::R8) => {
                 debug_assert!(opcode == 0xEA);
 
-                let lsb = mmu.bus_read(self.pc);
-                let msb = mmu.bus_read(self.pc + 1);
-                self.pc += 2;
+                let lsb = self.consume_byte_from_pc(mmu);
+                let msb = self.consume_byte_from_pc(mmu);
 
                 let addr = util::value(msb, lsb);
                 mmu.bus_write(addr, util::get_high(self.af));
@@ -304,8 +298,7 @@ impl cpu::CPU {
             }
             (OperandKind::R8, OperandKind::Imm8) => {
                 debug_assert!(opcode == 0xC6);
-                let src_val = mmu.bus_read(self.pc);
-                self.pc += 1;
+                let src_val = self.consume_byte_from_pc(mmu);
 
                 self.add_a8(src_val, 0);
             }
@@ -531,9 +524,9 @@ impl cpu::CPU {
         };
 
         if branch_taken {
-            let low = mmu.bus_read(self.pc);
-            let high = mmu.bus_read(self.pc + 1);
-            self.pc = util::value(high, low);
+            let lsb = self.consume_byte_from_pc(mmu);
+            let msb = self.consume_byte_from_pc(mmu);
+            self.pc = util::value(msb, lsb);
         } else {
             self.branch_skipped = true;
             self.pc += 2;
@@ -562,10 +555,10 @@ impl cpu::CPU {
         };
 
         if branch_taken {
-            let lsb = mmu.bus_read(self.pc);
-            let msb = mmu.bus_read(self.pc + 1);
+            let lsb = self.consume_byte_from_pc(mmu);
+            let msb = self.consume_byte_from_pc(mmu);
 
-            self.push_u16(mmu, self.pc + 2);
+            self.push_u16(mmu, self.pc);
             self.pc = util::value(msb, lsb);
         } else {
             self.branch_skipped = true;
@@ -593,8 +586,7 @@ impl cpu::CPU {
     }
 
     pub fn opcode_ldh(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
-        let addr_u8 = mmu.bus_read(self.pc);
-        self.pc += 1;
+        let addr_u8 = self.consume_byte_from_pc(mmu);
 
         let addr_full = u16::from(addr_u8) | 0xFF00;
 
@@ -802,8 +794,7 @@ impl cpu::CPU {
                 mmu.bus_read(self.hl)
             }
             OperandKind::Imm8 => {
-                let val = mmu.bus_read(self.pc);
-                self.pc += 1;
+                let val = self.consume_byte_from_pc(mmu);
                 val
             }
             _ => unreachable!(),
