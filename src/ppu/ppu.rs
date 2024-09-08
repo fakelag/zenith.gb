@@ -34,9 +34,9 @@ pub enum PpuMode {
 
 struct GbPixel {
     pub color: u8,
-    pub palette: u8, // OBP0 / OBP1 for DMG, a value between 0 and 7 on CGB
+    // pub palette: u8, // OBP0 / OBP1 for DMG, a value between 0 and 7 on CGB
     // pub sprite_priority: u8, // CGB
-    pub bg_priority: u8,
+    // pub bg_priority: u8,
 }
 
 enum PixelfetcherStep {
@@ -398,7 +398,7 @@ impl Pixelfetcher {
                     let lb = (self.tile_lsb >> bit_idx) & 0x1;
                     let color = lb | (hb << 1);
 
-                    bg_fifo.push_back(GbPixel{ color, palette: 0, bg_priority: 0 });
+                    bg_fifo.push_back(GbPixel{ color, }); // palette: 0, bg_priority: 0 });
                 }
 
                 self.fetcher_x += 1;

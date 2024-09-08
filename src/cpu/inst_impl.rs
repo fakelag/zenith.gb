@@ -1,4 +1,3 @@
-use crate::emu::emu::Emu;
 use crate::cpu::*;
 use crate::mmu::mmu::MMU;
 use crate::util::util;
@@ -243,37 +242,37 @@ impl cpu::CPU {
         }
     }
 
-    pub fn opcode_rlca(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
+    pub fn opcode_rlca(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x7);
 
-        let result = self.rlc(mmu, util::get_high(self.af));
+        let result = self.rlc(util::get_high(self.af));
 
         util::set_high(&mut self.af, result);
         self.set_flag(cpu::FLAG_Z, false);
     }
 
-    pub fn opcode_rrca(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
+    pub fn opcode_rrca(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x0F);
 
-        let result = self.rrc(mmu, util::get_high(self.af));
+        let result = self.rrc(util::get_high(self.af));
 
         util::set_high(&mut self.af, result);
         self.set_flag(cpu::FLAG_Z, false);
     }
 
-    pub fn opcode_rla(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
+    pub fn opcode_rla(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x17);
 
-        let result = self.rl(mmu, util::get_high(self.af));
+        let result = self.rl(util::get_high(self.af));
 
         util::set_high(&mut self.af, result);
         self.set_flag(cpu::FLAG_Z, false);
     }
 
-    pub fn opcode_rra(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
+    pub fn opcode_rra(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x1F);
 
-        let result = self.rr(mmu, util::get_high(self.af));
+        let result = self.rr(util::get_high(self.af));
 
         util::set_high(&mut self.af, result);
         self.set_flag(cpu::FLAG_Z, false);
@@ -287,7 +286,7 @@ impl cpu::CPU {
                 let src_reg_or_hladdr = opcode & 0x7;
                 let src_val = self.read_r8(mmu, src_reg_or_hladdr);
 
-                self.add_a8(mmu, src_val, 0);
+                self.add_a8(src_val, 0);
             }
             (OperandKind::R16, OperandKind::R16) => {
                 // ADD HL r16
@@ -308,7 +307,7 @@ impl cpu::CPU {
                 let src_val = mmu.bus_read(self.pc);
                 self.pc += 1;
 
-                self.add_a8(mmu, src_val, 0);
+                self.add_a8(src_val, 0);
             }
             (OperandKind::R16, OperandKind::Imm8) => {
                 // ADD SP e8
@@ -367,7 +366,7 @@ impl cpu::CPU {
         }
     }
 
-    pub fn opcode_daa(&mut self, mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
+    pub fn opcode_daa(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
         let original_val = util::get_high(self.af);
         let flag_h = self.get_flag(cpu::FLAG_H);
         let flag_c = self.get_flag(cpu::FLAG_C);
@@ -397,20 +396,20 @@ impl cpu::CPU {
         self.set_flag(cpu::FLAG_Z, daa_value == 0);
     }
 
-    pub fn opcode_cpl(&mut self, mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
+    pub fn opcode_cpl(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
         let val = !util::get_high(self.af);
         util::set_high(&mut self.af, val);
         self.set_flag(cpu::FLAG_N, true);
         self.set_flag(cpu::FLAG_H, true);
     }
 
-    pub fn opcode_scf(&mut self, mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
+    pub fn opcode_scf(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
         self.set_flag(cpu::FLAG_C, true);
         self.set_flag(cpu::FLAG_N, false);
         self.set_flag(cpu::FLAG_H, false);
     }
 
-    pub fn opcode_ccf(&mut self, mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
+    pub fn opcode_ccf(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
         self.set_flag(cpu::FLAG_C, !self.get_flag(cpu::FLAG_C));
         self.set_flag(cpu::FLAG_N, false);
         self.set_flag(cpu::FLAG_H, false);
@@ -433,37 +432,37 @@ impl cpu::CPU {
 
     pub fn opcode_adc(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         let src_val = self.consume_src_r8_imm8_hladdr(mmu, instr.src, opcode);
-        self.add_a8(mmu, src_val, self.get_flag(cpu::FLAG_C).into());
+        self.add_a8(src_val, self.get_flag(cpu::FLAG_C).into());
     }
 
     pub fn opcode_sub(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         let src_val = self.consume_src_r8_imm8_hladdr(mmu, instr.src, opcode);
-        self.sub_a8(mmu, src_val, 0);
+        self.sub_a8(src_val, 0);
     }
 
     pub fn opcode_sbc(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         let src_val = self.consume_src_r8_imm8_hladdr(mmu, instr.src, opcode);
-        self.sub_a8(mmu, src_val, self.get_flag(cpu::FLAG_C).into());
+        self.sub_a8(src_val, self.get_flag(cpu::FLAG_C).into());
     }
 
     pub fn opcode_and(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         let src_val = self.consume_src_r8_imm8_hladdr(mmu, instr.src, opcode);
-        self.and_a8(mmu, src_val);
+        self.and_a8(src_val);
     }
 
     pub fn opcode_xor(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         let src_val = self.consume_src_r8_imm8_hladdr(mmu, instr.src, opcode);
-        self.xor_a8(mmu, src_val);
+        self.xor_a8(src_val);
     }
 
     pub fn opcode_or(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         let src_val = self.consume_src_r8_imm8_hladdr(mmu, instr.src, opcode);
-        self.or_a8(mmu, src_val);
+        self.or_a8(src_val);
     }
 
     pub fn opcode_cp(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         let src_val = self.consume_src_r8_imm8_hladdr(mmu, instr.src, opcode);
-        self.cp_a8(mmu, src_val);
+        self.cp_a8(src_val);
     }
 
     pub fn opcode_ret(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
@@ -585,11 +584,11 @@ impl cpu::CPU {
         self.ime = true;
     }
 
-    pub fn opcode_di(&mut self, mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
+    pub fn opcode_di(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
         self.ime = false;
     }
 
-    pub fn opcode_ei(&mut self, mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
+    pub fn opcode_ei(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
         self.ime = true;
     }
 
@@ -629,28 +628,28 @@ impl cpu::CPU {
     pub fn opcode_rlc(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         let reg = opcode & 0x7;
         let val = self.read_r8(mmu, reg);
-        let new_val = self.rlc(mmu, val);
+        let new_val = self.rlc(val);
         self.write_r8(mmu, reg, new_val);
     }
 
     pub fn opcode_rrc(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         let reg = opcode & 0x7;
         let val = self.read_r8(mmu, reg);
-        let new_val = self.rrc(mmu, val);
+        let new_val = self.rrc(val);
         self.write_r8(mmu, reg, new_val);
     }
 
     pub fn opcode_rl(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         let reg = opcode & 0x7;
         let val = self.read_r8(mmu, reg);
-        let new_val = self.rl(mmu, val);
+        let new_val = self.rl(val);
         self.write_r8(mmu, reg, new_val);
     }
 
     pub fn opcode_rr(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         let reg = opcode & 0x7;
         let val = self.read_r8(mmu, reg);
-        let new_val = self.rr(mmu, val);
+        let new_val = self.rr(val);
         self.write_r8(mmu, reg, new_val);
     }
 
@@ -659,7 +658,7 @@ impl cpu::CPU {
         let val = self.read_r8(mmu, reg);
 
         // Strip least significant bit
-        let new_val = self.rlc(mmu, val) & 0xFE;
+        let new_val = self.rlc(val) & 0xFE;
         self.write_r8(mmu, reg, new_val);
     }
 
@@ -669,7 +668,7 @@ impl cpu::CPU {
 
         let high_bit = val & 0x80;
 
-        let new_val = (self.rrc(mmu, val) & 0x7F) | high_bit;
+        let new_val = (self.rrc(val) & 0x7F) | high_bit;
         self.write_r8(mmu, reg, new_val);
     }
 
@@ -692,7 +691,7 @@ impl cpu::CPU {
         let reg = opcode & 0x7;
         let val = self.read_r8(mmu, reg);
 
-        let new_val = self.rrc(mmu, val) & 0x7F;
+        let new_val = self.rrc(val) & 0x7F;
         self.write_r8(mmu, reg, new_val);
     }
 
@@ -729,7 +728,7 @@ impl cpu::CPU {
     }
 
     
-    fn rrc(&mut self, mmu: &mut MMU, value: u8) -> u8 {
+    fn rrc(&mut self, value: u8) -> u8 {
         let carry_bit = value & 0x1;
 
         let val_full = (u16::from(value) >> 1) | (u16::from(carry_bit) << 7);
@@ -744,7 +743,7 @@ impl cpu::CPU {
         return result;
     }
 
-    fn rr(&mut self, mmu: &mut MMU, value: u8) -> u8 {
+    fn rr(&mut self, value: u8) -> u8 {
         let carry_flag: bool = self.get_flag(cpu::FLAG_C);
         let carry_next = value & 0x1;
 
@@ -760,7 +759,7 @@ impl cpu::CPU {
         return result;
     }
 
-    fn rlc(&mut self, mmu: &mut MMU, value: u8) -> u8 {
+    fn rlc(&mut self, value: u8) -> u8 {
         let carry_bit = value & 0x80;
 
         let val_full = (u16::from(value) << 1) | (u16::from(carry_bit) >> 7);
@@ -775,7 +774,7 @@ impl cpu::CPU {
         return result;
     }
 
-    fn rl(&mut self, mmu: &mut MMU, value: u8) -> u8 {
+    fn rl(&mut self, value: u8) -> u8 {
         let carry_flag: bool = self.get_flag(cpu::FLAG_C);
         let carry_next = value & 0x80;
 
@@ -812,7 +811,7 @@ impl cpu::CPU {
         val
     }
 
-    fn add_a8(&mut self, mmu: &mut MMU, val: u8, carry: u8) {
+    fn add_a8(&mut self, val: u8, carry: u8) {
         let dst_val = util::get_high(self.af);
 
         let sum_full = u16::from(dst_val) + u16::from(val) + u16::from(carry);
@@ -826,7 +825,7 @@ impl cpu::CPU {
         util::set_high(&mut self.af, sum_low);
     }
 
-    fn sub_a8(&mut self, mmu: &mut MMU, val: u8, carry: u8) {
+    fn sub_a8(&mut self, val: u8, carry: u8) {
         let dst_val = util::get_high(self.af);
 
         let res_full = i16::from(dst_val) - i16::from(val) - i16::from(carry);
@@ -842,7 +841,7 @@ impl cpu::CPU {
         util::set_high(&mut self.af, res_low);
     }
 
-    fn and_a8(&mut self, mmu: &mut MMU, val: u8) {
+    fn and_a8(&mut self, val: u8) {
         let result = util::get_high(self.af) & val;
 
         self.set_flag(cpu::FLAG_Z, result == 0);
@@ -853,7 +852,7 @@ impl cpu::CPU {
         util::set_high(&mut self.af, result);
     }
 
-    fn xor_a8(&mut self, mmu: &mut MMU, val: u8) {
+    fn xor_a8(&mut self, val: u8) {
         let result = util::get_high(self.af) ^ val;
 
         self.set_flag(cpu::FLAG_Z, result == 0);
@@ -864,7 +863,7 @@ impl cpu::CPU {
         util::set_high(&mut self.af, result);
     }
 
-    fn or_a8(&mut self, mmu: &mut MMU, val: u8) {
+    fn or_a8(&mut self, val: u8) {
         let result = util::get_high(self.af) | val;
 
         self.set_flag(cpu::FLAG_Z, result == 0);
@@ -875,9 +874,9 @@ impl cpu::CPU {
         util::set_high(&mut self.af, result);
     }
 
-    fn cp_a8(&mut self, mmu: &mut MMU, val: u8) {
+    fn cp_a8(&mut self, val: u8) {
         let a_val = util::get_high(self.af);
-        self.sub_a8(mmu, val, 0);
+        self.sub_a8(val, 0);
         util::set_high(&mut self.af, a_val);
     }
 }
