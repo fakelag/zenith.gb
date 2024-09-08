@@ -5,11 +5,6 @@ use crate::{cpu::*, emu::emu::FrameBuffer, mmu::mmu::MMU};
 const DOTS_PER_OAM_SCAN: u16 = 80;
 const DOTS_PER_VBLANK: u16 = 4560;
 
-const REG_LY: u16 = 0xFF44;
-
-const REG_SCY: u16 = 0xFF42; // scroll y
-const REG_SCX: u16 = 0xFF43; // scroll x
-
 const ADDR_TILEMAP_1: u16 = 0x9800;
 const ADDR_TILEMAP_2: u16 = 0x9C00;
 
@@ -17,7 +12,7 @@ const STAT_SELECT_LYC_BIT:   u8 = 6;
 const STAT_SELECT_MODE2_BIT: u8 = 5;
 const STAT_SELECT_MODE1_BIT: u8 = 4;
 const STAT_SELECT_MODE0_BIT: u8 = 3;
-const STAT_LY_BIT: u8 = 2;
+const STAT_LY_EQ_SCY_BIT: u8 = 2;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
@@ -110,7 +105,7 @@ impl PPU {
             return 0;
         }
     
-        debug_assert!(mmu.bus_read(REG_LY) <= 153);
+        debug_assert!(mmu.ly().get() <= 153);
     
         let mut dots_budget = u16::from(cycles_passed * 4) + self.dots_leftover;
     
@@ -121,15 +116,6 @@ impl PPU {
                 PpuMode::PpuHBlank => { self.mode_hblank(mmu, frame_chan, dots_budget) }
                 PpuMode::PpuVBlank => { self.mode_vblank(mmu, dots_budget) }
             };
-    
-            // @todo better hooks and abstractions
-            // @todo LY=LYC is constantly updated
-            // let mut stat = emu.bus_read(REG_STAT);
-    
-            // let ly = emu.bus_read(REG_LY);
-            // let lyc = emu.bus_read(REG_LYC);
-    
-            // emu.bus_write(REG_STAT, stat);
     
             if let Some(dots_spent) = mode_result {
                 self.dots_scanline += dots_spent;
@@ -145,7 +131,11 @@ impl PPU {
 
         mmu.stat().set_bit(0, self.mode as u8 & 0x1 != 0x0);
         mmu.stat().set_bit(1, self.mode as u8 & 0x2 != 0x0);
-    
+
+        let ly = mmu.ly().get();
+        let lyc = mmu.lyc().get();
+        mmu.stat().set_bit(STAT_LY_EQ_SCY_BIT, ly == lyc);
+
         self.handle_stat_interrupt(mmu);
     
         return 1;
@@ -164,7 +154,7 @@ impl PPU {
 
             // Start of scanline, discard scx % 8 pixels
             debug_assert!(self.current_x == 0);
-            let scx = mmu.bus_read(REG_SCX);
+            let scx = mmu.scx().get();
             self.bg_scroll_count = scx % 8;
 
             // println!("mode_oam_scan - switching to PpuMode::PpuDraw");
@@ -219,7 +209,7 @@ impl PPU {
                 if self.bg_scroll_count > 0 {
                     self.bg_scroll_count -= 1;
                 } else {
-                    let ly = mmu.bus_read(REG_LY);
+                    let ly = mmu.ly().get();
 
                     self.rt[ly as usize][self.current_x as usize] = pixel.color;
                     self.current_x += 1;
@@ -253,10 +243,9 @@ impl PPU {
             self.dots_mode = 0;
             self.dots_scanline = 0;
 
-            let current_ly = mmu.bus_read(REG_LY);
-
+            let current_ly = mmu.ly().get();
             let ly_next = current_ly + 1;
-            mmu.bus_write(REG_LY, ly_next);
+            mmu.ly().set(ly_next);
 
             self.mode = if current_ly == 143 {
                 // @todo - Sending will fail when exiting the app.
@@ -283,11 +272,11 @@ impl PPU {
         let remaining_budget = DOTS_PER_VBLANK - self.dots_mode;
         let dots = cmp::min(remaining_budget, dots_to_run);
 
-        let ly_current = mmu.bus_read(REG_LY);
+        let ly_current = mmu.ly().get();
 
         if self.dots_mode != 0 && self.dots_mode % 456 == 0 {
             let ly_next = ly_current + 1;
-            mmu.bus_write(REG_LY, ly_next);
+            mmu.ly().set(ly_next);
         }
 
         let vblank_end = self.dots_mode % 456 == 0 && ly_current == 153;
@@ -300,9 +289,9 @@ impl PPU {
             self.dots_scanline = 0;
             self.mode = PpuMode::PpuOamScan;
 
-            mmu.bus_write(REG_LY, 0);
+            mmu.ly().set(0);
 
-            std::thread::sleep(std::time::Duration::from_micros((1.0 * 1000.0) as u64));
+            std::thread::sleep(std::time::Duration::from_millis(15 as u64));
             // println!("mode_vblank - NEXT FRAME {}", emu.bus_read(REG_SCX));
             return Some(0);
         }
@@ -315,9 +304,8 @@ impl PPU {
 
         self.stat_interrupt = 0;
 
-        if stat.check_bit(STAT_SELECT_LYC_BIT) && stat.check_bit(STAT_LY_BIT) {
+        if stat.check_bit(STAT_SELECT_LYC_BIT) && stat.check_bit(STAT_LY_EQ_SCY_BIT) {
             self.stat_interrupt |= 1 << STAT_SELECT_LYC_BIT;
-            todo!("test this");
         }
 
         let mode_bits = stat.get() & 0x3;
@@ -418,10 +406,9 @@ impl Pixelfetcher {
         let mut x_coord: u8 = 0;
         let mut y_coord: u8 = 0;
 
-        let ly = mmu.bus_read(REG_LY);
-        let scy = mmu.bus_read(REG_SCY);
-
-        let scx = mmu.bus_read(REG_SCX);
+        let ly = mmu.ly().get();
+        let scy = mmu.scy().get();
+        let scx = mmu.scx().get();
 
         if fetch_bg {
             // not in window
@@ -437,14 +424,14 @@ impl Pixelfetcher {
     }
 
     fn fetch_tile_byte(&mut self, mmu: &mut MMU, tile_number: u8, msb: bool) {
-        let ly = mmu.bus_read(REG_LY);
-        let scy = mmu.bus_read(REG_SCY);
+        let ly = mmu.ly().get();
+        let scy = mmu.scy().get();
         let addressing_mode_8000 = mmu.lcdc().check_bit(4);
         let offset: u16 = if msb { 1 } else { 0 };
 
-        let tile_byte = if addressing_mode_8000 == false {
-            let o = u8::from(2 * ((ly + scy) % 8));
-            mmu.bus_read(0x8000 + u16::from(tile_number * 16 + o) + offset)
+        let tile_byte = if addressing_mode_8000 {
+            let o = u16::from(2 * ((ly + scy) % 8));
+            mmu.bus_read(0x8000 + (u16::from(tile_number) * 16) + o + offset)
         } else {
             let e: i8 = tile_number as i8;
             let base: u16 = 0x9000;

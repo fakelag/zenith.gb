@@ -113,4 +113,8 @@ impl MMU {
 
     pub fn lcdc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF40, self) }
     pub fn stat<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF41, self) }
+    pub fn ly<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF44, self) }
+    pub fn scy<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF42, self) }
+    pub fn scx<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF43, self) }
+    pub fn lyc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF45, self) }
 }
