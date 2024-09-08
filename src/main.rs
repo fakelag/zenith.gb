@@ -1,10 +1,13 @@
+use std::sync::mpsc::SyncSender;
+
 use cartridge::cartridge::Cartridge;
 
-mod cpu;
-mod ppu;
-mod emu;
-mod util;
 mod cartridge;
+mod cpu;
+mod emu;
+mod mmu;
+mod ppu;
+mod util;
 
 use emu::emu::{Emu, FrameBuffer};
 
@@ -34,10 +37,14 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x1b, 0x2a, 0x09)
 ];
 
+fn run_emulator(frame_chan: SyncSender<FrameBuffer>) {
+    let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
+    let mut emu = Emu::new(cart, frame_chan);
+    emu.run()
+}
+
 fn main() {
     let (mut canvas, sdl_ctx) = sdl2_create_window();
-
-    let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
 
     let texture_creator = canvas.texture_creator();
 
@@ -47,8 +54,7 @@ fn main() {
 
     let (frame_sender, frame_receiver) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
 
-    let mut emu = Emu::new(cart, frame_sender);
-    let emu_thread = std::thread::spawn(move || emu.run());
+    let emu_thread = std::thread::spawn(move || run_emulator(frame_sender));
     
     let mut last_frame = std::time::Instant::now();
     let mut event_pump = sdl_ctx.event_pump().unwrap();

@@ -1,21 +1,16 @@
 use std::{fmt::{self, Display}, sync::mpsc::SyncSender, time};
 
 use crate::{
-    cartridge::cartridge::*,
-    cpu::cpu,
-    ppu::ppu,
-    util::util,
+    cartridge::cartridge::*, cpu::cpu, mmu::mmu, ppu::ppu, util::util
 };
 
 pub type FrameBuffer = [[u8; 160]; 144];
 
 pub struct Emu {
-    cart: Cartridge,
+    cartridge: Cartridge,
     pub cpu: cpu::CPU,
     pub ppu: ppu::PPU,
-    // Main memory - indexed directly
-    // https://gbdev.io/pandocs/Memory_Map.html
-    memory: [u8; 0x10000],
+    pub mmu: mmu::MMU,
 
     // debug
     pub start_at: time::Instant,
@@ -34,14 +29,14 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(cart: Cartridge, frame_chan: SyncSender<FrameBuffer>) -> Self {
+    pub fn new(cartridge: Cartridge, frame_chan: SyncSender<FrameBuffer>) -> Emu {
         Self {
-            cart,
+            mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
-            memory: [0; 0x10000],
             start_at: time::Instant::now(),
-            frame_chan: frame_chan,
+            cartridge,
+            frame_chan,
         }
     }
 
@@ -56,9 +51,9 @@ impl Emu {
 
         loop {
             // let cycle_start_at = time::Instant::now();
-            let cycles = cpu::step(self);
+            let cycles = self.cpu.step(&mut self.mmu);
 
-            ppu::step(self, cycles);
+            self.ppu.step(&mut self.mmu, &mut self.frame_chan, cycles);
 
             // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
             // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
@@ -70,96 +65,11 @@ impl Emu {
    }
 
     pub fn bus_read(self: &Emu, address: u16) -> u8 {
-        // https://gbdev.io/pandocs/Memory_Map.html
-        match address {
-            0x0000..=0x7FFF => {
-                // @todo - Check cartridge type
-                return self.cart.data[usize::from(address)];
-            }
-            0x8000..=0x9FFF => {
-                // 8 KiB Video RAM (VRAM)
-                return self.memory[usize::from(address)];
-            }
-            0xA000..=0xBFFF => {
-                // 8 KiB External RAM - From cartridge, switchable bank if any
-                todo!("External ram bank (if cart_type supports it)");
-            }
-            0xC000..=0xCFFF => {
-                // 4 KiB Work RAM (WRAM)
-                return self.memory[usize::from(address)];
-            }
-            0xD000..=0xDFFF => {
-                // 4 KiB Work RAM (WRAM) - In CGB mode, switchable bank 1–7
-                return self.memory[usize::from(address)];
-            }
-            0xE000..=0xFDFF => {
-                // Echo RAM
-                todo!("Implement echo ram");
-            }
-            0xFE00..=0xFE9F => {
-                // OAM - https://gbdev.io/pandocs/OAM.html#object-attribute-memory-oam
-                return self.memory[usize::from(address)];
-            }
-            0xFEA0..=0xFEFF => {
-                // unused
-                unreachable!();
-            }
-            0xFF00..=0xFF7F => {
-                // IO ranges
-                return self.memory[usize::from(address)];
-            }
-            // IO ranges & HRAM https://gbdev.io/pandocs/Hardware_Reg_List.html
-            0xFF80..=0xFFFE => {
-                // HRAM
-                return self.memory[usize::from(address)];
-            }
-            0xFFFF => {
-                // IE
-                return self.memory[usize::from(address)];
-            }
-        }
+        self.mmu.bus_read(address)
     }
 
     pub fn bus_write(self: &mut Emu, address: u16, data: u8) {
-        match address {
-            0x0000..=0x7FFF => {
-                unreachable!()
-            }
-            0x8000..=0x9FFF => {
-                self.memory[usize::from(address)] = data;
-            }
-            0xA000..=0xBFFF => {
-                todo!("External ram bank (if cart_type supports it)");
-            }
-            0xC000..=0xCFFF => {
-                self.memory[usize::from(address)] = data;
-            }
-            0xD000..=0xDFFF => {
-                self.memory[usize::from(address)] = data;
-            }
-            0xE000..=0xFDFF => {
-                todo!("Implement echo ram");
-            }
-            0xFE00..=0xFE9F => {
-                self.memory[usize::from(address)] = data;
-            }
-            0xFEA0..=0xFEFF => {
-                // unused
-                unreachable!();
-            }
-            0xFF00..=0xFF7F => {
-                if address == 0xFF46 {
-                    todo!("dma transfer");
-                }
-                self.memory[usize::from(address)] = data;
-            }
-            0xFF80..=0xFFFE => {
-                self.memory[usize::from(address)] = data;
-            }
-            0xFFFF => {
-                self.memory[usize::from(address)] = data;
-            }
-        }
+       self.mmu.bus_write(address, data)
     }
 
     fn dmg_boot(&mut self) {
@@ -182,7 +92,7 @@ impl Emu {
 
         self.cpu.set_flag(cpu::FLAG_Z, true);
         self.cpu.set_flag(cpu::FLAG_N, false);
-        self.cpu.set_flag(cpu::FLAG_H, if self.cart.header.header_checksum == 0x0 { false } else { true });
-        self.cpu.set_flag(cpu::FLAG_C, if self.cart.header.header_checksum == 0x0 { false } else { true });
+        self.cpu.set_flag(cpu::FLAG_H, if self.cartridge.header.header_checksum == 0x0 { false } else { true });
+        self.cpu.set_flag(cpu::FLAG_C, if self.cartridge.header.header_checksum == 0x0 { false } else { true });
     }
 }
