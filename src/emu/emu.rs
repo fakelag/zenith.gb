@@ -74,21 +74,21 @@ impl Emu {
 
     fn dmg_boot(&mut self) {
         // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
-        util::set_high(&mut self.cpu.af, 0x1);
         self.bus_write(0xFF50, 0x1);
 
         // 0x91 -> LCDC
         self.bus_write(0xFF40, 0x91);
 
-        util::set_high(&mut self.cpu.bc, 0);
-        util::set_low(&mut self.cpu.bc, 0x13);
-        util::set_high(&mut self.cpu.de, 0);
-        util::set_low(&mut self.cpu.de, 0xD8);
-        util::set_high(&mut self.cpu.hl, 0x1);
-        util::set_low(&mut self.cpu.hl, 0x4D);
+        self.cpu.a().set(0x1);
+        self.cpu.b().set(0);
+        self.cpu.c().set(0x13);
+        self.cpu.d().set(0);
+        self.cpu.e().set(0xD8);
+        self.cpu.h().set(0x1);
+        self.cpu.l().set(0x4D);
 
-        self.cpu.sp = 0xFFFE;
-        self.cpu.pc = 0x100;
+        self.cpu.sp().set(0xFFFE);
+        self.cpu.pc().set(0x100);
 
         self.cpu.set_flag(cpu::FLAG_Z, true);
         self.cpu.set_flag(cpu::FLAG_N, false);

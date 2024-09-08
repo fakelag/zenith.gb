@@ -30,22 +30,22 @@ impl cpu::CPU {
             (OperandKind::R8, OperandKind::R16Addr) => {
                 match opcode {
                     0x0A /* LD A [BC] */ => {
-                        let val = mmu.bus_read(self.bc);
-                        util::set_high(&mut self.af, val);
+                        let val = mmu.bus_read(self.bc().get());
+                        self.a().set(val);
                     }
                     0x1A /* LD A [DE] */ => {
-                        let val = mmu.bus_read(self.de);
-                        util::set_high(&mut self.af, val);
+                        let val = mmu.bus_read(self.de().get());
+                        self.a().set(val);
                     }
                     0x2A /* LD A [HL+] */ => {
-                        let val = mmu.bus_read(self.hl);
-                        util::set_high(&mut self.af, val);
-                        self.hl += 1;
+                        let val = mmu.bus_read(self.hl().get());
+                        self.a().set(val);
+                        self.hl().inc();
                     }
                     0x3A /* LD A [HL-] */ => {
-                        let val = mmu.bus_read(self.hl);
-                        util::set_high(&mut self.af, val);
-                        self.hl -= 1;
+                        let val = mmu.bus_read(self.hl().get());
+                        self.a().set(val);
+                        self.hl().dec();
                     }
                     _ => /* LD r8, [HL] */ {
                         debug_assert!([0x46, 0x4E, 0x56, 0x5E, 0x66, 0x6E, 0x7E].contains(&opcode));
@@ -70,7 +70,7 @@ impl cpu::CPU {
                 let lsb = self.consume_byte_from_pc(mmu);
                 let msb = self.consume_byte_from_pc(mmu);
                 let val = mmu.bus_read(util::value(msb, lsb));
-                util::set_high(&mut self.af, val);
+                self.a().set(val);
             }
             (OperandKind::R16, OperandKind::R16) => {
                 debug_assert!([0xF8, 0xF9].contains(&opcode));
@@ -78,16 +78,18 @@ impl cpu::CPU {
                     0xF8 /* LD HL SP+ */ => {
                         let e = self.consume_byte_from_pc(mmu) as i8;
 
-                        let sum = self.sp.wrapping_add_signed(e.into());
-                        self.hl = sum;
+                        let sp_val = self.sp().get();
+                        let sum = sp_val.wrapping_add_signed(e.into());
+                        self.hl().set(sum);
 
                         self.set_flag(cpu::FLAG_Z, false);
                         self.set_flag(cpu::FLAG_N, false);
-                        self.set_flag(cpu::FLAG_H, ((self.sp ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
-                        self.set_flag(cpu::FLAG_C, ((self.sp ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
+                        self.set_flag(cpu::FLAG_H, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
+                        self.set_flag(cpu::FLAG_C, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
                     }
                     0xF9 /* LD SP HL  */=> {
-                        self.sp = self.hl;
+                        let hl_val = self.hl().get();
+                        self.sp().set(hl_val);
                     }
                     _ => unreachable!(),
                 }
@@ -104,18 +106,16 @@ impl cpu::CPU {
             (OperandKind::R16Addr, OperandKind::R8) => {
                 match opcode {
                     0x22 /* LD [HL+] A */ => {
-                        mmu.bus_write(self.hl, util::get_high(self.af));
-                        self.hl += 1;
+                        mmu.bus_write(self.hl().inc(), self.a().get());
                     }
                     0x32 /* LD [HL-] A */ => {
-                        mmu.bus_write(self.hl, util::get_high(self.af));
-                        self.hl -= 1;
+                        mmu.bus_write(self.hl().dec(), self.a().get());
                     }
                     0x02 /* LD [BC] A */ => {
-                        mmu.bus_write(self.bc, util::get_high(self.af));
+                        mmu.bus_write(self.bc().get(), self.a().get());
                     }
                     0x12 /* LD [DE] A */ => {
-                        mmu.bus_write(self.de, util::get_high(self.af));
+                        mmu.bus_write(self.de().get(), self.a().get());
                     }
                     /* LD [HL], r8 */ _ => {
                         debug_assert!([0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77].contains(&opcode));
@@ -125,7 +125,7 @@ impl cpu::CPU {
 
                         // dst_reg will always be 0x6
                         debug_assert!((opcode >> 3) & 0x7 == 0x6);
-                        mmu.bus_write(self.hl, val);
+                        mmu.bus_write(self.hl().get(), val);
                     }
                 }
             }
@@ -136,8 +136,12 @@ impl cpu::CPU {
                 let msb = self.consume_byte_from_pc(mmu);
 
                 let addr = util::value(msb, lsb);
-                mmu.bus_write(addr, util::get_low(self.sp));
-                mmu.bus_write(addr + 1, util::get_high(self.sp));
+
+                let sp_lsb = util::get_low(self.sp().get());
+                let sp_msb = util::get_high(self.sp().get());
+
+                mmu.bus_write(addr, sp_lsb);
+                mmu.bus_write(addr + 1, sp_msb);
             }
             (OperandKind::R16Addr, OperandKind::Imm8) => {
                 debug_assert!(opcode == 0x36); // could technically be decoded same as OperandKind::R8, OperandKind::Imm8
@@ -146,8 +150,8 @@ impl cpu::CPU {
             }
             (OperandKind::R8Addr, OperandKind::R8) => {
                 debug_assert!(opcode == 0xE2);
-                let addr = u16::from(util::get_low(self.bc)) | 0xFF00;
-                mmu.bus_write(addr, util::get_high(self.af));
+                let addr = u16::from(self.c().get()) | 0xFF00;
+                mmu.bus_write(addr, self.a().get());
             }
             (OperandKind::Imm16Addr, OperandKind::R8) => {
                 debug_assert!(opcode == 0xEA);
@@ -156,7 +160,7 @@ impl cpu::CPU {
                 let msb = self.consume_byte_from_pc(mmu);
 
                 let addr = util::value(msb, lsb);
-                mmu.bus_write(addr, util::get_high(self.af));
+                mmu.bus_write(addr, self.a().get());
             }
             _ => unreachable!()
         }
@@ -186,14 +190,14 @@ impl cpu::CPU {
             OperandKind::R16Addr => {
                 debug_assert!(opcode == 0x34);
 
-                let curr_val = mmu.bus_read(self.hl);
+                let curr_val = mmu.bus_read(self.hl().get());
 
                 let sum = curr_val.wrapping_add(1);
                 self.set_flag(cpu::FLAG_Z, sum == 0);
                 self.set_flag(cpu::FLAG_N, false);
                 self.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
 
-                mmu.bus_write(self.hl, sum);
+                mmu.bus_write(self.hl().get(), sum);
             }
             _ => unreachable!(),
         }
@@ -223,14 +227,14 @@ impl cpu::CPU {
             OperandKind::R16Addr => {
                 debug_assert!(opcode == 0x35);
 
-                let curr_val = mmu.bus_read(self.hl);
+                let curr_val = mmu.bus_read(self.hl().get());
 
                 let sum = curr_val.wrapping_sub(1);
                 self.set_flag(cpu::FLAG_Z, sum == 0);
                 self.set_flag(cpu::FLAG_N, true);
                 self.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
 
-                mmu.bus_write(self.hl, sum);
+                mmu.bus_write(self.hl().get(), sum);
             }
             _ => unreachable!(),
         }
@@ -239,36 +243,40 @@ impl cpu::CPU {
     pub fn opcode_rlca(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x7);
 
-        let result = self.rlc(util::get_high(self.af));
+        let val = self.a().get();
+        let result = self.rlc(val);
 
-        util::set_high(&mut self.af, result);
+        self.a().set(result);
         self.set_flag(cpu::FLAG_Z, false);
     }
 
     pub fn opcode_rrca(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x0F);
 
-        let result = self.rrc(util::get_high(self.af));
+        let val = self.a().get();
+        let result = self.rrc(val);
 
-        util::set_high(&mut self.af, result);
+        self.a().set(result);
         self.set_flag(cpu::FLAG_Z, false);
     }
 
     pub fn opcode_rla(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x17);
 
-        let result = self.rl(util::get_high(self.af));
+        let val = self.a().get();
+        let result = self.rl(val);
 
-        util::set_high(&mut self.af, result);
+        self.a().set(result);
         self.set_flag(cpu::FLAG_Z, false);
     }
 
     pub fn opcode_rra(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x1F);
 
-        let result = self.rr(util::get_high(self.af));
+        let val = self.a().get();
+        let result = self.rr(val);
 
-        util::set_high(&mut self.af, result);
+        self.a().set(result);
         self.set_flag(cpu::FLAG_Z, false);
     }
 
@@ -286,7 +294,7 @@ impl cpu::CPU {
                 // ADD HL r16
                 let src_reg = (opcode >> 4) & 0x3;
                 let src_val = self.read_r16(src_reg);
-                let dst_val = self.hl;
+                let dst_val = self.hl().get();
 
                 let sum: u32 = u32::from(src_val) + u32::from(dst_val);
 
@@ -294,7 +302,7 @@ impl cpu::CPU {
                 self.set_flag(cpu::FLAG_H, (dst_val & 0xFFF) + (src_val & 0xFFF) > 0xFFF);
                 self.set_flag(cpu::FLAG_C, sum > 0xFFFF);
 
-                self.hl = (sum & 0xFFFF) as u16;
+                self.hl().set((sum & 0xFFFF) as u16);
             }
             (OperandKind::R8, OperandKind::Imm8) => {
                 debug_assert!(opcode == 0xC6);
@@ -306,15 +314,16 @@ impl cpu::CPU {
                 // ADD SP e8
                 debug_assert!(opcode == 0xE8);
 
+                let sp_val = self.sp().get();
                 let e: i8 = self.consume_byte_from_pc(mmu) as i8;
-                let sum = self.sp.wrapping_add_signed(e.into());
+                let sum = sp_val.wrapping_add_signed(e.into());
 
                 self.set_flag(cpu::FLAG_Z, false);
                 self.set_flag(cpu::FLAG_N, false);
-                self.set_flag(cpu::FLAG_H, ((self.sp ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
-                self.set_flag(cpu::FLAG_C, ((self.sp ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
+                self.set_flag(cpu::FLAG_H, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
+                self.set_flag(cpu::FLAG_C, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
 
-                self.sp = sum;
+                self.sp().set(sum);
             }
             _ => unreachable!(),
         }
@@ -352,15 +361,16 @@ impl cpu::CPU {
 
         if branch_taken {
             let e: i8 = self.consume_byte_from_pc(mmu) as i8;
-            self.pc = self.pc.wrapping_add_signed(e.into());
+            let pc_val = self.pc().get();
+            self.pc().set(pc_val.wrapping_add_signed(e.into()));
         } else {
             self.branch_skipped = true;
-            self.pc += 1;
+            self.pc().inc();
         }
     }
 
     pub fn opcode_daa(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
-        let original_val = util::get_high(self.af);
+        let original_val = self.a().get();
         let flag_h = self.get_flag(cpu::FLAG_H);
         let flag_c = self.get_flag(cpu::FLAG_C);
         let flag_n = self.get_flag(cpu::FLAG_N);
@@ -383,15 +393,15 @@ impl cpu::CPU {
             original_val.wrapping_add(offset)
         };
 
-        util::set_high(&mut self.af, daa_value);
+        self.a().set(daa_value);
         self.set_flag(cpu::FLAG_C, carry_next);
         self.set_flag(cpu::FLAG_H, false);
         self.set_flag(cpu::FLAG_Z, daa_value == 0);
     }
 
     pub fn opcode_cpl(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
-        let val = !util::get_high(self.af);
-        util::set_high(&mut self.af, val);
+        let val = !self.a().get();
+        self.a().set(val);
         self.set_flag(cpu::FLAG_N, true);
         self.set_flag(cpu::FLAG_H, true);
     }
@@ -480,7 +490,8 @@ impl cpu::CPU {
         };
 
         if ret_taken {
-            self.pc = self.pop_u16(mmu);
+            let ret_val = self.pop_u16(mmu);
+            self.pc().set(ret_val);
         } else {
             self.branch_skipped = true;
         }
@@ -500,7 +511,8 @@ impl cpu::CPU {
 
     pub fn opcode_jp(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         if opcode == 0xE9 /* JP HL */ {
-            self.pc = self.hl;
+            let hl_val = self.hl().get();
+            self.pc().set(hl_val);
             return;
         }
 
@@ -526,10 +538,11 @@ impl cpu::CPU {
         if branch_taken {
             let lsb = self.consume_byte_from_pc(mmu);
             let msb = self.consume_byte_from_pc(mmu);
-            self.pc = util::value(msb, lsb);
+            self.pc().set(util::value(msb, lsb));
         } else {
             self.branch_skipped = true;
-            self.pc += 2;
+            self.pc().inc();
+            self.pc().inc();
         }
     }
 
@@ -558,22 +571,26 @@ impl cpu::CPU {
             let lsb = self.consume_byte_from_pc(mmu);
             let msb = self.consume_byte_from_pc(mmu);
 
-            self.push_u16(mmu, self.pc);
-            self.pc = util::value(msb, lsb);
+            let pc_val = self.pc().get();
+            self.push_u16(mmu, pc_val);
+            self.pc().set(util::value(msb, lsb));
         } else {
             self.branch_skipped = true;
-            self.pc += 2;
+            self.pc().inc();
+            self.pc().inc();
         }
     }
 
     pub fn opcode_rst(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
-        self.push_u16(mmu, self.pc);
-        self.pc = util::value(0x0, opcode - 0xC7);
+        let pc_val = self.pc().get();
+        self.push_u16(mmu, pc_val);
+        self.pc().set(util::value(0x0, opcode - 0xC7));
     }
 
     pub fn opcode_reti(&mut self, mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
         // RET
-        self.pc = self.pop_u16(mmu);
+        let ret_val = self.pop_u16(mmu);
+        self.pc().set(ret_val);
         self.ime = true;
     }
 
@@ -592,11 +609,11 @@ impl cpu::CPU {
 
         match opcode {
             0xE0 /* LDH [a8] A */ => {
-                mmu.bus_write(addr_full, util::get_high(self.af));
+                mmu.bus_write(addr_full, self.a().get());
             }
             0xF0 /* LDH A [a8] */ => {
                 let val = mmu.bus_read(addr_full);
-                util::set_high(&mut self.af, val);
+                self.a().set(val);
             }
             _ => unreachable!(),
         }
@@ -791,7 +808,7 @@ impl cpu::CPU {
                 self.read_r8(mmu, src_reg)
             }
             OperandKind::R16Addr => {
-                mmu.bus_read(self.hl)
+                mmu.bus_read(self.hl().get())
             }
             OperandKind::Imm8 => {
                 let val = self.consume_byte_from_pc(mmu);
@@ -803,7 +820,7 @@ impl cpu::CPU {
     }
 
     fn add_a8(&mut self, val: u8, carry: u8) {
-        let dst_val = util::get_high(self.af);
+        let dst_val = self.a().get();
 
         let sum_full = u16::from(dst_val) + u16::from(val) + u16::from(carry);
         let sum_low = util::get_low(sum_full);
@@ -813,11 +830,11 @@ impl cpu::CPU {
         self.set_flag(cpu::FLAG_H, ((dst_val & 0xF) + (val & 0xF) + carry) > 0xF);
         self.set_flag(cpu::FLAG_C, sum_full > 0xFF);
 
-        util::set_high(&mut self.af, sum_low);
+        self.a().set(sum_low);
     }
 
     fn sub_a8(&mut self, val: u8, carry: u8) {
-        let dst_val = util::get_high(self.af);
+        let dst_val = self.a().get();
 
         let res_full = i16::from(dst_val) - i16::from(val) - i16::from(carry);
         let res_low = util::get_low(res_full as u16);
@@ -829,45 +846,45 @@ impl cpu::CPU {
         self.set_flag(cpu::FLAG_H, half_carry < 0);
         self.set_flag(cpu::FLAG_C, res_full < 0);
 
-        util::set_high(&mut self.af, res_low);
+        self.a().set(res_low);
     }
 
     fn and_a8(&mut self, val: u8) {
-        let result = util::get_high(self.af) & val;
+        let result = self.a().get() & val;
 
         self.set_flag(cpu::FLAG_Z, result == 0);
         self.set_flag(cpu::FLAG_N, false);
         self.set_flag(cpu::FLAG_H, true);
         self.set_flag(cpu::FLAG_C, false);
 
-        util::set_high(&mut self.af, result);
+        self.a().set(result);
     }
 
     fn xor_a8(&mut self, val: u8) {
-        let result = util::get_high(self.af) ^ val;
+        let result = self.a().get() ^ val;
 
         self.set_flag(cpu::FLAG_Z, result == 0);
         self.set_flag(cpu::FLAG_N, false);
         self.set_flag(cpu::FLAG_H, false);
         self.set_flag(cpu::FLAG_C, false);
 
-        util::set_high(&mut self.af, result);
+        self.a().set(result);
     }
 
     fn or_a8(&mut self, val: u8) {
-        let result = util::get_high(self.af) | val;
+        let result = self.a().get() | val;
 
         self.set_flag(cpu::FLAG_Z, result == 0);
         self.set_flag(cpu::FLAG_N, false);
         self.set_flag(cpu::FLAG_H, false);
         self.set_flag(cpu::FLAG_C, false);
 
-        util::set_high(&mut self.af, result);
+        self.a().set(result);
     }
 
     fn cp_a8(&mut self, val: u8) {
-        let a_val = util::get_high(self.af);
+        let a_val = self.a().get();
         self.sub_a8(val, 0);
-        util::set_high(&mut self.af, a_val);
+        self.a().set(a_val);
     }
 }

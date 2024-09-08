@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 
 use crate::{util::*, mmu::mmu::MMU};
-use super::inst_def;
+use super::{inst_def, register::{Reg8b, Reg16b}};
 
 pub const FLAG_C: u8 = 1 << 4;
 pub const FLAG_H: u8 = 1 << 5;
@@ -24,12 +24,12 @@ const INTERRUPT_ADDR_SERIAL: u16  = 0x58;
 const INTERRUPT_ADDR_JOYPAD: u16  = 0x60;
 
 pub struct CPU {
-    pub af: u16,
-    pub bc: u16,
-    pub de: u16,
-    pub hl: u16,
-    pub sp: u16,
-    pub pc: u16,
+    pub reg_af: u16,
+    pub reg_bc: u16,
+    pub reg_de: u16,
+    pub reg_hl: u16,
+    pub reg_sp: u16,
+    pub reg_pc: u16,
     pub cycles: u64,
     pub branch_skipped: bool,
 
@@ -45,15 +45,15 @@ impl Display for CPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "CPU")?;
         writeln!(f, "af={value:#06x} [{value:016b}], a={high:#x?} [{high:08b}], f={low:#x?} [{low:08b}]",
-            value = self.af, high = util::get_high(self.af), low = util::get_low(self.af))?;
+            value = self.reg_af, high = util::get_high(self.reg_af), low = util::get_low(self.reg_af))?;
         writeln!(f, "bc={value:#06x} [{value:016b}], b={high:#x?} [{high:08b}], c={low:#x?} [{low:08b}]",
-            value = self.bc, high = util::get_high(self.bc), low = util::get_low(self.bc))?;
+            value = self.reg_bc, high = util::get_high(self.reg_bc), low = util::get_low(self.reg_bc))?;
         writeln!(f, "de={value:#06x} [{value:016b}], d={high:#x?} [{high:08b}], e={low:#x?} [{low:08b}]",
-            value = self.de, high = util::get_high(self.de), low = util::get_low(self.de))?;
+            value = self.reg_de, high = util::get_high(self.reg_de), low = util::get_low(self.reg_de))?;
         writeln!(f, "hl={value:#06x} [{value:016b}], h={high:#x?} [{high:08b}], l={low:#x?} [{low:08b}]",
-            value = self.hl, high = util::get_high(self.hl), low = util::get_low(self.hl))?;
-        writeln!(f, "sp={value:#06x} [{value:016b}]", value = self.sp)?;
-        writeln!(f, "pc={value:#06x} [{value:016b}]", value = self.pc)?;
+            value = self.reg_hl, high = util::get_high(self.reg_hl), low = util::get_low(self.reg_hl))?;
+        writeln!(f, "sp={value:#06x} [{value:016b}]", value = self.reg_sp)?;
+        writeln!(f, "pc={value:#06x} [{value:016b}]", value = self.reg_pc)?;
         writeln!(f, "Z={} N={} H={} C={}", self.get_flag(FLAG_Z), self.get_flag(FLAG_N), self.get_flag(FLAG_H), self.get_flag(FLAG_C))?;
         writeln!(f, "cycles={value}", value = self.cycles)?;
         Ok(())
@@ -63,12 +63,12 @@ impl Display for CPU {
 impl CPU {
     pub fn new() -> CPU {
         Self {
-            af: 0,
-            bc: 0,
-            de: 0,
-            hl: 0,
-            sp: 0,
-            pc: 0,
+            reg_af: 0,
+            reg_bc: 0,
+            reg_de: 0,
+            reg_hl: 0,
+            reg_sp: 0,
+            reg_pc: 0,
             cycles: 0,
             branch_skipped: false,
             ime: false,
@@ -76,6 +76,22 @@ impl CPU {
         }
     }
 
+    // Register wrappers
+    pub fn a(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_af, true) }
+    fn f(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_af, false) }
+    pub fn b(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_bc, true) }
+    pub fn c(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_bc, false) }
+    pub fn d(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_de, true) }
+    pub fn e(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_de, false) }
+    pub fn h(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_hl, true) }
+    pub fn l(&mut self) -> Reg8b { Reg8b::new(&mut self.reg_hl, false) }
+
+    pub fn af(&mut self) -> Reg16b { Reg16b::new(&mut self.reg_af) }
+    pub fn bc(&mut self) -> Reg16b { Reg16b::new(&mut self.reg_bc) }
+    pub fn de(&mut self) -> Reg16b { Reg16b::new(&mut self.reg_de) }
+    pub fn hl(&mut self) -> Reg16b { Reg16b::new(&mut self.reg_hl) }
+    pub fn sp(&mut self) -> Reg16b { Reg16b::new(&mut self.reg_sp) }
+    pub fn pc(&mut self) -> Reg16b { Reg16b::new(&mut self.reg_pc) }
     
     pub fn step(&mut self, mmu: &mut MMU) -> u8 {
         self.check_interrupts(mmu);
@@ -84,12 +100,10 @@ impl CPU {
             return 1;
         }
 
-        let mut opcode = mmu.bus_read(self.pc);
-        self.pc += 1;
+        let mut opcode = self.consume_byte_from_pc(mmu);
 
         let inst = if opcode == 0xCB {
-            opcode = mmu.bus_read(self.pc);
-            self.pc += 1;
+            opcode = self.consume_byte_from_pc(mmu);
             inst_def::get_instruction_cb(opcode)
         } else {
             inst_def::get_instruction(opcode)
@@ -147,8 +161,9 @@ impl CPU {
             return false;
         }
 
-        self.push_u16(mmu, self.pc);
-        self.pc = interrupt_vec;
+        let pc_val = self.pc().get();
+        self.push_u16(mmu, pc_val);
+        self.pc().set(interrupt_vec);
         self.cycles += 5;
         self.ime = false;
 
@@ -159,108 +174,105 @@ impl CPU {
 
     pub fn write_r8(&mut self, mmu: &mut MMU, r8_encoded: u8, val: u8) {
         match r8_encoded {
-            0x7 => { util::set_high(&mut self.af, val); }
+            0x7 => { return self.a().set(val); }
             0x6 => {
                 // 0b110 writes to [HL] instead of a register
                 // https://gbdev.io/pandocs/CPU_Instruction_Set.html
-                mmu.bus_write(self.hl, val);
+                mmu.bus_write(self.hl().get(), val);
             }
-            0x5 => { util::set_low(&mut self.hl, val); }
-            0x4 => { util::set_high(&mut self.hl, val); }
-            0x3 => { util::set_low(&mut self.de, val); }
-            0x2 => { util::set_high(&mut self.de, val); }
-            0x1 => { util::set_low(&mut self.bc, val); }
-            0x0 => { util::set_high(&mut self.bc, val); }
+            0x5 => { return self.l().set(val); }
+            0x4 => { return self.h().set(val); }
+            0x3 => { return self.e().set(val); }
+            0x2 => { return self.d().set(val); }
+            0x1 => { return self.c().set(val); }
+            0x0 => { return self.b().set(val); }
             _ => { unreachable!() }
         }
     }
     
     pub fn read_r8(&mut self, mmu: &mut MMU, r8_encoded: u8) -> u8 {
         match r8_encoded {
-            0x7 => { return util::get_high(self.af); }
-            0x6 => { return mmu.bus_read(self.hl); }
-            0x5 => { return util::get_low(self.hl); }
-            0x4 => { return util::get_high(self.hl); }
-            0x3 => { return util::get_low(self.de); }
-            0x2 => { return util::get_high(self.de); }
-            0x1 => { return util::get_low(self.bc); }
-            0x0 => { return util::get_high(self.bc); }
+            0x7 => { return self.a().get(); }
+            0x6 => { return mmu.bus_read(self.hl().get()); }
+            0x5 => { return self.l().get(); }
+            0x4 => { return self.h().get(); }
+            0x3 => { return self.e().get(); }
+            0x2 => { return self.d().get(); }
+            0x1 => { return self.c().get(); }
+            0x0 => { return self.b().get(); }
             _ => { unreachable!() }
         }
     }
     
     pub fn read_r16(&mut self, r16_encoded: u8) -> u16 {
         match r16_encoded {
-            0x0 => self.bc,
-            0x1 => self.de,
-            0x2 => self.hl,
-            0x3 => self.sp,
+            0x0 => self.bc().get(),
+            0x1 => self.de().get(),
+            0x2 => self.hl().get(),
+            0x3 => self.sp().get(),
             _ => { unreachable!() }
         }
     }
     
     pub fn write_r16(&mut self, r16_encoded: u8, val: u16) {
         match r16_encoded {
-            0x0 => self.bc = val,
-            0x1 => self.de = val,
-            0x2 => self.hl = val,
-            0x3 => self.sp = val,
+            0x0 => self.bc().set(val),
+            0x1 => self.de().set(val),
+            0x2 => self.hl().set(val),
+            0x3 => self.sp().set(val),
             _ => { unreachable!() }
         }
     }
     
     pub fn read_r16stk(&mut self, r16_encoded: u8) -> u16 {
         match r16_encoded {
-            0x0 => self.bc,
-            0x1 => self.de,
-            0x2 => self.hl,
-            0x3 => self.af,
+            0x0 => self.bc().get(),
+            0x1 => self.de().get(),
+            0x2 => self.hl().get(),
+            0x3 => self.af().get(),
             _ => { unreachable!() }
         }
     }
     
     pub fn write_r16stk(&mut self, r16_encoded: u8, val: u16) {
         match r16_encoded {
-            0x0 => self.bc = val,
-            0x1 => self.de = val,
-            0x2 => self.hl = val,
-            0x3 => self.af = val,
+            0x0 => self.bc().set(val),
+            0x1 => self.de().set(val),
+            0x2 => self.hl().set(val),
+            0x3 => self.af().set(val),
             _ => { unreachable!() }
         }
     }
     
     pub fn push_u16(&mut self, mmu: &mut MMU, val: u16) {
-        self.sp -= 1;
-        mmu.bus_write(self.sp, util::get_high(val));
-        self.sp -= 1;
-        mmu.bus_write(self.sp, util::get_low(val));
+        self.sp().dec();
+        mmu.bus_write(self.sp().get(), util::get_high(val));
+        self.sp().dec();
+        mmu.bus_write(self.sp().get(), util::get_low(val));
     }
     
     pub fn pop_u16(&mut self, mmu: &mut MMU) -> u16 {
-        let lsb = mmu.bus_read(self.sp);
-        self.sp += 1;
-        let msb = mmu.bus_read(self.sp);
-        self.sp += 1;
+        let lsb = mmu.bus_read(self.sp().inc());
+        let msb = mmu.bus_read(self.sp().inc());
         return util::value(msb, lsb);
     }
 
     pub fn consume_byte_from_pc(&mut self, mmu: &mut MMU) -> u8 {
-        let val = mmu.bus_read(self.pc);
-        self.pc += 1;
+        let val = mmu.bus_read(self.pc().inc());
         return val;
     }
 
     pub fn get_flag(&self, flag: u8) -> bool {
-        return (util::get_low(self.af) & flag) != 0;
+        return (util::get_low(self.reg_af) & flag) != 0;
     }
     
     pub fn set_flag(&mut self, flag: u8, set: bool) {
-        let val = util::get_low(self.af);
+        let val = self.f().get();
     
         if set {
-            util::set_low(&mut self.af, val | flag);
+            self.f().set(val | flag);
         } else {
-            util::set_low(&mut self.af, val & !flag);
+            self.f().set(val & !flag);
         }
     }
 }
