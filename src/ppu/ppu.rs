@@ -5,8 +5,6 @@ use crate::{cpu::*, emu::emu::FrameBuffer, mmu::mmu::MMU};
 const DOTS_PER_OAM_SCAN: u16 = 80;
 const DOTS_PER_VBLANK: u16 = 4560;
 
-const REG_LCDC: u16 = 0xFF40;
-const REG_STAT: u16 = 0xFF41;
 const REG_LY: u16 = 0xFF44;
 
 const REG_SCY: u16 = 0xFF42; // scroll y
@@ -15,13 +13,11 @@ const REG_SCX: u16 = 0xFF43; // scroll x
 const ADDR_TILEMAP_1: u16 = 0x9800;
 const ADDR_TILEMAP_2: u16 = 0x9C00;
 
-const STAT_SELECT_LYC: u8 = 1 << 6;
-const STAT_SELECT_MODE2: u8 = 1 << 5;
-const STAT_SELECT_MODE1: u8 = 1 << 4;
-const STAT_SELECT_MODE0: u8 = 1 << 3;
-
-// TILE NUMBERS     $9800-$9BFF AND $9C00-$9FFF
-// TILE DATA        $8000-$97FF
+const STAT_SELECT_LYC_BIT:   u8 = 6;
+const STAT_SELECT_MODE2_BIT: u8 = 5;
+const STAT_SELECT_MODE1_BIT: u8 = 4;
+const STAT_SELECT_MODE0_BIT: u8 = 3;
+const STAT_LY_BIT: u8 = 2;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
@@ -108,8 +104,9 @@ impl PPU {
     }
 
     pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut SyncSender<FrameBuffer>, cycles_passed: u8) -> u8 {
-        let lcd_enable = mmu.bus_read(REG_LCDC) & (1 << 7);
-        if lcd_enable == 0 {
+        let lcd_enable = mmu.lcdc().check_bit(7);
+
+        if !lcd_enable {
             return 0;
         }
     
@@ -145,10 +142,9 @@ impl PPU {
         }
     
         // @todo - Use mode directly from REG_STAT
-        let mut stat = mmu.bus_read(REG_STAT);
-        stat &= 0xFC;
-        stat |= self.mode as u8 & 0x3;
-        mmu.bus_write(REG_STAT, stat);
+
+        mmu.stat().set_bit(0, self.mode as u8 & 0x1 != 0x0);
+        mmu.stat().set_bit(1, self.mode as u8 & 0x2 != 0x0);
     
         self.handle_stat_interrupt(mmu);
     
@@ -306,7 +302,7 @@ impl PPU {
 
             mmu.bus_write(REG_LY, 0);
 
-            std::thread::sleep(std::time::Duration::from_micros((16.0 * 1000.0) as u64));
+            std::thread::sleep(std::time::Duration::from_micros((1.0 * 1000.0) as u64));
             // println!("mode_vblank - NEXT FRAME {}", emu.bus_read(REG_SCX));
             return Some(0);
         }
@@ -315,29 +311,29 @@ impl PPU {
     }
 
     fn handle_stat_interrupt(&mut self, mmu: &mut MMU) {
-        let stat = mmu.bus_read(REG_STAT);
+        let stat = mmu.stat(); // mmu.bus_read(REG_STAT);
 
         self.stat_interrupt = 0;
 
-        if stat & STAT_SELECT_LYC != 0 {
-            self.stat_interrupt |= if stat & (1 << 2) != 0 { STAT_SELECT_LYC } else { 0 };
+        if stat.check_bit(STAT_SELECT_LYC_BIT) && stat.check_bit(STAT_LY_BIT) {
+            self.stat_interrupt |= 1 << STAT_SELECT_LYC_BIT;
             todo!("test this");
         }
 
-        let mode_bits = stat & 0x3;
+        let mode_bits = stat.get() & 0x3;
 
         // @todo - Write in a less confusing way
 
-        if stat & STAT_SELECT_MODE2 != 0 {
-            self.stat_interrupt |= if mode_bits == PpuMode::PpuOamScan as u8 { STAT_SELECT_MODE2 } else { 0 };
+        if stat.check_bit(STAT_SELECT_MODE2_BIT) && mode_bits == PpuMode::PpuOamScan as u8 {
+            self.stat_interrupt |= 1 << STAT_SELECT_MODE2_BIT;
         }
 
-        if stat & STAT_SELECT_MODE1 != 0 {
-            self.stat_interrupt |= if mode_bits == PpuMode::PpuVBlank as u8 { STAT_SELECT_MODE1 } else { 0 };
+        if stat.check_bit(STAT_SELECT_MODE1_BIT) && mode_bits == PpuMode::PpuVBlank as u8 {
+            self.stat_interrupt |= 1 << STAT_SELECT_MODE1_BIT;
         }
-
-        if stat & STAT_SELECT_MODE0 != 0 {
-            self.stat_interrupt |= if mode_bits == PpuMode::PpuHBlank as u8 { STAT_SELECT_MODE0 } else { 0 };
+        
+        if stat.check_bit(STAT_SELECT_MODE0_BIT) && mode_bits == PpuMode::PpuHBlank as u8 {
+            self.stat_interrupt |= 1 << STAT_SELECT_MODE0_BIT;
         }
 
         // low to high transition
@@ -412,8 +408,8 @@ impl Pixelfetcher {
     fn fetch_tile_number(&mut self, mmu: &mut MMU) {
         let fetch_bg = true;
 
-        let tilemap_index = mmu.bus_read(REG_LCDC) & (1 << 3); // (1 << 6) for window
-        let tilemap_addr = if tilemap_index == 0 {
+        let tilemap_bit = mmu.lcdc().check_bit(3); // check_bit(6) for window
+        let tilemap_addr = if tilemap_bit == false {
             ADDR_TILEMAP_1
         } else {
             ADDR_TILEMAP_2
@@ -443,10 +439,10 @@ impl Pixelfetcher {
     fn fetch_tile_byte(&mut self, mmu: &mut MMU, tile_number: u8, msb: bool) {
         let ly = mmu.bus_read(REG_LY);
         let scy = mmu.bus_read(REG_SCY);
-        let addressing_mode_8000 = mmu.bus_read(REG_LCDC) & (1 << 4);
+        let addressing_mode_8000 = mmu.lcdc().check_bit(4);
         let offset: u16 = if msb { 1 } else { 0 };
 
-        let tile_byte = if addressing_mode_8000 == 1 {
+        let tile_byte = if addressing_mode_8000 == false {
             let o = u8::from(2 * ((ly + scy) % 8));
             mmu.bus_read(0x8000 + u16::from(tile_number * 16 + o) + offset)
         } else {

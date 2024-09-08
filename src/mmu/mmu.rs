@@ -1,5 +1,7 @@
 use crate::cartridge::cartridge::*;
 
+use super::hw_reg::HwReg;
+
 pub struct MMU {
     pub memory: [u8; 0x10000],
 }
@@ -108,4 +110,7 @@ impl MMU {
             }
         }
     }
+
+    pub fn lcdc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF40, self) }
+    pub fn stat<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF41, self) }
 }
