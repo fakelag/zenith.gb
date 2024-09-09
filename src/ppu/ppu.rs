@@ -106,7 +106,6 @@ impl PPU {
         let lcd_enable = mmu.lcdc().check_bit(7);
 
         if !lcd_enable {
-            // println!("doneone disabled lcd");
             mmu.ly().set(0);
 
             self.bg_fifo.clear();
@@ -130,27 +129,72 @@ impl PPU {
         self.dots_leftover = 0;
     
         while dots_budget > 0 {
-            let m = self.mode;
-
             let mode_result = match self.mode {
                 PpuMode::PpuOamScan => { self.mode_oam_scan(mmu, dots_budget) }
                 PpuMode::PpuDraw => { self.mode_draw(mmu, dots_budget) }
-                PpuMode::PpuHBlank => { self.mode_hblank(mmu, frame_chan, dots_budget) }
+                PpuMode::PpuHBlank => { self.mode_hblank(mmu, dots_budget) }
                 PpuMode::PpuVBlank => { self.mode_vblank(mmu, dots_budget) }
             };
     
-            if let Some(dots_spent) = mode_result {
+            if let Some((dots_spent, mode_res)) = mode_result {
                 dots_budget -= dots_spent;
+
                 self.dots_frame += u32::from(dots_spent);
+                self.dots_mode += dots_spent;
 
-                if m != self.mode && self.mode == PpuMode::PpuVBlank {
-                    println!("ENTER VBLANK DOTS={}", self.dots_frame);
+                if let Some(next_mode) = mode_res {
+                    match (self.mode, next_mode) {
+                        (PpuMode::PpuOamScan, PpuMode::PpuDraw) => {
+                            debug_assert!(self.dots_mode == DOTS_PER_OAM_SCAN);
+
+                            // Start of scanline, discard scx % 8 pixels
+                            debug_assert!(self.current_x == 0);
+                            let scx = mmu.scx().get();
+                            self.bg_scroll_count = scx % 8;
+                        }
+                        (PpuMode::PpuDraw, PpuMode::PpuHBlank) => {
+                            debug_assert!(self.dots_mode >= 172);
+                            debug_assert!(self.dots_mode <= 289);
+
+                            // reset, move to hblank
+                            self.hblank_length = 376 - self.dots_mode;
+                            self.bg_fifo.clear();
+                            self.pixelfetcher.reset();
+                            self.bg_scroll_count = 0;
+                            self.current_x = 0;
+                        }
+                        (PpuMode::PpuHBlank, PpuMode::PpuOamScan) => {
+                            debug_assert!(self.dots_frame == u32::from(mmu.ly().get()) * 456);
+                        }
+                        (PpuMode::PpuHBlank, PpuMode::PpuVBlank) => {
+                            debug_assert!(self.dots_mode >= 87);
+                            debug_assert!(self.dots_mode <= 204);
+                            debug_assert!(mmu.ly().get() == 144);
+
+                            // @todo - Sending will fail when exiting the app.
+                            // - A way to close emu thread and exit gracefully
+                            frame_chan.send(self.rt).unwrap();
+
+                            // set vblank interrupt
+                            let flags_if = mmu.bus_read(cpu::HREG_IF);
+                            mmu.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_VBLANK);
+                        }
+                        (PpuMode::PpuVBlank, PpuMode::PpuOamScan) => {
+                            debug_assert!(self.dots_mode == DOTS_PER_VBLANK);
+                            debug_assert!(self.dots_frame == 456*154);
+                            debug_assert!(mmu.ly().get() == 154);
+
+                            mmu.ly().set(0);
+                            self.dots_frame = 0;
+
+                            std::thread::sleep(std::time::Duration::from_millis(1 as u64));
+                        }
+                        _=> { unreachable!() }
+                    }
+
+                    self.dots_mode = 0;
+                    self.mode = next_mode;
                 }
-
-                if m == PpuMode::PpuVBlank && self.mode == PpuMode::PpuOamScan {
-                    self.dots_frame = 0;
-                }
-
             } else {
                 self.dots_leftover = dots_budget;
                 break;
@@ -172,54 +216,29 @@ impl PPU {
     }
 
         
-    fn mode_oam_scan(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<u16> {
+    fn mode_oam_scan(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
         if self.dots_mode == 0 {
             // @todo oam scan
         }
         
         if self.dots_mode + dots_to_run >= DOTS_PER_OAM_SCAN {
             let dots = DOTS_PER_OAM_SCAN - self.dots_mode;
-
-            debug_assert!(self.dots_mode + dots == DOTS_PER_OAM_SCAN);
-            self.dots_mode = 0;
-            self.mode = PpuMode::PpuDraw;
-    
-            // Start of scanline, discard scx % 8 pixels
-            debug_assert!(self.current_x == 0);
-            let scx = mmu.scx().get();
-            self.bg_scroll_count = scx % 8;
-
-            return Some(dots);
+            return Some((dots, Some(PpuMode::PpuDraw)));
         }
 
-        self.dots_mode += dots_to_run;
-        Some(dots_to_run)
+        Some((dots_to_run, None))
     }
 
-    fn mode_draw(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<u16> {
-        debug_assert!(self.dots_mode < 289);
-
+    fn mode_draw(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
         /*
             The FIFO and Pixel Fetcher work together to ensure that the FIFO always contains at least 8 pixels at any given time,
             as 8 pixels are required for the Pixel Rendering operation to take place.
             Each FIFO is manipulated only during mode 3 (pixel transfer).
             https://gbdev.io/pandocs/pixel_fifo.html#get-tile
         */
+
         if self.current_x == 160 {
-            debug_assert!(self.dots_mode >= 172);
-            debug_assert!(self.dots_mode <= 289);
-
-            // println!("mode_draw - switching to PpuMode::PpuHBlank - dots total {}", self.dots_mode);
-
-            // reset, move to hblank
-            self.hblank_length = 376 - self.dots_mode;
-            self.bg_fifo.clear();
-            self.pixelfetcher.reset();
-            self.bg_scroll_count = 0;
-            self.current_x = 0;
-            self.dots_mode = 0;
-            self.mode = PpuMode::PpuHBlank;
-            return Some(0);
+            return Some((0, Some(PpuMode::PpuHBlank)));
         }
 
         // 1. Clock pixelfetchers
@@ -244,8 +263,9 @@ impl PPU {
             }
 
             if self.current_x == 160 {
-                self.dots_mode += dot;
-                return Some(dot);
+                // self.dots_mode += dot;
+                // @todo - Switch mode here or later
+                return Some((dot, None))
             }
         }
 
@@ -255,94 +275,43 @@ impl PPU {
         // 5. Window fetching
         // 6. End scanline
 
-        self.dots_mode += fetcher_dots;
-        return Some(fetcher_dots);
+        Some((fetcher_dots, None))
     }
 
-    fn mode_hblank(&mut self, mmu: &mut MMU, frame_chan: &mut SyncSender<FrameBuffer>, dots_to_run: u16) -> Option<u16> {
+    fn mode_hblank(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
         if self.dots_mode + dots_to_run >= self.hblank_length {
             let dots = self.hblank_length - self.dots_mode;
 
-            debug_assert!(self.dots_mode + dots >= 87);
-            debug_assert!(self.dots_mode + dots <= 204);
-
             let completed_ly = mmu.ly().inc();
 
-            self.mode = if completed_ly == 143 {
-                // @todo - Sending will fail when exiting the app.
-                // - A way to close emu thread and exit gracefully
-                frame_chan.send(self.rt).unwrap();
-
-                // println!("mode_hblank - switching to PpuMode::PpuVBlank - dots total {} {}", self.dots_mode, dots);
-
-                // set vblank interrupt
-                let flags_if = mmu.bus_read(cpu::HREG_IF);
-                mmu.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_VBLANK);
-
+            let next_mode = if completed_ly == 143 {
                 PpuMode::PpuVBlank
             } else {
                 PpuMode::PpuOamScan
             };
 
-            self.dots_mode = 0;
-            return Some(dots);
+            return Some((dots, Some(next_mode)));
         }
-
-        self.dots_mode += dots_to_run;
-        Some(dots_to_run)
+        Some((dots_to_run, None))
     }
 
-    fn mode_vblank(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<u16> {
+    fn mode_vblank(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
         let ly = mmu.ly().get();
         let current_line = (144 + ((self.dots_mode + dots_to_run) / DOTS_PER_SCANLINE)).try_into().unwrap();
 
-        // println!("mode_vblank - ly={} curline {current_line} dots_mode={}, dots_to_run={}", ly, self.dots_mode, dots_to_run);
-
         if current_line > ly {
-            if current_line < 154 {
-                debug_assert!(current_line == ly + 1);
+            mmu.ly().set(current_line);
 
-                mmu.ly().set(current_line);
-                self.dots_mode += dots_to_run;
-                return Some(dots_to_run);
+            if current_line < 154 {
+                return Some((dots_to_run, None));
             }
 
             let dots = DOTS_PER_SCANLINE - (self.dots_mode % DOTS_PER_SCANLINE);
-
-            println!("dots_frame={}", self.dots_frame);
-            println!("dots={}", dots);
-
-            println!("mode_vblank - switching to PpuMode::PpuOamScan - dots total {} -f {}",
-                self.dots_mode + dots, self.dots_frame + u32::from(dots));
-
-            debug_assert!(current_line == 154);
-            debug_assert!(dots <= dots_to_run);
-            debug_assert!(self.dots_mode + dots == DOTS_PER_VBLANK);
-            debug_assert!(self.dots_frame + u32::from(dots) == 456*154);
-
-            self.dots_frame = 0;
-            self.dots_mode = 0;
-            self.mode = PpuMode::PpuOamScan;
-
-            mmu.ly().set(0);
-
-            std::thread::sleep(std::time::Duration::from_millis(12 as u64));
-
-            return Some(dots);
+            return Some((dots, Some(PpuMode::PpuOamScan)));
         }
 
-        self.dots_mode += dots_to_run;
-        Some(dots_to_run)
+        Some((dots_to_run, None))
     }
-
-    fn count_dots(&mut self, dots_spent: u16) {
-        self.dots_frame += u32::from(dots_spent);
-        self.dots_mode += dots_spent;
-    }
-
-    // fn change_mode(&mut self) {
-
-    // }
 
     fn handle_stat_interrupt(&mut self, mmu: &mut MMU) {
         let stat = mmu.stat();
