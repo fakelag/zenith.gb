@@ -18,6 +18,18 @@ impl<'a> HwReg<'a> {
         self.mmu.bus_read(self.addr)
     }
 
+    pub fn inc(&mut self) -> u8 {
+        let prev = self.mmu.bus_read(self.addr);
+        self.mmu.bus_write(self.addr, prev + 1);
+        prev
+    }
+
+    pub fn dec(&mut self) -> u8 {
+        let prev = self.mmu.bus_read(self.addr);
+        self.mmu.bus_write(self.addr, prev - 1);
+        prev
+    }
+
     pub fn check_bit(&self, bit: u8) -> bool {
         debug_assert!(bit < 8);
         (self.get() & (1 << bit)) != 0

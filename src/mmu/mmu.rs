@@ -72,7 +72,9 @@ impl MMU {
     pub fn bus_write(&mut self, address: u16, data: u8) {
         match address {
             0x0000..=0x7FFF => {
-                unreachable!()
+                // println!("address={} data={}", address, data);
+                // unreachable!();
+                // self.memory[usize::from(address)] = data;
             }
             0x8000..=0x9FFF => {
                 self.memory[usize::from(address)] = data;
@@ -94,11 +96,15 @@ impl MMU {
             }
             0xFEA0..=0xFEFF => {
                 // unused
-                unreachable!();
+                // unreachable!();
             }
             0xFF00..=0xFF7F => {
                 if address == 0xFF46 {
-                    todo!("dma transfer");
+                    // println!("dma transfer: {}", data);
+                } else if address == 0xFF4F {
+                    todo!("vram bank select cgb");
+                } else if (address < 0xFF40 || address > 0xFF45) && address != 65317 /* nr44 */ {
+                    // println!("address={} data={}", address, data);
                 }
                 self.memory[usize::from(address)] = data;
             }
