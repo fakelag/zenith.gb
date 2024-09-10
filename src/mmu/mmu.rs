@@ -43,7 +43,9 @@ impl MMU {
             }
             0xE000..=0xFDFF => {
                 // Echo RAM
-                todo!("Implement echo ram");
+                // @todo "In some flash cartridges, echo RAM interferes with SRAM normally at A000-BFFF"
+                // https://gbdev.io/pandocs/Memory_Map.html#echo-ram
+                return self.memory[usize::from(address - 0x2000)];
             }
             0xFE00..=0xFE9F => {
                 // OAM - https://gbdev.io/pandocs/OAM.html#object-attribute-memory-oam
@@ -54,6 +56,10 @@ impl MMU {
                 unreachable!();
             }
             0xFF00..=0xFF7F => {
+                if address == 0xFF00 {
+                    println!("actual={}", self.memory[usize::from(address)]);
+                    return 1;
+                }
                 // IO ranges
                 return self.memory[usize::from(address)];
             }
@@ -71,11 +77,7 @@ impl MMU {
 
     pub fn bus_write(&mut self, address: u16, data: u8) {
         match address {
-            0x0000..=0x7FFF => {
-                // println!("address={} data={}", address, data);
-                // unreachable!();
-                // self.memory[usize::from(address)] = data;
-            }
+            0x0000..=0x7FFF => {}
             0x8000..=0x9FFF => {
                 self.memory[usize::from(address)] = data;
             }
@@ -89,7 +91,8 @@ impl MMU {
                 self.memory[usize::from(address)] = data;
             }
             0xE000..=0xFDFF => {
-                todo!("Implement echo ram");
+                self.memory[usize::from(address - 0x2000)] = data;
+                todo!("check echo ram");
             }
             0xFE00..=0xFE9F => {
                 self.memory[usize::from(address)] = data;
@@ -103,8 +106,11 @@ impl MMU {
                     // println!("dma transfer: {}", data);
                 } else if address == 0xFF4F {
                     todo!("vram bank select cgb");
-                } else if (address < 0xFF40 || address > 0xFF45) && address != 65317 /* nr44 */ {
-                    // println!("address={} data={}", address, data);
+                }
+
+                if address == 0xFF00 {
+                    // println!("write joypad={}", data);
+                    return;
                 }
                 self.memory[usize::from(address)] = data;
             }
@@ -117,6 +123,7 @@ impl MMU {
         }
     }
 
+    pub fn p1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF00, self) }
     pub fn lcdc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF40, self) }
     pub fn stat<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF41, self) }
     pub fn ly<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(0xFF44, self) }

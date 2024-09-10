@@ -22,7 +22,6 @@ impl Display for Emu {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.cpu.fmt(f)?;
         self.ppu.fmt(f)?;
-        println!("LY={}", self.bus_read(0xFF44));
         println!("took {}ms", self.start_at.elapsed().as_millis());
         Ok(())
     }
@@ -64,20 +63,13 @@ impl Emu {
        }
    }
 
-    pub fn bus_read(self: &Emu, address: u16) -> u8 {
-        self.mmu.bus_read(address)
-    }
-
-    pub fn bus_write(self: &mut Emu, address: u16, data: u8) {
-       self.mmu.bus_write(address, data)
-    }
-
     fn dmg_boot(&mut self) {
         // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
-        self.bus_write(0xFF50, 0x1);
+        self.mmu.bus_write(0xFF50, 0x1);
 
         // 0x91 -> LCDC
-        self.bus_write(0xFF40, 0x91);
+        self.mmu.lcdc().set(0x91);
+        self.mmu.p1().set(0xCF);
 
         self.cpu.a().set(0x1);
         self.cpu.b().set(0);
