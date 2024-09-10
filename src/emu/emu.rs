@@ -1,7 +1,10 @@
 use std::{fmt::{self, Display}, sync::mpsc::SyncSender, time};
 
 use crate::{
-    cartridge::cartridge::*, cpu::cpu, mmu::mmu, ppu::ppu, util::util
+    cartridge::cartridge::*,
+    cpu::cpu,
+    mmu::mmu,
+    ppu::ppu
 };
 
 pub type FrameBuffer = [[u8; 160]; 144];
@@ -42,26 +45,16 @@ impl Emu {
     pub fn run(self: &mut Emu) {
         self.dmg_boot();
 
-        // 4,194304 MHz
-        // let cycles_in_one_nano = 0.004194304;
-        // let nanos_per_cycle = (1.0 / cycles_in_one_nano) as u64;
+        // @todo - 4,194304 MHz
 
         self.start_at = time::Instant::now();
 
         loop {
-            // let cycle_start_at = time::Instant::now();
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginCPU);
             let cycles = self.cpu.step(&mut self.mmu);
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginPPU);
             self.ppu.step(&mut self.mmu, &mut self.frame_chan, cycles);
-
-            // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
-            // let ns_to_sleep = (u64::from(cycles) * nanos_per_cycle).checked_sub(elapsed_ns);
-
-            // if let Some(ns) = ns_to_sleep {
-            //     thread::sleep(time::Duration::from_nanos(ns));
-            // }
        }
    }
 
@@ -70,10 +63,44 @@ impl Emu {
 
         // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
         self.mmu.bus_write(0xFF50, 0x1);
-
+        
+        self.mmu.p1().set(0xCF);
+        self.mmu.sb().set(0x00);
+        self.mmu.sc().set(0x7E);
+        self.mmu.div().set(0x18);
+        self.mmu.tima().set(0x00);
+        self.mmu.tma().set(0x00);
+        self.mmu.tac().set(0xF8);
+        self.mmu.r#if().set(0xE1);
+        self.mmu.nr10().set(0x80);
+        self.mmu.nr11().set(0xBF);
+        self.mmu.nr12().set(0xF3);
+        self.mmu.nr13().set(0xFF);
+        self.mmu.nr14().set(0xBF);
+        self.mmu.nr21().set(0x3F);
+        self.mmu.nr22().set(0x00);
+        self.mmu.nr23().set(0xFF);
+        self.mmu.nr24().set(0xBF);
+        self.mmu.nr30().set(0x7F);
+        self.mmu.nr31().set(0xFF);
+        self.mmu.nr32().set(0x9F);
+        self.mmu.nr33().set(0xFF);
+        self.mmu.nr34().set(0xBF);
+        self.mmu.nr41().set(0xFF);
+        self.mmu.nr42().set(0x00);
+        self.mmu.nr43().set(0x00);
+        self.mmu.nr44().set(0xBF);
+        self.mmu.nr50().set(0x77);
+        self.mmu.nr51().set(0xF3);
+        self.mmu.nr52().set(0xF1);
         self.mmu.lcdc().set(0x91);
         self.mmu.stat().set(0x81);
-        self.mmu.p1().set(0xCF);
+        self.mmu.dma().set(0xFF);
+        self.mmu.bgp().set(0xFC);
+        self.mmu.obp0().set(0xFF);
+        self.mmu.obp1().set(0xFF);
+        self.mmu.wy().set(0x00);
+        self.mmu.wx().set(0x00);
 
         self.cpu.a().set(0x1);
         self.cpu.b().set(0);
