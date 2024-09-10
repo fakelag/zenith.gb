@@ -280,7 +280,10 @@ impl PPU {
                 } else {
                     let ly = mmu.ly().get();
 
-                    self.rt[ly as usize][self.current_x as usize] = pixel.color;
+                    let bgp = mmu.bgp().get();
+                    let palette_color = (bgp >> (pixel.color * 2)) & 0x3;
+
+                    self.rt[ly as usize][self.current_x as usize] = palette_color;
                     self.current_x += 1;
                 }
             }
