@@ -31,10 +31,10 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
 }
 
 const PALETTE: [sdl2::pixels::Color; 4] = [
-    sdl2::pixels::Color::RGB(0x9a, 0x9e, 0x3f),
-    sdl2::pixels::Color::RGB(0x49, 0x6b, 0x22),
-    sdl2::pixels::Color::RGB(0x0e, 0x45, 0x0b),
-    sdl2::pixels::Color::RGB(0x1b, 0x2a, 0x09)
+    sdl2::pixels::Color::RGB(0x88, 0xa0, 0x48),
+    sdl2::pixels::Color::RGB(0x48, 0x68, 0x30),
+    sdl2::pixels::Color::RGB(0x28, 0x40, 0x20),
+    sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
 ];
 
 fn run_emulator(frame_chan: SyncSender<FrameBuffer>) {
