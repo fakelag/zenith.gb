@@ -75,7 +75,7 @@ fn main() {
             Ok(rt) => {
                 let frame_time = last_frame.elapsed();
                 
-                canvas.window_mut().set_title(format!("fps={:?}", 1000 / std::cmp::max(frame_time.as_millis(), 1)).as_str()).unwrap();
+                canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
 
                 texture.with_lock(None, |buffer, size| {
                     for x in 0..160 {
