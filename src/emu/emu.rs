@@ -50,8 +50,10 @@ impl Emu {
 
         loop {
             // let cycle_start_at = time::Instant::now();
+            self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginCPU);
             let cycles = self.cpu.step(&mut self.mmu);
 
+            self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginPPU);
             self.ppu.step(&mut self.mmu, &mut self.frame_chan, cycles);
 
             // let elapsed_ns: u64 = cycle_start_at.elapsed().as_nanos().try_into().unwrap();
@@ -64,11 +66,13 @@ impl Emu {
    }
 
     fn dmg_boot(&mut self) {
+        self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
+
         // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
         self.mmu.bus_write(0xFF50, 0x1);
 
-        // 0x91 -> LCDC
         self.mmu.lcdc().set(0x91);
+        self.mmu.stat().set(0x81);
         self.mmu.p1().set(0xCF);
 
         self.cpu.a().set(0x1);
@@ -86,5 +90,7 @@ impl Emu {
         self.cpu.set_flag(cpu::FLAG_N, false);
         self.cpu.set_flag(cpu::FLAG_H, if self.cartridge.header.header_checksum == 0x0 { false } else { true });
         self.cpu.set_flag(cpu::FLAG_C, if self.cartridge.header.header_checksum == 0x0 { false } else { true });
+
+        self.ppu.reset(&mut self.mmu);
     }
 }

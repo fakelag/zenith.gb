@@ -1,7 +1,6 @@
-use core::panic;
-use std::{cmp, collections::VecDeque, fmt::{self, Display}, sync::mpsc::SyncSender};
+use std::{collections::VecDeque, fmt::{self, Display}, sync::mpsc::SyncSender};
 
-use crate::{cpu::*, emu::emu::FrameBuffer, mmu::mmu::MMU};
+use crate::{cpu::*, emu::emu::FrameBuffer, mmu::mmu::{MMU, MemoryRegion}};
 
 const DOTS_PER_OAM_SCAN: u16 = 80;
 const DOTS_PER_VBLANK: u16 = 4560;
@@ -49,7 +48,7 @@ struct Pixelfetcher {
 }
 
 pub struct PPU {
-    mode: PpuMode,
+    is_disabled: bool,
     dots_mode: u16,
     dots_frame: u32,
     dots_leftover: u16,
@@ -71,7 +70,6 @@ pub struct PPU {
 impl Display for PPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "PPU")?;
-        writeln!(f, "mode={:?}", self.mode)?;
         writeln!(f, "dots_mode={:?}", self.dots_mode)?;
         Ok(())
     }
@@ -80,7 +78,7 @@ impl Display for PPU {
 impl PPU {
     pub fn new() -> Self {
         Self {
-            mode: PpuMode::PpuOamScan,
+            is_disabled: false,
             dots_mode: 0,
             dots_frame: 0,
             dots_leftover: 0,
@@ -102,25 +100,43 @@ impl PPU {
         }
     }
 
+    fn get_mode(&mut self, mmu: &mut MMU) -> PpuMode {
+        unsafe { std::mem::transmute::<u8, PpuMode>(mmu.stat().get() & 0x3) }
+    }
+
+    fn set_mode(&mut self, mmu: &mut MMU, mode: PpuMode) {
+        let stat_upper_bits = mmu.stat().get() & 0xFC;
+        mmu.stat().set(stat_upper_bits | (mode as u8 & 0x3));
+    }
+
+    pub fn reset(&mut self, mmu: &mut MMU) {
+        mmu.unlock_region(MemoryRegion::MemRegionOAM as u8 | MemoryRegion::MemRegionVRAM as u8);
+        mmu.ly().set(0);
+
+        self.bg_fifo.clear();
+        self.pixelfetcher.reset();
+        self.dots_frame = 0;
+        self.dots_leftover = 0;
+        self.dots_mode = 0;
+        self.bg_scroll_count = 0;
+        self.current_x = 0;
+        self.hblank_length = 0;
+        self.is_disabled = true;
+
+        self.set_mode(mmu, PpuMode::PpuOamScan);
+    }
+
     pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut SyncSender<FrameBuffer>, cycles_passed: u8) -> u8 {
         let lcd_enable = mmu.lcdc().check_bit(7);
 
         if !lcd_enable {
-            mmu.ly().set(0);
-
-            self.bg_fifo.clear();
-            self.pixelfetcher.reset();
-            self.dots_frame = 0;
-            self.dots_leftover = 0;
-            self.dots_mode = 0;
-            self.bg_scroll_count = 0;
-            self.current_x = 0;
-            self.hblank_length = 0;
-            self.mode = PpuMode::PpuOamScan;
-
-            mmu.stat().set_bit(0, self.mode as u8 & 0x1 != 0x0);
-            mmu.stat().set_bit(1, self.mode as u8 & 0x2 != 0x0);
+            self.reset(mmu);
             return 0;
+        }
+
+        if self.is_disabled {
+            self.is_disabled = false;
+            mmu.lock_region(MemoryRegion::MemRegionOAM as u8);
         }
     
         debug_assert!(mmu.ly().get() <= 153);
@@ -129,7 +145,7 @@ impl PPU {
         self.dots_leftover = 0;
     
         while dots_budget > 0 {
-            let mode_result = match self.mode {
+            let mode_result = match self.get_mode(mmu) {
                 PpuMode::PpuOamScan => { self.mode_oam_scan(mmu, dots_budget) }
                 PpuMode::PpuDraw => { self.mode_draw(mmu, dots_budget) }
                 PpuMode::PpuHBlank => { self.mode_hblank(mmu, dots_budget) }
@@ -143,7 +159,7 @@ impl PPU {
                 self.dots_mode += dots_spent;
 
                 if let Some(next_mode) = mode_res {
-                    match (self.mode, next_mode) {
+                    match (self.get_mode(mmu), next_mode) {
                         (PpuMode::PpuOamScan, PpuMode::PpuDraw) => {
                             debug_assert!(self.dots_mode == DOTS_PER_OAM_SCAN);
 
@@ -187,24 +203,31 @@ impl PPU {
                             mmu.ly().set(0);
                             self.dots_frame = 0;
 
-                            std::thread::sleep(std::time::Duration::from_millis(1 as u64));
+                            std::thread::sleep(std::time::Duration::from_millis(2 as u64));
                         }
                         _=> { unreachable!() }
                     }
 
+                    match next_mode {
+                        PpuMode::PpuOamScan => {
+                            mmu.lock_region(MemoryRegion::MemRegionOAM as u8);
+                        }
+                        PpuMode::PpuDraw => {
+                            mmu.lock_region(MemoryRegion::MemRegionOAM as u8 | MemoryRegion::MemRegionVRAM as u8);
+                        }
+                        _ => {
+                            mmu.unlock_region(MemoryRegion::MemRegionOAM as u8 | MemoryRegion::MemRegionVRAM as u8);
+                        }
+                    }
+
                     self.dots_mode = 0;
-                    self.mode = next_mode;
+                    self.set_mode(mmu, next_mode);
                 }
             } else {
                 self.dots_leftover = dots_budget;
                 break;
             }
         }
-    
-        // @todo - Use mode directly from REG_STAT
-
-        mmu.stat().set_bit(0, self.mode as u8 & 0x1 != 0x0);
-        mmu.stat().set_bit(1, self.mode as u8 & 0x2 != 0x0);
 
         let ly = mmu.ly().get();
         let lyc = mmu.lyc().get();
@@ -216,7 +239,7 @@ impl PPU {
     }
 
         
-    fn mode_oam_scan(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
+    fn mode_oam_scan(&mut self, _mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
         if self.dots_mode == 0 {
             // @todo oam scan
         }
