@@ -239,7 +239,7 @@ impl CPU {
             0x0 => self.bc().set(val),
             0x1 => self.de().set(val),
             0x2 => self.hl().set(val),
-            0x3 => self.af().set(val),
+            0x3 => self.af().set(val & 0xFFF0),
             _ => { unreachable!() }
         }
     }
