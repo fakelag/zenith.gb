@@ -175,10 +175,20 @@ impl MMU {
                 let low_nibble = self.memory[usize::from(address)] & 0xF;
                 self.memory[usize::from(address)] = (data & 0xF0) | low_nibble;
             }
+            HWR_NR52 => {
+                // Lower nibble RO
+                // https://gbdev.io/pandocs/Audio_Registers.html#ff26--nr52-audio-master-control
+                let low_nibble = self.memory[usize::from(address)] & 0xF;
+                self.memory[usize::from(address)] = (data & 0xF0) | low_nibble;
+            }
             HWR_STAT => {
                 // Lower 3 bits RO
                 let low_3_bits = self.memory[usize::from(address)] & 0x7;
                 self.memory[usize::from(address)] = (data & 0xF8) | low_3_bits;
+            }
+            HWR_LY => {
+                // RO
+                return;
             }
             0xFF4F => { todo!("select vram bank cgb"); }
             _ => {
