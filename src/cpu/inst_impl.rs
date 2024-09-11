@@ -79,13 +79,14 @@ impl cpu::CPU {
                         let e = self.consume_byte_from_pc(mmu) as i8;
 
                         let sp_val = self.sp().get();
-                        let sum = sp_val.wrapping_add_signed(e.into());
-                        self.hl().set(sum);
+                        let sum = i32::from(sp_val) + i32::from(e);
 
                         self.set_flag(cpu::FLAG_Z, false);
                         self.set_flag(cpu::FLAG_N, false);
-                        self.set_flag(cpu::FLAG_H, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
-                        self.set_flag(cpu::FLAG_C, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
+                        self.set_flag(cpu::FLAG_H, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10);
+                        self.set_flag(cpu::FLAG_C, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100);
+
+                        self.hl().set(sum as u16);
                     }
                     0xF9 /* LD SP HL  */=> {
                         let hl_val = self.hl().get();
@@ -316,14 +317,14 @@ impl cpu::CPU {
 
                 let sp_val = self.sp().get();
                 let e: i8 = self.consume_byte_from_pc(mmu) as i8;
-                let sum = sp_val.wrapping_add_signed(e.into());
+                let sum = i32::from(sp_val) + i32::from(e);
 
                 self.set_flag(cpu::FLAG_Z, false);
                 self.set_flag(cpu::FLAG_N, false);
-                self.set_flag(cpu::FLAG_H, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x10) == 0x10);
-                self.set_flag(cpu::FLAG_C, ((sp_val ^ u16::from(e as u8) ^ sum) & 0x100) == 0x100);
+                self.set_flag(cpu::FLAG_H, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10);
+                self.set_flag(cpu::FLAG_C, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100);
 
-                self.sp().set(sum);
+                self.sp().set(sum as u16);
             }
             _ => unreachable!(),
         }
@@ -332,8 +333,8 @@ impl cpu::CPU {
     pub fn opcode_stop(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x10);
 
-        println!("{}", self);
-        todo!("0x10");
+        // println!("{}", self);
+        // todo!("0x10");
 
         // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
     }
