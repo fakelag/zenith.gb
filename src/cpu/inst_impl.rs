@@ -163,7 +163,12 @@ impl cpu::CPU {
                 let addr = util::value(msb, lsb);
                 mmu.bus_write(addr, self.a().get());
             }
-            _ => unreachable!()
+            (OperandKind::R8, OperandKind::R8Addr) => {
+                debug_assert!(opcode == 0xF2);
+                let addr = u16::from(self.c().get()) | 0xFF00;
+                self.a().set(mmu.bus_read(addr));
+            }
+            _ => unreachable!(),
         }
     }
 
