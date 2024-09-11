@@ -335,11 +335,15 @@ impl cpu::CPU {
         }
     }
 
-    pub fn opcode_stop(&mut self, _mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
+    pub fn opcode_stop(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x10);
 
-        // println!("{}", self);
-        // todo!("0x10");
+        // DIV is reset on stop
+        // @todo - stop mode
+        mmu.div().set(0);
+
+        println!("{}", self);
+        todo!("0x10");
 
         // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
     }

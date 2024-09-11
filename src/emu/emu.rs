@@ -4,7 +4,8 @@ use crate::{
     cartridge::cartridge::*,
     cpu::cpu,
     mmu::mmu,
-    ppu::ppu
+    ppu::ppu,
+    timer::timer
 };
 
 pub type FrameBuffer = [[u8; 160]; 144];
@@ -14,6 +15,7 @@ pub struct Emu {
     pub cpu: cpu::CPU,
     pub ppu: ppu::PPU,
     pub mmu: mmu::MMU,
+    pub timer: timer::Timer,
 
     // debug
     pub start_at: time::Instant,
@@ -36,6 +38,7 @@ impl Emu {
             mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
+            timer: timer::Timer::new(),
             start_at: time::Instant::now(),
             cartridge,
             frame_chan,
@@ -55,6 +58,9 @@ impl Emu {
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginPPU);
             self.ppu.step(&mut self.mmu, &mut self.frame_chan, cycles);
+
+            self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
+            self.timer.step(&mut self.mmu, cycles);
        }
    }
 

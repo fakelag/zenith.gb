@@ -59,11 +59,16 @@ impl MMU {
     }
 
     pub fn load(&mut self, cartridge: &Cartridge) {
-        debug_assert!(cartridge.data.len() == 0x8000);
-        self.memory[0..0x8000].copy_from_slice(&cartridge.data);
+        println!("len={}", cartridge.data.len());
+        // debug_assert!(cartridge.data.len() == 0x8000);
+        self.memory[0..cartridge.data.len()].copy_from_slice(&cartridge.data);
     }
 
     pub fn bus_read(&self, address: u16) -> u8 {
+        if self.access_origin != AccessOrigin::AccessOriginCPU {
+            return self.memory[usize::from(address)];
+        }
+
         if !self.address_accessible(address) {
             return 0xFF;
         }
@@ -106,8 +111,21 @@ impl MMU {
                 return 0;
             }
             0xFF00..=0xFF7F => {
-                // IO ranges
-                return self.memory[usize::from(address)];
+                match address {
+                    HWR_NR13 => { return 0xFF; }
+                    HWR_NR23 => { return 0xFF; }
+                    HWR_NR31 => { return 0xFF; }
+                    HWR_NR33 => { return 0xFF; }
+                    HWR_NR41 => { return 0xFF; }
+                    0xFF4D..=0xFF70 => {
+                        // Reads ignored for non-dmg registers
+                        return 0xFF;
+                    }
+                    _ => {
+                        // IO ranges
+                        return self.memory[usize::from(address)];
+                    }
+                }
             }
             // IO ranges & HRAM https://gbdev.io/pandocs/Hardware_Reg_List.html
             0xFF80..=0xFFFE => {
@@ -175,6 +193,15 @@ impl MMU {
                 let low_nibble = self.memory[usize::from(address)] & 0xF;
                 self.memory[usize::from(address)] = (data & 0xF0) | low_nibble;
             }
+            HWR_DIV_LSB => {
+                // RO
+            }
+            HWR_DIV => {
+                // Writing to 0xFF04 resets whole DIV clock
+                self.memory[usize::from(HWR_DIV_LSB)] = 0;
+                self.memory[usize::from(HWR_DIV)] = 0;
+
+            }
             HWR_NR52 => {
                 // Lower nibble RO
                 // https://gbdev.io/pandocs/Audio_Registers.html#ff26--nr52-audio-master-control
@@ -190,7 +217,10 @@ impl MMU {
                 // RO
                 return;
             }
-            0xFF4F => { todo!("select vram bank cgb"); }
+            // 0xFF4F => { todo!("select vram bank cgb"); }
+            0xFF4D..=0xFF70 => {
+                // Writes ignored for non DMG registers
+            }
             _ => {
                 self.memory[usize::from(address)] = data;
             }
@@ -200,6 +230,7 @@ impl MMU {
     pub fn p1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_P1, self) }
     pub fn sb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SB, self) }
     pub fn sc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SC, self) }
+    pub fn div_lsb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV_LSB, self) }
     pub fn div<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV, self) }
     pub fn tima<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TIMA, self) }
     pub fn tma<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TMA, self) }

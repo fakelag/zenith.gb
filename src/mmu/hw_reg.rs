@@ -3,6 +3,7 @@ use super::mmu::MMU;
 pub const HWR_P1: u16 = 0xFF00;
 pub const HWR_SB: u16 = 0xFF01;
 pub const HWR_SC: u16 = 0xFF02;
+pub const HWR_DIV_LSB: u16 = 0xFF03;
 pub const HWR_DIV: u16 = 0xFF04;
 pub const HWR_TIMA: u16 = 0xFF05;
 pub const HWR_TMA: u16 = 0xFF06;
@@ -62,13 +63,13 @@ impl<'a> HwReg<'a> {
 
     pub fn inc(&mut self) -> u8 {
         let prev = self.mmu.bus_read(self.addr);
-        self.mmu.bus_write(self.addr, prev + 1);
+        self.mmu.bus_write(self.addr, prev.wrapping_add(1));
         prev
     }
 
     pub fn dec(&mut self) -> u8 {
         let prev = self.mmu.bus_read(self.addr);
-        self.mmu.bus_write(self.addr, prev - 1);
+        self.mmu.bus_write(self.addr, prev.wrapping_sub(1));
         prev
     }
 

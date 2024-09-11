@@ -7,6 +7,7 @@ mod cpu;
 mod emu;
 mod mmu;
 mod ppu;
+mod timer;
 mod util;
 
 use emu::emu::{Emu, FrameBuffer};

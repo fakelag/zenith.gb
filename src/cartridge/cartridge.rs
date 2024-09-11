@@ -90,5 +90,7 @@ fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
     //     panic!("Cartridge is CGB only");
     // }
 
+    println!("cart_type={}", hdr.cart_type);
+
     Ok(hdr)
 }
