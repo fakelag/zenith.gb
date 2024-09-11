@@ -449,7 +449,7 @@ impl Pixelfetcher {
         if fetch_bg {
             // not in window
             x_coord = ((scx / 8) + self.fetcher_x) & 0x1F;
-            y_coord = (ly + scy) & 0xFF;
+            y_coord = ly.wrapping_add(scy);
         }
 
         let current_tile_index = (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF;
@@ -465,15 +465,13 @@ impl Pixelfetcher {
         let addressing_mode_8000 = mmu.lcdc().check_bit(4);
         let offset: u16 = if msb { 1 } else { 0 };
 
-        // println!("lcdc.4={addressing_mode_8000}");
-
         let tile_byte = if addressing_mode_8000 {
-            let o = u16::from(2 * ((ly + scy) % 8));
+            let o = u16::from(2 * (ly.wrapping_add(scy) % 8));
             mmu.bus_read(0x8000 + (u16::from(tile_number) * 16) + o + offset)
         } else {
             let e: i8 = tile_number as i8;
             let base: u16 = 0x9000;
-            let o = i16::from(2 * ((ly + scy) % 8));
+            let o = i16::from(2 * (ly.wrapping_add(scy) % 8));
             mmu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o) + offset)
         };
 
