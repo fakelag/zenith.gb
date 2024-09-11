@@ -674,6 +674,8 @@ impl cpu::CPU {
 
         // Strip least significant bit
         let new_val = self.rlc(val) & 0xFE;
+
+        self.set_flag(cpu::FLAG_Z, new_val == 0);
         self.write_r8(mmu, reg, new_val);
     }
 
@@ -684,6 +686,8 @@ impl cpu::CPU {
         let high_bit = val & 0x80;
 
         let new_val = (self.rrc(val) & 0x7F) | high_bit;
+
+        self.set_flag(cpu::FLAG_Z, new_val == 0);
         self.write_r8(mmu, reg, new_val);
     }
 
@@ -707,6 +711,8 @@ impl cpu::CPU {
         let val = self.read_r8(mmu, reg);
 
         let new_val = self.rrc(val) & 0x7F;
+
+        self.set_flag(cpu::FLAG_Z, new_val == 0);
         self.write_r8(mmu, reg, new_val);
     }
 
