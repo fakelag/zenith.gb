@@ -21,6 +21,17 @@ pub struct MMU {
     memory: [u8; 0x10000],
     access_flags: u8,
     access_origin: AccessOrigin,
+
+    rom: Vec<u8>,
+    
+    // MBC1 stuff
+    rom_mask: u8,
+    rom_bank: u8,
+    ram_bank: u8,
+    mode_flag: bool,
+
+    cart_type: u8,
+    rom_size: u8,
 }
 
 impl MMU {
@@ -29,10 +40,33 @@ impl MMU {
             memory: [0; 0x10000],
             access_flags: 0,
             access_origin: AccessOrigin::AccessOriginNone,
+            rom: cartridge.data.to_vec(),
+
+            rom_mask: 0,
+            rom_bank: 0,
+            ram_bank: 0,
+            mode_flag: false,
+
+            cart_type: cartridge.header.cart_type,
+            rom_size: cartridge.header.rom_size,
         };
         mmu.load(cartridge);
         mmu
     }
+
+    pub fn load(&mut self, cartridge: &Cartridge) {
+        match cartridge.header.cart_type {
+            1 => {
+                // MBC1
+                // self.memory[0..0x4000].copy_from_slice(&cartridge.data[0..0x4000]);
+                self.rom_mask = 0xFF >> std::cmp::max(7 - self.rom_size, 3);
+            }
+            _ => {
+                self.memory[0..0x8000].copy_from_slice(&cartridge.data[0..0x8000]);
+            }
+        }
+    }
+
 
     pub fn lock_region(&mut self, region: u8) {
         self.access_flags |= region;
@@ -58,12 +92,6 @@ impl MMU {
         self.access_origin = origin;
     }
 
-    pub fn load(&mut self, cartridge: &Cartridge) {
-        println!("len={}", cartridge.data.len());
-        // debug_assert!(cartridge.data.len() == 0x8000);
-        self.memory[0..cartridge.data.len()].copy_from_slice(&cartridge.data);
-    }
-
     pub fn bus_read(&self, address: u16) -> u8 {
         if self.access_origin != AccessOrigin::AccessOriginCPU {
             return self.memory[usize::from(address)];
@@ -76,6 +104,29 @@ impl MMU {
         // https://gbdev.io/pandocs/Memory_Map.html
         match address {
             0x0000..=0x7FFF => {
+                if self.cart_type == 0x1 {
+                    // MBC1
+                    match address {
+                        0x0..=0x3FFF => {
+                            if self.mode_flag {
+                                let zero_bank_number = 0; // @todo - determine zero bank for roms > 32 banks
+                                let addr = 0x4000 * zero_bank_number + address;
+                                return self.rom[usize::from(addr)];
+                            } else {
+                                return self.rom[usize::from(address)];
+                            }
+                        }
+                        0x4000..=0x7FFF => {
+                            let high_bank_number: u16 = u16::from(self.rom_bank & self.rom_mask); // @todo - determine high bank for roms > 32 banks
+                            return self.rom[usize::from(0x4000 * high_bank_number + (address - 0x4000))];
+                        }
+                        0xA000..=0xBFFF => {
+                            todo!("write to external RAM (if enabled)");
+                        }
+                        _ => {}
+                    }
+                }
+
                 // @todo - Check cartridge type
                 return self.memory[usize::from(address)];
             }
@@ -145,7 +196,34 @@ impl MMU {
         }
 
         match address {
-            0x0000..=0x7FFF => {}
+            0x0000..=0x7FFF => {
+                if self.cart_type == 0x1 {
+                    // MBC1
+                    match address {
+                        0x0..=0x1FFF => {
+                            todo!("enable external ram");
+                        }
+                        0x2000..=0x3FFF => {
+                            if data == 0 {
+                                self.rom_bank = 1;
+                            } else {
+                                self.rom_bank = data & self.rom_mask;
+                            }
+                        }
+                        0x4000..=0x5FFF => {
+                            todo!("switch RAM bank");
+                        }
+                        0x6000..=0x7FFF => {
+                            self.mode_flag = data & 0x1 != 0;
+                        }
+                        0xA000..=0xBFFF => {
+                            todo!("write to external RAM (if enabled)");
+                        }
+                        _ => {}
+                    }
+                }
+                println!("write {} -> {}", address, data);
+            }
             0x8000..=0x9FFF => {
                 self.memory[usize::from(address)] = data;
             }
