@@ -1,4 +1,5 @@
 use crate::cartridge::cartridge::*;
+use crate::util::util;
 
 use super::hw_reg::*;
 use super::mbc1;
@@ -28,12 +29,22 @@ pub enum AccessOrigin {
     AccessOriginCPU
 }
 
+struct DmaTransfer {
+    src: u16,
+    src_end: u16,
+    dst: u16,
+    next_byte_in_tstates: u8,
+    tstates: u16,
+}
+
 pub struct MMU {
     memory: [u8; 0x10000],
     access_flags: u8,
     access_origin: AccessOrigin,
 
     mbc: Box<dyn MBC>,
+
+    oam_dma: Option<DmaTransfer>,
 }
 
 impl MMU {
@@ -43,6 +54,7 @@ impl MMU {
             access_flags: 0,
             access_origin: AccessOrigin::AccessOriginNone,
             mbc: Box::new(MbcRomOnly::new()),
+            oam_dma: None,
         };
         mmu.load(cartridge);
         mmu
@@ -65,7 +77,6 @@ impl MMU {
             }
         }
     }
-
 
     pub fn lock_region(&mut self, region: u8) {
         self.access_flags |= region;
@@ -207,6 +218,45 @@ impl MMU {
         }
     }
 
+    pub fn step(&mut self, cycles_passed: u8) {
+        // @todo - Precise timings
+        // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
+        // instead of the actual value at the given memory address,
+        // the byte that is currently being transferred by the DMA transfer is returned.
+        // This also affects the CPU when fetching opcodes, allowing for code execution through DMA transfers.
+        // https://hacktix.github.io/GBEDG/dma/
+        let mut tstates = cycles_passed * 4;
+
+        if let Some(dma) = &mut self.oam_dma {
+
+            if dma.tstates == 0 {
+                tstates -= 4;
+                dma.tstates = 4;
+            }
+
+            let mut bytes_left = tstates / dma.next_byte_in_tstates;
+            let mut b: u16 = 0;
+            
+            while dma.src != dma.src_end + 1 && bytes_left > 0 {
+                bytes_left -= 1;
+
+                let byte = self.memory[dma.src as usize];
+                self.memory[dma.dst as usize] = byte;
+
+                dma.src += 1;
+                dma.dst += 1;
+                b += 1;
+            }
+
+            dma.tstates += u16::from(b * 4);
+
+            if dma.src == dma.src_end + 1 {
+                // println!("{}", dma.tstates);
+                self.oam_dma = None;
+            }
+        }
+    }
+
     fn bus_write_hwreg(&mut self, address: u16, data: u8) {
         if self.access_origin != AccessOrigin::AccessOriginCPU {
             self.memory[usize::from(address)] = data;
@@ -242,6 +292,17 @@ impl MMU {
             HWR_LY => {
                 // RO
                 return;
+            }
+            HWR_DMA => {
+                let src = util::value(data, 0x0);
+                let src_end = util::value(data, 0x9F);
+                self.oam_dma = Some(DmaTransfer {
+                    src,
+                    src_end,
+                    dst: 0xFE00,
+                    next_byte_in_tstates: 4,
+                    tstates: 0,
+                });
             }
             // 0xFF4F => { todo!("select vram bank cgb"); }
             0xFF4D..=0xFF70 => {

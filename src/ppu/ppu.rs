@@ -8,6 +8,7 @@ const DOTS_PER_SCANLINE: u16 = 456;
 
 const ADDR_TILEMAP_9800: u16 = 0x9800;
 const ADDR_TILEMAP_9C00: u16 = 0x9C00;
+const ADDR_OAM: u16 = 0xFE00;
 
 const STAT_SELECT_LYC_BIT:   u8 = 6;
 const STAT_SELECT_MODE2_BIT: u8 = 5;
@@ -47,6 +48,14 @@ struct Pixelfetcher {
     fresh_scanline: bool, 
 }
 
+#[derive(Debug)]
+struct Sprite {
+    y: u8,
+    x: u8, // x can be 0 and object is not drawn
+    tile: u8,
+    attr: u8,
+}
+
 pub struct PPU {
     is_disabled: bool,
     dots_mode: u16,
@@ -57,6 +66,9 @@ pub struct PPU {
 
     stat_interrupt: u8,
     stat_interrupt_prev: u8,
+
+    oam_cursor: u8,
+    sprite_buffer: Vec<Sprite>,
 
     bg_fifo: VecDeque<GbPixel>,
     bg_scroll_count: u8,
@@ -93,6 +105,8 @@ impl PPU {
                 tile_msb: 0xFF,
                 fresh_scanline: true,
             },
+            oam_cursor: 0,
+            sprite_buffer: Vec::with_capacity(10),
             current_x: 0,
             bg_fifo: VecDeque::new(),
             bg_scroll_count: 0,
@@ -113,8 +127,10 @@ impl PPU {
         mmu.unlock_region(MemoryRegion::MemRegionOAM as u8 | MemoryRegion::MemRegionVRAM as u8);
         mmu.ly().set(0);
 
-        self.bg_fifo.clear();
         self.pixelfetcher.reset();
+        self.bg_fifo.clear();
+        self.sprite_buffer.clear();
+        self.oam_cursor = 0;
         self.dots_frame = 0;
         self.dots_leftover = 0;
         self.dots_mode = 0;
@@ -172,6 +188,8 @@ impl PPU {
                             debug_assert!(self.dots_mode >= 172);
                             debug_assert!(self.dots_mode <= 289);
 
+                            println!("draw length={}", self.dots_mode);
+
                             // reset, move to hblank
                             self.hblank_length = 376 - self.dots_mode;
                             self.bg_fifo.clear();
@@ -210,6 +228,8 @@ impl PPU {
 
                     match next_mode {
                         PpuMode::PpuOamScan => {
+                            self.sprite_buffer.clear();
+                            self.oam_cursor = 0;
                             mmu.lock_region(MemoryRegion::MemRegionOAM as u8);
                         }
                         PpuMode::PpuDraw => {
@@ -239,17 +259,46 @@ impl PPU {
     }
 
         
-    fn mode_oam_scan(&mut self, _mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        if self.dots_mode == 0 {
-            // @todo oam scan
+    fn mode_oam_scan(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
+        let change_mode = self.dots_mode + dots_to_run >= DOTS_PER_OAM_SCAN;
+        let dots = if change_mode {
+            DOTS_PER_OAM_SCAN - self.dots_mode
+        } else {
+            dots_to_run
+        };
+
+        let num_obj_scan = dots / 2;
+        let ly = mmu.ly().get();
+        let obj_height: u8 = if mmu.lcdc().check_bit(2) { 16 } else { 8 }; 
+
+        for _ in 1..=num_obj_scan {
+            debug_assert!(self.oam_cursor < 40);
+
+            if self.sprite_buffer.len() < 10 {
+                let obj_addr = ADDR_OAM + u16::from(self.oam_cursor) * 4;
+                let x_coord = mmu.bus_read(obj_addr + 1);
+                let y_coord = mmu.bus_read(obj_addr);
+                
+                if ly + 16 >= y_coord && ly + 16 < y_coord + obj_height {
+                    self.sprite_buffer.push(Sprite{
+                        y: y_coord,
+                        x: x_coord,
+                        tile: mmu.bus_read(obj_addr + 2),
+                        attr: mmu.bus_read(obj_addr + 3),
+                    });
+                }
+            }
+
+            self.oam_cursor += 1;
         }
-        
+
         if self.dots_mode + dots_to_run >= DOTS_PER_OAM_SCAN {
-            let dots = DOTS_PER_OAM_SCAN - self.dots_mode;
+            debug_assert!(self.oam_cursor == 40);
+            // println!("[{}] sprite_buffer={:?}", mmu.ly().get(), self.sprite_buffer);
             return Some((dots, Some(PpuMode::PpuDraw)));
         }
 
-        Some((dots_to_run, None))
+        Some((dots, None))
     }
 
     fn mode_draw(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
@@ -260,11 +309,6 @@ impl PPU {
             https://gbdev.io/pandocs/pixel_fifo.html#get-tile
         */
 
-        if self.current_x == 160 {
-            return Some((0, Some(PpuMode::PpuHBlank)));
-        }
-
-        // 1. Clock pixelfetchers
         let fetcher_run = self.pixelfetcher.step(mmu, &mut self.bg_fifo, dots_to_run);
 
         if !fetcher_run {
@@ -289,17 +333,9 @@ impl PPU {
             }
 
             if self.current_x == 160 {
-                // self.dots_mode += dot;
-                // @todo - Switch mode here or later
-                return Some((dot, None))
+                return Some((dot, Some(PpuMode::PpuHBlank)));
             }
         }
-
-        // 2. Check if any pixels in BG FIFO (if not, exit)
-        // 3. Check if any pixels in Sprite FIFO (if yes, merge with BG pixel)
-        // 4. Sprite fetching
-        // 5. Window fetching
-        // 6. End scanline
 
         Some((fetcher_dots, None))
     }

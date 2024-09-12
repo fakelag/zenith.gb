@@ -61,6 +61,9 @@ impl Emu {
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.timer.step(&mut self.mmu, cycles);
+
+            self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
+            self.mmu.step(cycles);
        }
    }
 
