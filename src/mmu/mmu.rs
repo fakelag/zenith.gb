@@ -1,6 +1,17 @@
 use crate::cartridge::cartridge::*;
 
 use super::hw_reg::*;
+use super::mbc1;
+
+pub trait MBC {
+    fn load(&mut self, cartridge: &Cartridge);
+    fn read(&self, address: u16) -> u8;
+    fn write(&mut self, address: u16, data: u8);
+}
+
+struct MbcRomOnly {
+    rom: [u8; 0x8000],
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq)]
@@ -22,16 +33,7 @@ pub struct MMU {
     access_flags: u8,
     access_origin: AccessOrigin,
 
-    rom: Vec<u8>,
-    
-    // MBC1 stuff
-    rom_mask: u8,
-    rom_bank: u8,
-    ram_bank: u8,
-    mode_flag: bool,
-
-    cart_type: u8,
-    rom_size: u8,
+    mbc: Box<dyn MBC>,
 }
 
 impl MMU {
@@ -40,29 +42,26 @@ impl MMU {
             memory: [0; 0x10000],
             access_flags: 0,
             access_origin: AccessOrigin::AccessOriginNone,
-            rom: cartridge.data.to_vec(),
-
-            rom_mask: 0,
-            rom_bank: 0,
-            ram_bank: 0,
-            mode_flag: false,
-
-            cart_type: cartridge.header.cart_type,
-            rom_size: cartridge.header.rom_size,
+            mbc: Box::new(MbcRomOnly::new()),
         };
         mmu.load(cartridge);
         mmu
     }
 
     pub fn load(&mut self, cartridge: &Cartridge) {
+        self.memory = [0; 0x10000];
+
         match cartridge.header.cart_type {
-            1 => {
-                // MBC1
-                // self.memory[0..0x4000].copy_from_slice(&cartridge.data[0..0x4000]);
-                self.rom_mask = 0xFF >> std::cmp::max(7 - self.rom_size, 3);
+            1..=3 => {
+                self.mbc = Box::new(mbc1::MBC1::new());
+                self.mbc.load(cartridge);
             }
             _ => {
-                self.memory[0..0x8000].copy_from_slice(&cartridge.data[0..0x8000]);
+                if cartridge.header.cart_type != 0 {
+                    println!("WARN: Unsupported cartridge/MBC: {}", cartridge.header.cart_type);
+                }
+                self.mbc = Box::new(MbcRomOnly::new());
+                self.mbc.load(cartridge);
             }
         }
     }
@@ -104,39 +103,14 @@ impl MMU {
         // https://gbdev.io/pandocs/Memory_Map.html
         match address {
             0x0000..=0x7FFF => {
-                if self.cart_type == 0x1 {
-                    // MBC1
-                    match address {
-                        0x0..=0x3FFF => {
-                            if self.mode_flag {
-                                let zero_bank_number = 0; // @todo - determine zero bank for roms > 32 banks
-                                let addr = 0x4000 * zero_bank_number + address;
-                                return self.rom[usize::from(addr)];
-                            } else {
-                                return self.rom[usize::from(address)];
-                            }
-                        }
-                        0x4000..=0x7FFF => {
-                            let high_bank_number: u16 = u16::from(self.rom_bank & self.rom_mask); // @todo - determine high bank for roms > 32 banks
-                            return self.rom[usize::from(0x4000 * high_bank_number + (address - 0x4000))];
-                        }
-                        0xA000..=0xBFFF => {
-                            todo!("write to external RAM (if enabled)");
-                        }
-                        _ => {}
-                    }
-                }
-
-                // @todo - Check cartridge type
-                return self.memory[usize::from(address)];
+                return self.mbc.read(address);
             }
             0x8000..=0x9FFF => {
                 // 8 KiB Video RAM (VRAM)
                 return self.memory[usize::from(address)];
             }
             0xA000..=0xBFFF => {
-                // 8 KiB External RAM - From cartridge, switchable bank if any
-                todo!("External ram bank (if cart_type supports it)");
+                return self.mbc.read(address);
             }
             0xC000..=0xCFFF => {
                 // 4 KiB Work RAM (WRAM)
@@ -197,38 +171,13 @@ impl MMU {
 
         match address {
             0x0000..=0x7FFF => {
-                if self.cart_type == 0x1 {
-                    // MBC1
-                    match address {
-                        0x0..=0x1FFF => {
-                            todo!("enable external ram");
-                        }
-                        0x2000..=0x3FFF => {
-                            if data == 0 {
-                                self.rom_bank = 1;
-                            } else {
-                                self.rom_bank = data & self.rom_mask;
-                            }
-                        }
-                        0x4000..=0x5FFF => {
-                            todo!("switch RAM bank");
-                        }
-                        0x6000..=0x7FFF => {
-                            self.mode_flag = data & 0x1 != 0;
-                        }
-                        0xA000..=0xBFFF => {
-                            todo!("write to external RAM (if enabled)");
-                        }
-                        _ => {}
-                    }
-                }
-                println!("write {} -> {}", address, data);
+                self.mbc.write(address, data);
             }
             0x8000..=0x9FFF => {
                 self.memory[usize::from(address)] = data;
             }
             0xA000..=0xBFFF => {
-                todo!("External ram bank (if cart_type supports it)");
+                self.mbc.write(address, data);
             }
             0xC000..=0xCFFF => {
                 self.memory[usize::from(address)] = data;
@@ -238,7 +187,6 @@ impl MMU {
             }
             0xE000..=0xFDFF => {
                 self.memory[usize::from(address - 0x2000)] = data;
-                todo!("check echo ram");
             }
             0xFE00..=0xFE9F => {
                 self.memory[usize::from(address)] = data;
@@ -347,4 +295,24 @@ impl MMU {
     pub fn obp1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_OBP1, self) }
     pub fn wy<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WY, self) }
     pub fn wx<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WX, self) }
+}
+
+impl MbcRomOnly {
+    pub fn new() -> MbcRomOnly {
+        Self { rom: [0; 0x8000] }
+    }
+}
+
+impl MBC for MbcRomOnly {
+    fn load(&mut self, cartridge: &Cartridge) {
+        self.rom[0..0x8000].copy_from_slice(&cartridge.data[0..0x8000]);
+    }
+
+    fn read(&self, address: u16) -> u8 {
+        return self.rom[usize::from(address)];
+    }
+
+    fn write(&mut self, _address: u16, _data: u8) {
+        // noop
+    }
 }

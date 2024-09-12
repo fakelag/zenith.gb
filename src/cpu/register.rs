@@ -46,13 +46,13 @@ impl<'a> Reg16b<'a> {
 
     pub fn dec(&mut self) -> u16 {
         let prev = *self.addr;
-        *self.addr -= 1;
+        *self.addr = self.addr.wrapping_sub(1);
         prev
     }
 
     pub fn inc(&mut self) -> u16 {
         let prev = *self.addr;
-        *self.addr += 1;
+        *self.addr = self.addr.wrapping_add(1);
         prev
     }
 }
