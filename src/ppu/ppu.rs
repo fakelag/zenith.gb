@@ -42,10 +42,12 @@ enum PixelfetcherStep {
 struct Pixelfetcher {
     current_step: PixelfetcherStep,
     fetcher_x: u8,
+    window_line_counter: Option<u8>,
     tile_number: u8,
     tile_lsb: u8,
     tile_msb: u8,
-    fresh_scanline: bool, 
+    fresh_scanline: bool,
+    is_window: bool,
 }
 
 #[derive(Debug)]
@@ -70,6 +72,10 @@ pub struct PPU {
     oam_cursor: u8,
     sprite_buffer: Vec<Sprite>,
 
+    // WY = LY has been true at some point during current frame
+    // (checked at the start of Mode 2)
+    draw_window: bool,
+
     bg_fifo: VecDeque<GbPixel>,
     bg_scroll_count: u8,
 
@@ -91,6 +97,7 @@ impl PPU {
     pub fn new() -> Self {
         Self {
             is_disabled: false,
+            draw_window: false,
             dots_mode: 0,
             dots_frame: 0,
             dots_leftover: 0,
@@ -100,10 +107,12 @@ impl PPU {
             pixelfetcher: Pixelfetcher{
                 current_step: PixelfetcherStep::FetchTile,
                 fetcher_x: 0,
+                window_line_counter: None,
                 tile_number: 0,
                 tile_lsb: 0xFF,
                 tile_msb: 0xFF,
                 fresh_scanline: true,
+                is_window: false,
             },
             oam_cursor: 0,
             sprite_buffer: Vec::with_capacity(10),
@@ -127,6 +136,7 @@ impl PPU {
         mmu.unlock_region(MemoryRegion::MemRegionOAM as u8 | MemoryRegion::MemRegionVRAM as u8);
         mmu.ly().set(0);
 
+        self.pixelfetcher.window_line_counter = None;
         self.pixelfetcher.reset();
         self.bg_fifo.clear();
         self.sprite_buffer.clear();
@@ -183,12 +193,16 @@ impl PPU {
                             debug_assert!(self.current_x == 0);
                             let scx = mmu.scx().get();
                             self.bg_scroll_count = scx % 8;
+                            
+                            if mmu.wy().get() == mmu.ly().get() {
+                                self.draw_window = true;
+                            }
                         }
                         (PpuMode::PpuDraw, PpuMode::PpuHBlank) => {
                             debug_assert!(self.dots_mode >= 172);
                             debug_assert!(self.dots_mode <= 289);
 
-                            println!("draw length={}", self.dots_mode);
+                            // println!("draw length={}", self.dots_mode);
 
                             // reset, move to hblank
                             self.hblank_length = 376 - self.dots_mode;
@@ -204,6 +218,9 @@ impl PPU {
                             debug_assert!(self.dots_mode >= 87);
                             debug_assert!(self.dots_mode <= 204);
                             debug_assert!(mmu.ly().get() == 144);
+
+                            self.draw_window = false;
+                            self.pixelfetcher.window_line_counter = None;
 
                             // @todo - Sending will fail when exiting the app.
                             // - A way to close emu thread and exit gracefully
@@ -221,7 +238,7 @@ impl PPU {
                             mmu.ly().set(0);
                             self.dots_frame = 0;
 
-                            std::thread::sleep(std::time::Duration::from_millis(2 as u64));
+                            std::thread::sleep(std::time::Duration::from_millis(1 as u64));
                         }
                         _=> { unreachable!() }
                     }
@@ -329,6 +346,21 @@ impl PPU {
 
                     self.rt[ly as usize][self.current_x as usize] = palette_color;
                     self.current_x += 1;
+
+                    let window_enabled_lcdc = mmu.lcdc().check_bit(5);
+                    let past_window_x = self.current_x >= mmu.wx().get().saturating_sub(7);
+
+                    // @todo - Emulate WX values 0-6
+                    if self.draw_window == true && self.pixelfetcher.is_window == false && window_enabled_lcdc && past_window_x {
+                        self.pixelfetcher.reset();
+                        self.pixelfetcher.set_window(true);
+                        if let Some(window_line_count) = self.pixelfetcher.window_line_counter.as_mut() {
+                            *window_line_count += 1;
+                        } else {
+                            self.pixelfetcher.window_line_counter = Some(0);
+                        }
+                        self.bg_fifo.clear();
+                    }
                 }
             }
 
@@ -416,7 +448,12 @@ impl Pixelfetcher {
         self.tile_number = 0;
         self.tile_lsb = 0xFF;
         self.tile_msb = 0xFF;
+        self.is_window = false;
         self.fresh_scanline = true;
+    }
+
+    fn set_window(&mut self, window: bool) {
+        self.is_window = window;
     }
 
     fn step(&mut self, mmu: &mut MMU, bg_fifo: &mut VecDeque<GbPixel>, dots_to_run: u16) -> bool {
@@ -434,7 +471,7 @@ impl Pixelfetcher {
                 self.current_step = PixelfetcherStep::TileDataHigh;
             }
             PixelfetcherStep::TileDataHigh => {
-                if self.fresh_scanline {
+                if self.fresh_scanline && !self.is_window {
                     self.reset();
                     self.fresh_scanline = false;
                     return true;
@@ -466,29 +503,28 @@ impl Pixelfetcher {
     }
 
     fn fetch_tile_number(&mut self, mmu: &mut MMU) {
-        let fetch_bg = true;
+        let is_window = self.is_window && mmu.lcdc().check_bit(5);
 
-        let tilemap_bit = mmu.lcdc().check_bit(3); // check_bit(6) for window
+        let tilemap_bit = if is_window { 6 } else { 3 };
+        let tilemap_bit = mmu.lcdc().check_bit(tilemap_bit);
         let tilemap_addr = if tilemap_bit {
             ADDR_TILEMAP_9C00
         } else {
             ADDR_TILEMAP_9800
         };
 
-        let mut x_coord: u8 = 0;
-        let mut y_coord: u8 = 0;
+        let current_tile_index: u16 = if is_window {
+            let line_count = u16::from(self.window_line_counter.expect("line count should be set"));
+            (u16::from(self.fetcher_x) + 32 * (line_count / 8)) & 0x3FF
+        } else {
+            let ly = mmu.ly().get();
+            let scy = mmu.scy().get();
+            let scx = mmu.scx().get();
 
-        let ly = mmu.ly().get();
-        let scy = mmu.scy().get();
-        let scx = mmu.scx().get();
-
-        if fetch_bg {
-            // not in window
-            x_coord = ((scx / 8) + self.fetcher_x) & 0x1F;
-            y_coord = ly.wrapping_add(scy);
-        }
-
-        let current_tile_index = (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF;
+            let x_coord = ((scx / 8) + self.fetcher_x) & 0x1F;
+            let y_coord = ly.wrapping_add(scy);
+            (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF
+        };
 
         let tilemap_data_addr = tilemap_addr + current_tile_index;
 
@@ -498,17 +534,23 @@ impl Pixelfetcher {
     fn fetch_tile_byte(&mut self, mmu: &mut MMU, tile_number: u8, msb: bool) {
         let ly = mmu.ly().get();
         let scy = mmu.scy().get();
-        let addressing_mode_8000 = mmu.lcdc().check_bit(4);
         let offset: u16 = if msb { 1 } else { 0 };
+        
+        let addressing_mode_8000 = mmu.lcdc().check_bit(4);
+        let is_window = self.is_window && mmu.lcdc().check_bit(5);
+
+        let line_offset = if is_window {
+            u16::from(2 * (self.window_line_counter.expect("line count should be set") % 8))
+        } else {
+            u16::from(2 * (ly.wrapping_add(scy) % 8))
+        };
 
         let tile_byte = if addressing_mode_8000 {
-            let o = u16::from(2 * (ly.wrapping_add(scy) % 8));
-            mmu.bus_read(0x8000 + (u16::from(tile_number) * 16) + o + offset)
+            mmu.bus_read(0x8000 + (u16::from(tile_number) * 16) + line_offset + offset)
         } else {
             let e: i8 = tile_number as i8;
             let base: u16 = 0x9000;
-            let o = i16::from(2 * (ly.wrapping_add(scy) % 8));
-            mmu.bus_read(base.wrapping_add_signed(e as i16 * 16 + o) + offset)
+            mmu.bus_read(base.wrapping_add_signed(e as i16 * 16 + line_offset as i16) + offset)
         };
 
         if msb {
