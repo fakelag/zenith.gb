@@ -39,7 +39,7 @@ enum PixelfetcherStep {
     PushFifo,
 }
 
-struct Pixelfetcher {
+struct BgFetcher {
     current_step: PixelfetcherStep,
     fetcher_x: u8,
     window_line_counter: Option<u8>,
@@ -48,6 +48,7 @@ struct Pixelfetcher {
     tile_msb: u8,
     fresh_scanline: bool,
     is_window: bool,
+    fifo: VecDeque<GbPixel>,
 }
 
 #[derive(Debug)]
@@ -76,10 +77,9 @@ pub struct PPU {
     // (checked at the start of Mode 2)
     draw_window: bool,
 
-    bg_fifo: VecDeque<GbPixel>,
     bg_scroll_count: u8,
 
-    pixelfetcher: Pixelfetcher,
+    bg_fetcher: BgFetcher,
     current_x: u8,
 
     rt: [[u8; 160]; 144],
@@ -104,7 +104,7 @@ impl PPU {
             hblank_length: 0,
             stat_interrupt: 0,
             stat_interrupt_prev: 0,
-            pixelfetcher: Pixelfetcher{
+            bg_fetcher: BgFetcher{
                 current_step: PixelfetcherStep::FetchTile,
                 fetcher_x: 0,
                 window_line_counter: None,
@@ -113,11 +113,11 @@ impl PPU {
                 tile_msb: 0xFF,
                 fresh_scanline: true,
                 is_window: false,
+                fifo: VecDeque::new(),
             },
             oam_cursor: 0,
             sprite_buffer: Vec::with_capacity(10),
             current_x: 0,
-            bg_fifo: VecDeque::new(),
             bg_scroll_count: 0,
             rt: [[0; 160]; 144],
         }
@@ -136,9 +136,7 @@ impl PPU {
         mmu.unlock_region(MemoryRegion::MemRegionOAM as u8 | MemoryRegion::MemRegionVRAM as u8);
         mmu.ly().set(0);
 
-        self.pixelfetcher.window_line_counter = None;
-        self.pixelfetcher.reset();
-        self.bg_fifo.clear();
+        self.bg_fetcher.reset();
         self.sprite_buffer.clear();
         self.oam_cursor = 0;
         self.dots_frame = 0;
@@ -202,12 +200,11 @@ impl PPU {
                             debug_assert!(self.dots_mode >= 172);
                             debug_assert!(self.dots_mode <= 289);
 
-                            // println!("draw length={}", self.dots_mode);
+                            println!("draw length={}", self.dots_mode);
 
                             // reset, move to hblank
                             self.hblank_length = 376 - self.dots_mode;
-                            self.bg_fifo.clear();
-                            self.pixelfetcher.reset();
+                            self.bg_fetcher.scanline_reset();
                             self.bg_scroll_count = 0;
                             self.current_x = 0;
                         }
@@ -220,7 +217,7 @@ impl PPU {
                             debug_assert!(mmu.ly().get() == 144);
 
                             self.draw_window = false;
-                            self.pixelfetcher.window_line_counter = None;
+                            self.bg_fetcher.window_line_counter = None;
 
                             // @todo - Sending will fail when exiting the app.
                             // - A way to close emu thread and exit gracefully
@@ -238,7 +235,7 @@ impl PPU {
                             mmu.ly().set(0);
                             self.dots_frame = 0;
 
-                            std::thread::sleep(std::time::Duration::from_millis(1 as u64));
+                            std::thread::sleep(std::time::Duration::from_millis(15 as u64));
                         }
                         _=> { unreachable!() }
                     }
@@ -326,41 +323,35 @@ impl PPU {
             https://gbdev.io/pandocs/pixel_fifo.html#get-tile
         */
 
-        let fetcher_run = self.pixelfetcher.step(mmu, &mut self.bg_fifo, dots_to_run);
+        let dots = 2;
 
-        if !fetcher_run {
+        if dots_to_run < dots {
             return None;
         }
 
-        let fetcher_dots = 2;
+        self.bg_fetcher.step(mmu);
 
-        for dot in 1..=fetcher_dots {
-            if let Some(pixel) = self.bg_fifo.pop_front() {
+        for dot in 1..=dots {
+            if let Some(pixel) = self.bg_fetcher.pop() {
                 if self.bg_scroll_count > 0 {
                     self.bg_scroll_count -= 1;
-                } else {
-                    let ly = mmu.ly().get();
+                    continue;
+                }
 
-                    let bgp = mmu.bgp().get();
-                    let palette_color = (bgp >> (pixel.color * 2)) & 0x3;
+                let ly = mmu.ly().get();
 
-                    self.rt[ly as usize][self.current_x as usize] = palette_color;
-                    self.current_x += 1;
+                let bgp = mmu.bgp().get();
+                let palette_color = (bgp >> (pixel.color * 2)) & 0x3;
 
-                    let window_enabled_lcdc = mmu.lcdc().check_bit(5);
-                    let past_window_x = self.current_x >= mmu.wx().get().saturating_sub(7);
+                self.rt[ly as usize][self.current_x as usize] = palette_color;
+                self.current_x += 1;
 
-                    // @todo - Emulate WX values 0-6
-                    if self.draw_window == true && self.pixelfetcher.is_window == false && window_enabled_lcdc && past_window_x {
-                        self.pixelfetcher.reset();
-                        self.pixelfetcher.set_window(true);
-                        if let Some(window_line_count) = self.pixelfetcher.window_line_counter.as_mut() {
-                            *window_line_count += 1;
-                        } else {
-                            self.pixelfetcher.window_line_counter = Some(0);
-                        }
-                        self.bg_fifo.clear();
-                    }
+                let window_enabled_lcdc = mmu.lcdc().check_bit(5);
+                let past_window_x = self.current_x >= mmu.wx().get().saturating_sub(7);
+
+                // @todo - Emulate WX values 0-6
+                if self.draw_window == true && window_enabled_lcdc && past_window_x {
+                    self.bg_fetcher.switch_to_window_mode();
                 }
             }
 
@@ -369,7 +360,7 @@ impl PPU {
             }
         }
 
-        Some((fetcher_dots, None))
+        Some((dots, None))
     }
 
     fn mode_hblank(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
@@ -441,8 +432,13 @@ impl PPU {
 
 }
 
-impl Pixelfetcher {
+impl BgFetcher {
     fn reset(&mut self) {
+        self.scanline_reset();
+        self.window_line_counter = None;
+    }
+
+    fn scanline_reset(&mut self) {
         self.current_step = PixelfetcherStep::FetchTile;
         self.fetcher_x = 0;
         self.tile_number = 0;
@@ -450,17 +446,30 @@ impl Pixelfetcher {
         self.tile_msb = 0xFF;
         self.is_window = false;
         self.fresh_scanline = true;
+        self.fifo.clear();
     }
 
-    fn set_window(&mut self, window: bool) {
-        self.is_window = window;
-    }
-
-    fn step(&mut self, mmu: &mut MMU, bg_fifo: &mut VecDeque<GbPixel>, dots_to_run: u16) -> bool {
-        if dots_to_run < 2 {
-            return false;
+    fn switch_to_window_mode(&mut self) {
+        if self.is_window {
+            // Already fetching window
+            return;
         }
 
+        self.scanline_reset();
+        self.is_window = true;
+
+        if let Some(window_line_count) = self.window_line_counter.as_mut() {
+            *window_line_count += 1;
+        } else {
+            self.window_line_counter = Some(0);
+        }
+    }
+
+    fn pop(&mut self) -> Option<GbPixel> {
+        self.fifo.pop_front()
+    }
+
+    fn step(&mut self, mmu: &mut MMU) {
         match self.current_step {
             PixelfetcherStep::FetchTile => {
                 self.fetch_tile_number(mmu);
@@ -472,18 +481,18 @@ impl Pixelfetcher {
             }
             PixelfetcherStep::TileDataHigh => {
                 if self.fresh_scanline && !self.is_window {
-                    self.reset();
+                    self.scanline_reset();
                     self.fresh_scanline = false;
-                    return true;
+                    return;
                 }
 
                 self.fetch_tile_byte(mmu, self.tile_number, true);
                 self.current_step = PixelfetcherStep::PushFifo;
             }
             PixelfetcherStep::PushFifo => {
-                if bg_fifo.len() > 0 {
+                if self.fifo.len() > 0 {
                     todo!("push fifo should restart 2 times");
-                    return true;
+                    return;
                 }
 
                 for bit_idx in (0..8).rev() {
@@ -491,15 +500,13 @@ impl Pixelfetcher {
                     let lb = (self.tile_lsb >> bit_idx) & 0x1;
                     let color = lb | (hb << 1);
 
-                    bg_fifo.push_back(GbPixel{ color, }); // palette: 0, bg_priority: 0 });
+                    self.fifo.push_back(GbPixel{ color, }); // palette: 0, bg_priority: 0 });
                 }
 
                 self.fetcher_x += 1;
                 self.current_step = PixelfetcherStep::FetchTile;
             }
         }
-
-        true
     }
 
     fn fetch_tile_number(&mut self, mmu: &mut MMU) {
