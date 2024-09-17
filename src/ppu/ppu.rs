@@ -197,7 +197,7 @@ impl PPU {
                             mmu.ly().set(0);
                             self.dots_frame = 0;
 
-                            std::thread::sleep(std::time::Duration::from_millis(100 as u64));
+                            std::thread::sleep(std::time::Duration::from_millis(1 as u64));
                         }
                         _=> { unreachable!() }
                     }
@@ -307,7 +307,7 @@ impl PPU {
     fn fetch_sprite_tile_tuple(mmu: &mut MMU, tile_number: u8, sprite_y: u8) -> (u8, u8) {
         let ly = mmu.ly().get();
 
-        let line_offset = u16::from(((ly + sprite_y) % 8) * 2);
+        let line_offset = u16::from(((ly.wrapping_add(sprite_y)) % 8) * 2);
         let tile_base = 0x8000 + (u16::from(tile_number) * 16) + line_offset;
 
         return (mmu.bus_read(tile_base), mmu.bus_read(tile_base + 1));
