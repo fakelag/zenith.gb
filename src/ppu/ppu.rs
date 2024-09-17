@@ -60,7 +60,7 @@ pub struct PPU {
 
     fetcher_x: u8,
 
-    bg_scanline_mask: [bool; 160],
+    bg_scanline_mask: [u8; 160],
 
     rt: [[u8; 160]; 144],
 }
@@ -78,7 +78,7 @@ impl PPU {
         Self {
             is_disabled: false,
             draw_window: false,
-            bg_scanline_mask: [false; 160],
+            bg_scanline_mask: [0; 160],
             window_line_counter: 0,
             dots_mode: 0,
             fetcher_x: 0,
@@ -270,7 +270,6 @@ impl PPU {
 
         if self.dots_mode + dots_to_run >= DOTS_PER_OAM_SCAN {
             debug_assert!(self.oam_cursor == 40);
-            println!("[{}] - {:?}", mmu.ly().get(), self.sprite_buffer);
             return Some((dots, Some(PpuMode::PpuDraw)));
         }
 
@@ -305,10 +304,10 @@ impl PPU {
         return mmu.bus_read(tilemap_data_addr);
     }
 
-    fn fetch_sprite_tile_tuple(mmu: &mut MMU, tile_number: u8) -> (u8, u8) {
+    fn fetch_sprite_tile_tuple(mmu: &mut MMU, tile_number: u8, sprite_y: u8) -> (u8, u8) {
         let ly = mmu.ly().get();
 
-        let line_offset = u16::from((ly % 8) * 2);
+        let line_offset = u16::from(((ly + sprite_y) % 8) * 2);
         let tile_base = 0x8000 + (u16::from(tile_number) * 16) + line_offset;
 
         return (mmu.bus_read(tile_base), mmu.bus_read(tile_base + 1));
@@ -359,7 +358,7 @@ impl PPU {
 
                 let palette_color = (bgp >> (bg_pixel * 2)) & 0x3;
 
-                self.bg_scanline_mask[x as usize] = bg_pixel != 0;
+                self.bg_scanline_mask[x as usize] = bg_pixel;
                 self.rt[ly as usize][x as usize] = palette_color;
                 x += 1;
 
@@ -406,7 +405,7 @@ impl PPU {
 
                 let palette_color = (bgp >> (win_pixel * 2)) & 0x3;
 
-                self.bg_scanline_mask[x as usize] = win_pixel != 0;
+                self.bg_scanline_mask[x as usize] = win_pixel;
                 self.rt[ly as usize][x as usize] = palette_color;
                 x += 1;
 
@@ -424,17 +423,19 @@ impl PPU {
         }
 
         let ly = mmu.ly().get();
+        let bgp = mmu.bgp().get();
 
+        self.sprite_buffer.reverse();
         self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
-        let sprites_with_bytes: Vec<SpriteWithTile> = self.sprite_buffer
+        let sprites_with_tiles: Vec<SpriteWithTile> = self.sprite_buffer
             .iter()
             .map(|oam_entry| {
-                let (tile_lsb, tile_msb) = PPU::fetch_sprite_tile_tuple(mmu, oam_entry.tile);
+                let (tile_lsb, tile_msb) = PPU::fetch_sprite_tile_tuple(mmu, oam_entry.tile, oam_entry.y);
                 SpriteWithTile{ oam_entry: *oam_entry, tile_lsb, tile_msb }
             })
             .collect();
 
-        for sprite in sprites_with_bytes.iter() {
+        for sprite in sprites_with_tiles.iter() {
             let skip_pixels = 8 - std::cmp::min(sprite.oam_entry.x, 8);
 
             for bit_idx in skip_pixels..8 {
@@ -447,8 +448,6 @@ impl PPU {
                     continue;
                 }
 
-                let mut push_sprite = true;
-
                 let sprite_palette = sprite.oam_entry.attr & (1 << 4);
                 let sprite_bgpriority = sprite.oam_entry.attr & (1 << 7);
 
@@ -460,13 +459,13 @@ impl PPU {
 
                 let x = sprite.oam_entry.x.saturating_sub(8) + (7-bit_idx);
 
-                if sprite_color == 0 {
-                    push_sprite = false;
-                } else if sprite_bgpriority == 1 && self.bg_scanline_mask[x as usize] == true {
-                    push_sprite = false;
-                }
-
-                if !push_sprite {
+                if sprite_bgpriority == 1 && self.bg_scanline_mask[x as usize] != 0 {
+                    // According to pandocs, sprites with higher priority sprite but bg-over-obj
+                    // will "mask" lower priority sprites, and draw background over them. Copy background pixel
+                    // back to the framebuffer to emulate this
+                    // @todo - Check this
+                    let bg_pixel = (bgp >> (self.bg_scanline_mask[x as usize] * 2)) & 0x3;
+                    self.rt[ly as usize][x as usize] = bg_pixel;
                     continue;
                 }
 
@@ -488,7 +487,7 @@ impl PPU {
 
         if self.dots_mode == 0 {
             for x in 0..160 {
-                self.bg_scanline_mask[x] = false;
+                self.bg_scanline_mask[x] = 0;
             }
             self.draw_background(mmu);
             self.draw_window(mmu);
