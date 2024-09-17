@@ -342,11 +342,18 @@ impl PPU {
 
         let ly: u8 = mmu.ly().get();
         let bgp = mmu.bgp().get();
-
         let scx = mmu.scx().get();
-        let mut skip_pixels = scx % 8;
 
+        if !mmu.lcdc().check_bit(0) {
+            for x in 0..160 {
+                self.rt[ly as usize][x as usize] = 0;
+            }
+            return;
+        }
+
+        let mut skip_pixels = scx % 8;
         let mut x: u8 = 0;
+
         'outer: loop {
             let tile = self.fetch_bg_tile_number(mmu, false);
             let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(mmu, tile, false);
@@ -375,6 +382,10 @@ impl PPU {
         self.fetcher_x = 0;
 
         if !mmu.lcdc().check_bit(5) {
+            return;
+        }
+
+        if !mmu.lcdc().check_bit(0) {
             return;
         }
 
