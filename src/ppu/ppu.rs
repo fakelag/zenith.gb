@@ -25,51 +25,18 @@ pub enum PpuMode {
     PpuVBlank = 1,
 }
 
-struct GbPixel {
-    pub color: u8,
-
-    // DMG palette [Non CGB Mode only]: 0 = OBP0, 1 = OBP1
-    pub palette: u8,
-    // pub sprite_priority: u8, // CGB
-
-    // Priority: 0 = No, 1 = BG and Window colors 1–3 are drawn over this OBJ
-    pub bg_priority: u8,
-}
-
-#[derive(Debug)]
-enum PixelfetcherStep {
-    FetchTile,
-    TileDataLow,
-    TileDataHigh,
-    PushFifo,
-}
-
-struct BgFetcher {
-    current_step: PixelfetcherStep,
-    fetcher_x: u8,
-    window_line_counter: Option<u8>,
-    tile_number: u8,
-    tile_lsb: u8,
-    tile_msb: u8,
-    fresh_scanline: bool,
-    is_window: bool,
-    fifo: VecDeque<GbPixel>,
-}
-
-struct SpriteFetcher {
-    current_step: PixelfetcherStep,
-    tile_number: u8,
-    tile_lsb: u8,
-    tile_msb: u8,
-    fifo: VecDeque<GbPixel>,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct Sprite {
     y: u8,
     x: u8, // x can be 0 and object is not drawn
     tile: u8,
     attr: u8,
+}
+
+struct SpriteWithTile {
+    oam_entry: Sprite,
+    tile_lsb: u8,
+    tile_msb: u8,
 }
 
 pub struct PPU {
@@ -85,20 +52,15 @@ pub struct PPU {
 
     oam_cursor: u8,
     sprite_buffer: Vec<Sprite>,
-    fetching_sprites: bool,
 
     // WY = LY has been true at some point during current frame
     // (checked at the start of Mode 2)
     draw_window: bool,
+    window_line_counter: u16,
 
-    foo: u8,
+    fetcher_x: u8,
 
-    bg_scroll_count: u8,
-
-    bg_fetcher: BgFetcher,
-    sprite_fetcher: SpriteFetcher,
-
-    current_x: u8,
+    bg_scanline_mask: [bool; 160],
 
     rt: [[u8; 160]; 144],
 }
@@ -116,36 +78,17 @@ impl PPU {
         Self {
             is_disabled: false,
             draw_window: false,
-            fetching_sprites: false,
+            bg_scanline_mask: [false; 160],
+            window_line_counter: 0,
             dots_mode: 0,
-            foo: 0,
+            fetcher_x: 0,
             dots_frame: 0,
             dots_leftover: 0,
             hblank_length: 0,
             stat_interrupt: 0,
             stat_interrupt_prev: 0,
-            bg_fetcher: BgFetcher{
-                current_step: PixelfetcherStep::FetchTile,
-                fetcher_x: 0,
-                window_line_counter: None,
-                tile_number: 0,
-                tile_lsb: 0xFF,
-                tile_msb: 0xFF,
-                fresh_scanline: true,
-                is_window: false,
-                fifo: VecDeque::new(),
-            },
-            sprite_fetcher: SpriteFetcher{
-                current_step: PixelfetcherStep::FetchTile,
-                tile_number: 0,
-                tile_lsb: 0xFF,
-                tile_msb: 0xFF,
-                fifo: VecDeque::new(),
-            },
             oam_cursor: 0,
             sprite_buffer: Vec::with_capacity(10),
-            current_x: 0,
-            bg_scroll_count: 0,
             rt: [[0; 160]; 144],
         }
     }
@@ -163,18 +106,13 @@ impl PPU {
         mmu.unlock_region(MemoryRegion::MemRegionOAM as u8 | MemoryRegion::MemRegionVRAM as u8);
         mmu.ly().set(0);
 
-        self.bg_fetcher.reset();
-        self.sprite_fetcher.scanline_reset();
         self.sprite_buffer.clear();
         self.oam_cursor = 0;
         self.dots_frame = 0;
         self.dots_leftover = 0;
         self.dots_mode = 0;
-        self.bg_scroll_count = 0;
-        self.current_x = 0;
         self.hblank_length = 0;
         self.is_disabled = true;
-        self.fetching_sprites = false;
 
         self.set_mode(mmu, PpuMode::PpuOamScan);
     }
@@ -211,29 +149,15 @@ impl PPU {
                 self.dots_frame += u32::from(dots_spent);
                 self.dots_mode += dots_spent;
 
-                // let is_logging = self.get_mode(mmu) == PpuMode::PpuDraw && mmu.ly().get() == 112 && self.current_x >= 60 && self.current_x <= 76;
-
-                // if is_logging {
-                //     println!("{} x={} bgfifo=[{}/{:?}] spfifo=[{}/{:?}]", self.dots_mode, self.current_x,
-                //         self.bg_fetcher.fifo_len(),
-                //         self.bg_fetcher.current_step,
-                //         self.sprite_fetcher.fifo_len(),
-                //         self.sprite_fetcher.current_step,
-                //     );
-                // }
-
                 if let Some(next_mode) = mode_res {
                     match (self.get_mode(mmu), next_mode) {
                         (PpuMode::PpuOamScan, PpuMode::PpuDraw) => {
                             debug_assert!(self.dots_mode == DOTS_PER_OAM_SCAN);
-
-                            // Start of scanline, discard scx % 8 pixels
-                            debug_assert!(self.current_x == 0);
-                            let scx = mmu.scx().get();
-                            self.bg_scroll_count = scx % 8;
                             
                             if mmu.wy().get() == mmu.ly().get() {
                                 self.draw_window = true;
+                            } else if self.draw_window {
+                                self.window_line_counter += 1;
                             }
                         }
                         (PpuMode::PpuDraw, PpuMode::PpuHBlank) => {
@@ -244,11 +168,7 @@ impl PPU {
 
                             // reset, move to hblank
                             self.hblank_length = 376 - self.dots_mode;
-                            self.bg_fetcher.scanline_reset();
-                            self.sprite_fetcher.scanline_reset();
-                            self.bg_scroll_count = 0;
-                            self.current_x = 0;
-                            self.fetching_sprites = false;
+                            self.fetcher_x = 0;
                         }
                         (PpuMode::PpuHBlank, PpuMode::PpuOamScan) => {
                             debug_assert!(self.dots_frame == u32::from(mmu.ly().get()) * 456);
@@ -258,9 +178,8 @@ impl PPU {
                             debug_assert!(self.dots_mode <= 204);
                             debug_assert!(mmu.ly().get() == 144);
 
+                            self.window_line_counter = 0;
                             self.draw_window = false;
-                            self.bg_fetcher.window_line_counter = None;
-                            self.foo = (self.foo + 1) % 26;
 
                             // @todo - Sending will fail when exiting the app.
                             // - A way to close emu thread and exit gracefully
@@ -351,127 +270,236 @@ impl PPU {
 
         if self.dots_mode + dots_to_run >= DOTS_PER_OAM_SCAN {
             debug_assert!(self.oam_cursor == 40);
-            // println!("[{}] sprite_buffer={:?}", mmu.ly().get(), self.sprite_buffer);
-
-            // @todo
-            let obj_height = 8;
-            let obj_addr = ADDR_OAM;
-            let mut x_coord = 0;
-            let y_coord = 50;
-            self.sprite_buffer.clear();
-            for i in 0..1 {
-                if ly + 16 >= y_coord && ly + 16 < y_coord + obj_height {
-                    self.sprite_buffer.push(Sprite{
-                        y: y_coord,
-                        x: x_coord + i * 8, // @todo sprite pos - 8
-                        tile: 0x1f, // mmu.bus_read(obj_addr + 2),
-                        attr: 0, // mmu.bus_read(obj_addr + 3),
-                    });
-
-                    // if i == 0 {
-                    //     x_coord -= self.foo;
-                    // }
-                }
-            }
-
+            println!("[{}] - {:?}", mmu.ly().get(), self.sprite_buffer);
             return Some((dots, Some(PpuMode::PpuDraw)));
         }
 
         Some((dots, None))
     }
 
-    fn mode_draw(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        /*
-            The FIFO and Pixel Fetcher work together to ensure that the FIFO always contains at least 8 pixels at any given time,
-            as 8 pixels are required for the Pixel Rendering operation to take place.
-            Each FIFO is manipulated only during mode 3 (pixel transfer).
-            https://gbdev.io/pandocs/pixel_fifo.html#get-tile
-        */
-        if self.dots_mode + dots_to_run > 289 {
-            println!("dots={}", self.dots_mode);
-        }
+    fn fetch_bg_tile_number(&mut self, mmu: &mut MMU, is_window: bool) -> u8 {
+        let current_tile_index: u16 = if is_window {
+            let line_count = self.window_line_counter;
+            (u16::from(self.fetcher_x) + 32 * (line_count / 8)) & 0x3FF
+        } else {
+            let ly = mmu.ly().get();
+            let scy = mmu.scy().get();
+            let scx = mmu.scx().get();
 
-        let dots = 2;
+            let x_coord = ((scx / 8).wrapping_add(self.fetcher_x)) & 0x1F;
+            let y_coord = ly.wrapping_add(scy);
+            (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF
+        };
 
-        if dots_to_run < dots {
-            return None;
-        }
+        self.fetcher_x += 1;
 
-        if self.fetching_sprites {
-            self.sprite_fetcher.step(mmu, &mut self.sprite_buffer);
+        let tilemap_bit = if is_window { 6 } else { 3 };
+        let tilemap_addr = if mmu.lcdc().check_bit(tilemap_bit) {
+            ADDR_TILEMAP_9C00
+        } else {
+            ADDR_TILEMAP_9800
+        };
 
-            if self.sprite_fetcher.fifo_len() > 0 {
-                self.fetching_sprites = false;
+        let tilemap_data_addr = tilemap_addr + current_tile_index;
+
+        return mmu.bus_read(tilemap_data_addr);
+    }
+
+    fn fetch_sprite_tile_tuple(mmu: &mut MMU, tile_number: u8) -> (u8, u8) {
+        let ly = mmu.ly().get();
+
+        let line_offset = u16::from((ly % 8) * 2);
+        let tile_base = 0x8000 + (u16::from(tile_number) * 16) + line_offset;
+
+        return (mmu.bus_read(tile_base), mmu.bus_read(tile_base + 1));
+    }
+
+    fn fetch_bg_tile_tuple(&mut self, mmu: &mut MMU, tile_number: u8, is_window: bool) -> (u8, u8) {
+        let ly = mmu.ly().get();
+        let scy = mmu.scy().get();
+        
+        let addressing_mode_8000 = mmu.lcdc().check_bit(4);
+
+        let line_offset = if is_window {
+            u16::from(2 * (self.window_line_counter % 8))
+        } else {
+            u16::from(2 * (ly.wrapping_add(scy) % 8))
+        };
+
+        let (tile_lsb, tile_msb) = if addressing_mode_8000 {
+            let tile_base = 0x8000 + (u16::from(tile_number) * 16) + line_offset;
+            (mmu.bus_read(tile_base), mmu.bus_read(tile_base + 1))
+        } else {
+            let e: i8 = tile_number as i8;
+            let tile_base = (0x9000 as u16).wrapping_add_signed(e as i16 * 16 + line_offset as i16);
+            (mmu.bus_read(tile_base), mmu.bus_read(tile_base + 1))
+        };
+
+        return (tile_lsb, tile_msb);
+    }
+
+    fn draw_background(&mut self, mmu: &mut MMU) {
+        self.fetcher_x = 0;
+
+        let ly: u8 = mmu.ly().get();
+        let bgp = mmu.bgp().get();
+
+        let scx = mmu.scx().get();
+        let mut skip_pixels = scx % 8;
+
+        let mut x: u8 = 0;
+        'outer: loop {
+            let tile = self.fetch_bg_tile_number(mmu, false);
+            let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(mmu, tile, false);
+
+            for bit_idx in (skip_pixels..8).rev() {
+                let hb = (tile_msb >> bit_idx) & 0x1;
+                let lb = (tile_lsb >> bit_idx) & 0x1;
+                let bg_pixel = lb | (hb << 1);
+
+                let palette_color = (bgp >> (bg_pixel * 2)) & 0x3;
+
+                self.bg_scanline_mask[x as usize] = bg_pixel != 0;
+                self.rt[ly as usize][x as usize] = palette_color;
+                x += 1;
+
+                if x == 160 {
+                    break 'outer;
+                }
             }
+
+            skip_pixels = 0;
+        }
+    }
+
+    fn draw_window(&mut self, mmu: &mut MMU) {
+        self.fetcher_x = 0;
+
+        if !mmu.lcdc().check_bit(5) {
+            return;
         }
 
-        if self.fetching_sprites {
-            return Some((dots, None)); 
+        if self.draw_window == false {
+            return;
         }
 
-        self.bg_fetcher.step(mmu);
+        let wx = mmu.wx().get();
+        let wx_sub7 = wx.saturating_sub(7);
+        let ly = mmu.ly().get();
+        let bgp = mmu.bgp().get();
 
-        for dot in 1..=dots {
-            if self.fetching_sprites == false && self.sprite_buffer.iter().any(|elem| elem.x <= self.current_x + 8) {
-                self.fetching_sprites = true;
-                self.bg_fetcher.reset_step();
-                self.sprite_fetcher.scanline_reset();
-                self.sprite_fetcher.step(mmu, &mut self.sprite_buffer);
-                return Some((dots, None));
+        let mut x: u8 = wx_sub7;
+        let mut skip_pixels = 7 - std::cmp::min(wx, 7);
+
+        if x >= 160 {
+            return;
+        }
+
+        'outer: loop {
+            let tile = self.fetch_bg_tile_number(mmu, true);
+            let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(mmu, tile, true);
+
+            for bit_idx in (skip_pixels..8).rev() {
+                let hb = (tile_msb >> bit_idx) & 0x1;
+                let lb = (tile_lsb >> bit_idx) & 0x1;
+                let win_pixel = lb | (hb << 1);
+
+                let palette_color = (bgp >> (win_pixel * 2)) & 0x3;
+
+                self.bg_scanline_mask[x as usize] = win_pixel != 0;
+                self.rt[ly as usize][x as usize] = palette_color;
+                x += 1;
+
+                if x == 160 {
+                    break 'outer;
+                }
             }
+            skip_pixels = 0;
+        }
+    }
 
-            if let Some(bg_pixel) = self.bg_fetcher.fifo_pop() {
-                if self.bg_scroll_count > 0 {
-                    self.bg_scroll_count -= 1;
+    fn draw_sprites(&mut self, mmu: &mut MMU) {
+        if mmu.lcdc().check_bit(1) == false {
+            return;
+        }
+
+        let ly = mmu.ly().get();
+
+        self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
+        let sprites_with_bytes: Vec<SpriteWithTile> = self.sprite_buffer
+            .iter()
+            .map(|oam_entry| {
+                let (tile_lsb, tile_msb) = PPU::fetch_sprite_tile_tuple(mmu, oam_entry.tile);
+                SpriteWithTile{ oam_entry: *oam_entry, tile_lsb, tile_msb }
+            })
+            .collect();
+
+        for sprite in sprites_with_bytes.iter() {
+            let skip_pixels = 8 - std::cmp::min(sprite.oam_entry.x, 8);
+
+            for bit_idx in skip_pixels..8 {
+                let hb = (sprite.tile_msb >> bit_idx) & 0x1;
+                let lb = (sprite.tile_lsb >> bit_idx) & 0x1;
+                let sprite_color = lb | (hb << 1);
+
+                if sprite_color == 0 {
+                    // Color 0 is transparent for sprites
                     continue;
                 }
 
-                let ly = mmu.ly().get();
-                let bgp = mmu.bgp().get();
-                let mut palette_color = (bgp >> (bg_pixel.color * 2)) & 0x3;
+                let mut push_sprite = true;
 
-                if let Some(sprite) = self.sprite_fetcher.fifo_pop() {
-                    let mut push_sprite = true;
+                let sprite_palette = sprite.oam_entry.attr & (1 << 4);
+                let sprite_bgpriority = sprite.oam_entry.attr & (1 << 7);
 
-                    let sprite_palette = if sprite.palette == 0 {
-                        mmu.obp0().get()
-                    } else {
-                        mmu.obp1().get()
-                    };
+                let sprite_palette = if sprite_palette == 0 {
+                    mmu.obp0().get()
+                } else {
+                    mmu.obp1().get()
+                };
 
-                    let sprite_clr = (sprite_palette >> (sprite.color * 2)) & 0x3;
+                let x = sprite.oam_entry.x.saturating_sub(8) + (7-bit_idx);
 
-                    if mmu.lcdc().check_bit(1) == false {
-                        push_sprite = false;
-                    } else if sprite.color == 0 {
-                        push_sprite = false;
-                    } else if sprite.bg_priority == 1 && bg_pixel.color != 0 {
-                        push_sprite = false;
-                    }
-
-                    if push_sprite {
-                        palette_color = sprite_clr;
-                    }
+                if sprite_color == 0 {
+                    push_sprite = false;
+                } else if sprite_bgpriority == 1 && self.bg_scanline_mask[x as usize] == true {
+                    push_sprite = false;
                 }
 
-                self.rt[ly as usize][self.current_x as usize] = palette_color;
-                self.current_x += 1;
-
-                let window_enabled_lcdc = mmu.lcdc().check_bit(5);
-                let past_window_x = self.current_x >= mmu.wx().get().saturating_sub(7);
-
-                // @todo - Emulate WX values 0-6
-                if self.draw_window == true && window_enabled_lcdc && past_window_x {
-                    self.bg_fetcher.switch_to_window_mode();
+                if !push_sprite {
+                    continue;
                 }
-            }
 
-            if self.current_x == 160 {
-                return Some((dot, Some(PpuMode::PpuHBlank)));
+                let sprite_pixel = (sprite_palette >> (sprite_color * 2)) & 0x3;
+
+                self.rt[ly as usize][x as usize] = sprite_pixel;
             }
         }
+    }
 
-        Some((dots, None))
+    fn mode_draw(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
+        let num_dots = 172;
+        let change_mode = self.dots_mode + dots_to_run >= num_dots;
+        let dots = if change_mode {
+            num_dots - self.dots_mode
+        } else {
+            dots_to_run
+        };
+
+        if self.dots_mode == 0 {
+            for x in 0..160 {
+                self.bg_scanline_mask[x] = false;
+            }
+            self.draw_background(mmu);
+            self.draw_window(mmu);
+            self.draw_sprites(mmu);
+        }
+
+        if change_mode {
+            return Some((dots, Some(PpuMode::PpuHBlank)));
+        }
+
+        return Some((dots, None));
     }
 
     fn mode_hblank(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
@@ -541,217 +569,4 @@ impl PPU {
         self.stat_interrupt_prev = self.stat_interrupt;
     }
 
-}
-
-impl BgFetcher {
-    fn reset(&mut self) {
-        self.scanline_reset();
-        self.window_line_counter = None;
-    }
-
-    fn scanline_reset(&mut self) {
-        self.reset_step();
-        self.fetcher_x = 0;
-        self.is_window = false;
-        self.fresh_scanline = true;
-        self.fifo.clear();
-    }
-
-    fn reset_step(&mut self) {
-        self.current_step = PixelfetcherStep::FetchTile;
-        self.tile_number = 0;
-        self.tile_lsb = 0xFF;
-        self.tile_msb = 0xFF;
-    }
-
-    fn switch_to_window_mode(&mut self) {
-        if self.is_window {
-            // Already fetching window
-            return;
-        }
-
-        self.scanline_reset();
-        self.is_window = true;
-
-        if let Some(window_line_count) = self.window_line_counter.as_mut() {
-            *window_line_count += 1;
-        } else {
-            self.window_line_counter = Some(0);
-        }
-    }
-
-    fn fifo_pop(&mut self) -> Option<GbPixel> {
-        self.fifo.pop_front()
-    }
-
-    fn step(&mut self, mmu: &mut MMU) {
-        match self.current_step {
-            PixelfetcherStep::FetchTile => {
-                self.fetch_bg_tile_number(mmu);
-                self.current_step = PixelfetcherStep::TileDataLow;
-            }
-            PixelfetcherStep::TileDataLow => {
-                self.fetch_bg_tile_byte(mmu, self.tile_number, false);
-                self.current_step = PixelfetcherStep::TileDataHigh;
-            }
-            PixelfetcherStep::TileDataHigh => {
-                if self.fresh_scanline && !self.is_window {
-                    self.scanline_reset();
-                    self.fresh_scanline = false;
-                    return;
-                }
-
-                self.fetch_bg_tile_byte(mmu, self.tile_number, true);
-                self.current_step = PixelfetcherStep::PushFifo;
-            }
-            PixelfetcherStep::PushFifo => {
-                if self.fifo.len() > 8 {
-                    todo!("push fifo should restart 2 times");
-                    return;
-                }
-
-                for bit_idx in (0..8).rev() {
-                    let hb = (self.tile_msb >> bit_idx) & 0x1;
-                    let lb = (self.tile_lsb >> bit_idx) & 0x1;
-                    let color = lb | (hb << 1);
-
-                    self.fifo.push_back(GbPixel{ color, palette: 0, bg_priority: 0 });
-                }
-
-                self.fetcher_x += 1;
-                self.current_step = PixelfetcherStep::FetchTile;
-            }
-        }
-    }
-
-    fn fetch_bg_tile_number(&mut self, mmu: &mut MMU) {
-        let is_window = self.is_window && mmu.lcdc().check_bit(5);
-
-        let tilemap_bit = if is_window { 6 } else { 3 };
-        let tilemap_bit = mmu.lcdc().check_bit(tilemap_bit);
-        let tilemap_addr = if tilemap_bit {
-            ADDR_TILEMAP_9C00
-        } else {
-            ADDR_TILEMAP_9800
-        };
-
-        let current_tile_index: u16 = if is_window {
-            let line_count = u16::from(self.window_line_counter.expect("line count should be set"));
-            (u16::from(self.fetcher_x) + 32 * (line_count / 8)) & 0x3FF
-        } else {
-            let ly = mmu.ly().get();
-            let scy = mmu.scy().get();
-            let scx = mmu.scx().get();
-
-            let x_coord = ((scx / 8) + self.fetcher_x) & 0x1F;
-            let y_coord = ly.wrapping_add(scy);
-            (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF
-        };
-
-        let tilemap_data_addr = tilemap_addr + current_tile_index;
-
-        self.tile_number = mmu.bus_read(tilemap_data_addr);
-    }
-
-    fn fetch_bg_tile_byte(&mut self, mmu: &mut MMU, tile_number: u8, msb: bool) {
-        let ly = mmu.ly().get();
-        let scy = mmu.scy().get();
-        let offset: u16 = if msb { 1 } else { 0 };
-        
-        let addressing_mode_8000 = mmu.lcdc().check_bit(4);
-        let is_window = self.is_window && mmu.lcdc().check_bit(5);
-
-        let line_offset = if is_window {
-            u16::from(2 * (self.window_line_counter.expect("line count should be set") % 8))
-        } else {
-            u16::from(2 * (ly.wrapping_add(scy) % 8))
-        };
-
-        let tile_byte = if addressing_mode_8000 {
-            mmu.bus_read(0x8000 + (u16::from(tile_number) * 16) + line_offset + offset)
-        } else {
-            let e: i8 = tile_number as i8;
-            let base: u16 = 0x9000;
-            mmu.bus_read(base.wrapping_add_signed(e as i16 * 16 + line_offset as i16) + offset)
-        };
-
-        if msb {
-            self.tile_msb = tile_byte;
-        } else {
-            self.tile_lsb = tile_byte;
-        }
-    }
-}
-
-impl SpriteFetcher {
-    fn scanline_reset(&mut self) {
-        self.current_step = PixelfetcherStep::FetchTile;
-        self.tile_lsb = 0xFF;
-        self.tile_msb = 0xFF;
-        self.tile_number = 0;
-        self.fifo.clear();
-    }
-
-    fn fifo_pop(&mut self) -> Option<GbPixel> {
-        self.fifo.pop_front()
-    }
-
-    fn fifo_len(&self) -> usize {
-        self.fifo.len()
-    }
-
-    fn step(&mut self, mmu: &mut MMU, sprite_buffer: &mut Vec<Sprite>) {
-        match self.current_step {
-            PixelfetcherStep::FetchTile => {
-                self.fetch_sprite_tile_number(mmu, sprite_buffer);
-                self.current_step = PixelfetcherStep::TileDataLow;
-            }
-            PixelfetcherStep::TileDataLow => {
-                self.fetch_sprite_tile_byte(mmu, false);
-                self.current_step = PixelfetcherStep::TileDataHigh;
-            }
-            PixelfetcherStep::TileDataHigh => {
-                self.fetch_sprite_tile_byte(mmu, true);
-                self.current_step = PixelfetcherStep::PushFifo;
-            }
-            PixelfetcherStep::PushFifo => {
-                for bit_idx in (0..8).rev() {
-                    let hb = (self.tile_msb >> bit_idx) & 0x1;
-                    let lb = (self.tile_lsb >> bit_idx) & 0x1;
-                    let color = lb | (hb << 1);
-
-                    let x = if (sprite_buffer.len() % 2) == 0 { 1 } else { 3 };
-
-                    self.fifo.push_back(GbPixel{
-                        // color,
-                        color: x as u8,
-                        palette: sprite_buffer[0].attr & (1 << 4),
-                        bg_priority: sprite_buffer[0].attr & (1 << 7),
-                    });
-                }
-
-                sprite_buffer.remove(0);
-
-                self.current_step = PixelfetcherStep::FetchTile;
-            }
-        }
-    }
-
-    fn fetch_sprite_tile_number(&mut self, mmu: &mut MMU, sprite_buffer: &Vec<Sprite>) {
-        self.tile_number = sprite_buffer[0].tile;
-    }
-
-    fn fetch_sprite_tile_byte(&mut self, mmu: &mut MMU, msb: bool) {
-        let ly = mmu.ly().get();
-        let offset: u16 = if msb { 1 } else { 0 };
-
-        let line_offset = u16::from((ly % 8) * 2);
-        let tile_byte = mmu.bus_read(0x8000 + (u16::from(self.tile_number) * 16) + line_offset + offset);
-
-        if msb {
-            self.tile_msb = tile_byte;
-        } else {
-            self.tile_lsb = tile_byte;
-        }
-    }
 }
