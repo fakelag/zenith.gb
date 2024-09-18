@@ -630,17 +630,17 @@ impl cpu::CPU {
     }
 
     pub fn opcode_prefix(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("0xCB prefix"); }
-    pub fn opcode_illegal_d3(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xD3"); }
-    pub fn opcode_illegal_db(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xDB"); }
-    pub fn opcode_illegal_dd(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xDD"); }
-    pub fn opcode_illegal_e3(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xE3"); }
-    pub fn opcode_illegal_e4(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xE4"); }
-    pub fn opcode_illegal_eb(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xEB"); }
-    pub fn opcode_illegal_ec(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xEC"); }
-    pub fn opcode_illegal_ed(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xED"); }
-    pub fn opcode_illegal_f4(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xF4"); }
-    pub fn opcode_illegal_fc(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xFC"); }
-    pub fn opcode_illegal_fd(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { todo!("0xFD"); }
+    pub fn opcode_illegal_d3(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_db(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_dd(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_e3(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_e4(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_eb(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_ec(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_ed(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_f4(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_fc(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_illegal_fd(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
 
     // 0xCB instructions
 
