@@ -45,7 +45,7 @@ pub struct PPU {
     dots_frame: u32,
     dots_leftover: u16,
 
-    hblank_length: u16,
+    draw_length: u16,
 
     stat_interrupt: u8,
     stat_interrupt_prev: u8,
@@ -58,7 +58,7 @@ pub struct PPU {
     draw_window: bool,
     window_line_counter: u16,
 
-    fetcher_x: u8,
+    fetcher_x: u16,
 
     bg_scanline_mask: [u8; 160],
 
@@ -84,7 +84,7 @@ impl PPU {
             fetcher_x: 0,
             dots_frame: 0,
             dots_leftover: 0,
-            hblank_length: 0,
+            draw_length: 0,
             stat_interrupt: 0,
             stat_interrupt_prev: 0,
             oam_cursor: 0,
@@ -111,7 +111,7 @@ impl PPU {
         self.dots_frame = 0;
         self.dots_leftover = 0;
         self.dots_mode = 0;
-        self.hblank_length = 0;
+        self.draw_length = 0;
         self.is_disabled = true;
 
         self.set_mode(mmu, PpuMode::PpuOamScan);
@@ -167,7 +167,6 @@ impl PPU {
                             // println!("draw length={}", self.dots_mode);
 
                             // reset, move to hblank
-                            self.hblank_length = 376 - self.dots_mode;
                             self.fetcher_x = 0;
                         }
                         (PpuMode::PpuHBlank, PpuMode::PpuOamScan) => {
@@ -285,7 +284,7 @@ impl PPU {
             let scy = mmu.scy().get();
             let scx = mmu.scx().get();
 
-            let x_coord = ((scx / 8).wrapping_add(self.fetcher_x)) & 0x1F;
+            let x_coord = (u16::from(scx / 8).wrapping_add(self.fetcher_x)) & 0x1F;
             let y_coord = ly.wrapping_add(scy);
             (u16::from(x_coord) + 32 * (u16::from(y_coord) / 8)) & 0x3FF
         };
@@ -378,19 +377,19 @@ impl PPU {
         }
     }
 
-    fn draw_window(&mut self, mmu: &mut MMU) {
+    fn draw_window(&mut self, mmu: &mut MMU) -> Option<u8> {
         self.fetcher_x = 0;
 
         if !mmu.lcdc().check_bit(5) {
-            return;
+            return None;
         }
 
         if !mmu.lcdc().check_bit(0) {
-            return;
+            return None;
         }
 
         if self.draw_window == false {
-            return;
+            return None;
         }
 
         let wx = mmu.wx().get();
@@ -402,7 +401,7 @@ impl PPU {
         let mut skip_pixels = 7 - std::cmp::min(wx, 7);
 
         if x >= 160 {
-            return;
+            return None;
         }
 
         'outer: loop {
@@ -426,11 +425,13 @@ impl PPU {
             }
             skip_pixels = 0;
         }
+
+        return Some(wx_sub7);
     }
 
-    fn draw_sprites(&mut self, mmu: &mut MMU) {
+    fn draw_sprites(&mut self, mmu: &mut MMU) -> Option<Vec<u8>> {
         if mmu.lcdc().check_bit(1) == false {
-            return;
+            return None;
         }
 
         let ly = mmu.ly().get();
@@ -485,25 +486,93 @@ impl PPU {
                 self.rt[ly as usize][x as usize] = sprite_pixel;
             }
         }
+
+        let sprite_positions = sprites_with_tiles
+            .iter()
+            .map(|sp| sp.oam_entry.x)
+            .collect();
+
+        return Some(sprite_positions);
+    }
+
+    fn calc_mode3_len(mmu: &mut MMU, window_pos: Option<u8>, sprite_pos: Option<Vec<u8>>) -> u16 {
+        // @todo Check timing when window and a sprite fetch overlap
+        let scx = mmu.scx().get();
+        let scx_penalty = u16::from(scx % 8);
+
+        let window_penalty: u16 = if window_pos.is_some() {
+            6
+        } else {
+            0
+        };
+        
+        let mut sprite_penalty: u16 = 0;
+        if let Some(sprite_vec) = sprite_pos {
+            let mut remaining_sprites = sprite_vec
+                .iter()
+                .rev()
+                .copied()
+                .collect::<Vec<u8>>();
+
+            let mut bg_fifo_count: u8 = 8;
+            
+            let mut did_sprite_fetch = false;
+            let mut x = 0;
+            while x < 160 {
+                let sprite_opt = remaining_sprites
+                    .iter()
+                    .enumerate()
+                    .find(|(_i, sp_x)| **sp_x < x + 8);
+
+                if sprite_opt.is_none() {
+                    if did_sprite_fetch {
+                        did_sprite_fetch = false;
+                        sprite_penalty += u16::from((6 as u8).saturating_sub(bg_fifo_count));
+                        // println!("{} remaining pixel penalty {}", x, 6 - bg_fifo_count);
+                    }
+                    bg_fifo_count = 8 - (x % 8);
+                    x += 1;
+                    continue;
+                }
+
+                let sprite = sprite_opt.unwrap();
+
+                // println!("{} [fifo {bg_fifo_count}] - sprite idx {} at {}", x, sprite.0, sprite.1);
+                remaining_sprites.remove(sprite.0);
+
+                sprite_penalty += 6; // Sprite fetch cycles
+                did_sprite_fetch = true;
+            }
+        }
+
+        let mode3_length = 172 + scx_penalty + window_penalty + sprite_penalty;
+        return mode3_length;
     }
 
     fn mode_draw(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        let num_dots = 172;
-        let change_mode = self.dots_mode + dots_to_run >= num_dots;
-        let dots = if change_mode {
-            num_dots - self.dots_mode
-        } else {
-            dots_to_run
-        };
-
         if self.dots_mode == 0 {
             for x in 0..160 {
                 self.bg_scanline_mask[x] = 0;
             }
             self.draw_background(mmu);
-            self.draw_window(mmu);
-            self.draw_sprites(mmu);
+            let window_pos = self.draw_window(mmu);
+            let sprite_pos = self.draw_sprites(mmu);
+
+            self.draw_length = PPU::calc_mode3_len(mmu, window_pos, sprite_pos);
+            return Some((1, None));
         }
+
+        debug_assert!(self.dots_mode > 0);
+        debug_assert!(self.draw_length >= 172);
+        debug_assert!(self.draw_length <= 289);
+
+        let change_mode = self.dots_mode + dots_to_run >= self.draw_length;
+
+        let dots = if change_mode {
+            self.draw_length - self.dots_mode
+        } else {
+            dots_to_run
+        };
 
         if change_mode {
             return Some((dots, Some(PpuMode::PpuHBlank)));
@@ -513,8 +582,10 @@ impl PPU {
     }
 
     fn mode_hblank(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        if self.dots_mode + dots_to_run >= self.hblank_length {
-            let dots = self.hblank_length - self.dots_mode;
+        let hblank_length = 376 - self.draw_length;
+
+        if self.dots_mode + dots_to_run >= hblank_length {
+            let dots = hblank_length - self.dots_mode;
 
             let completed_ly = mmu.ly().inc();
 
