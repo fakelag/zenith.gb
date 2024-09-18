@@ -1,4 +1,4 @@
-use std::{fmt::{self, Display}, sync::mpsc::SyncSender, time};
+use std::{fmt::{self, Display}, sync::mpsc::{Receiver, SyncSender, TryRecvError}, time};
 
 use crate::{
     cartridge::cartridge::*,
@@ -9,6 +9,24 @@ use crate::{
 };
 
 pub type FrameBuffer = [[u8; 160]; 144];
+
+#[derive(PartialEq)]
+pub enum GbButton {
+    GbButtonUp = 0,
+    GbButtonRight,
+    GbButtonLeft,
+    GbButtonDown,
+    GbButtonA,
+    GbButtonB,
+    GbButtonStart,
+    GbButtonSelect,
+    GbButtonMax,
+}
+
+pub struct InputEvent {
+    pub down: bool,
+    pub button: GbButton,
+}
 
 pub struct Emu {
     cartridge: Cartridge,
@@ -21,6 +39,7 @@ pub struct Emu {
     pub start_at: time::Instant,
 
     pub frame_chan: SyncSender<FrameBuffer>,
+    pub input_chan: Receiver<InputEvent>,
 }
 
 impl Display for Emu {
@@ -33,7 +52,7 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge: Cartridge, frame_chan: SyncSender<FrameBuffer>) -> Emu {
+    pub fn new(cartridge: Cartridge, frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputEvent>) -> Emu {
         Self {
             mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
@@ -42,6 +61,7 @@ impl Emu {
             start_at: time::Instant::now(),
             cartridge,
             frame_chan,
+            input_chan,
         }
     }
 
@@ -53,6 +73,8 @@ impl Emu {
         self.start_at = time::Instant::now();
 
         loop {
+            self.input_update();
+
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginCPU);
             let cycles = self.cpu.step(&mut self.mmu);
 
@@ -65,6 +87,18 @@ impl Emu {
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.mmu.step(cycles);
        }
+   }
+
+   fn input_update(&mut self) {
+        match self.input_chan.try_recv() {
+            Ok(input_event) => {
+                self.mmu.update_input(input_event);
+            }
+            Err(TryRecvError::Disconnected) => {
+                return;
+            }
+            Err(TryRecvError::Empty) => {}
+        }
    }
 
     fn dmg_boot(&mut self) {

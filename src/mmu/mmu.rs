@@ -1,4 +1,5 @@
 use crate::cartridge::cartridge::*;
+use crate::emu::emu::{self, GbButton::*};
 use crate::util::util;
 
 use super::hw_reg::*;
@@ -45,6 +46,8 @@ pub struct MMU {
     mbc: Box<dyn MBC>,
 
     oam_dma: Option<DmaTransfer>,
+
+    buttons: [bool; emu::GbButton::GbButtonMax as usize],
 }
 
 impl MMU {
@@ -55,6 +58,7 @@ impl MMU {
             access_origin: AccessOrigin::AccessOriginNone,
             mbc: Box::new(MbcRomOnly::new()),
             oam_dma: None,
+            buttons: [false; emu::GbButton::GbButtonMax as usize],
         };
         mmu.load(cartridge);
         mmu
@@ -76,6 +80,10 @@ impl MMU {
                 self.mbc.load(cartridge);
             }
         }
+    }
+
+    pub fn update_input(&mut self, input_event: emu::InputEvent) {
+        self.buttons[input_event.button as usize] = input_event.down;
     }
 
     pub fn lock_region(&mut self, region: u8) {
@@ -148,6 +156,36 @@ impl MMU {
             }
             0xFF00..=0xFF7F => {
                 match address {
+                    HWR_P1 => {
+                        let p1 = self.memory[address as usize];
+
+                        let select_buttons = (p1 & (1 << 5)) == 0;
+                        let select_dpad = (p1 & (1 << 4)) == 0;
+        
+                        let button_bits: u8 = if select_buttons && select_dpad {
+                            0xF
+                        } else if select_buttons {
+                            let start   = (!self.buttons[GbButtonStart as usize] as u8) << 3;
+                            let select  = (!self.buttons[GbButtonSelect as usize] as u8) << 2;
+                            let b       = (!self.buttons[GbButtonB as usize] as u8) << 1;
+                            let a       = (!self.buttons[GbButtonA as usize] as u8) << 0;
+        
+                            start | select | a | b
+                        } else if select_dpad {
+                            let down    = (!self.buttons[GbButtonDown as usize] as u8) << 3;
+                            let up      = (!self.buttons[GbButtonUp as usize] as u8) << 2;
+                            let left    = (!self.buttons[GbButtonLeft as usize] as u8) << 1;
+                            let right   = (!self.buttons[GbButtonRight as usize] as u8) << 0;
+        
+                            let btn = down | up | left | right;
+                            btn
+                        } else {
+                            0xF
+                        };
+
+                        return button_bits | (p1 & 0x30);
+                    }
+                    HWR_SB => { return 0xFF; }
                     HWR_NR13 => { return 0xFF; }
                     HWR_NR23 => { return 0xFF; }
                     HWR_NR31 => { return 0xFF; }

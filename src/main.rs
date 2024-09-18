@@ -1,4 +1,4 @@
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{Receiver, SyncSender};
 
 use cartridge::cartridge::Cartridge;
 
@@ -10,7 +10,8 @@ mod ppu;
 mod timer;
 mod util;
 
-use emu::emu::{Emu, FrameBuffer};
+use emu::emu::{Emu, FrameBuffer, GbButton, InputEvent};
+use sdl2::keyboard::Scancode;
 
 fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl) {
     let sdl_ctx = sdl2::init().unwrap();
@@ -19,7 +20,8 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
 
     let asp = 144.0 / 160.0;
 
-    let window = video_subsystem.window("Gameboy", 512, (512.0 * asp) as u32)
+    let window = // video_subsystem.window("Gameboy", 160, 144 as u32) //
+        video_subsystem.window("Gameboy", 512, (512.0 * asp) as u32)
         .position_centered()
         .opengl()
         .build()
@@ -38,10 +40,24 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
 ];
 
-fn run_emulator(frame_chan: SyncSender<FrameBuffer>) {
+fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputEvent>) {
     let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
-    let mut emu = Emu::new(cart, frame_chan);
+    let mut emu = Emu::new(cart, frame_chan, input_chan);
     emu.run()
+}
+
+fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {
+    match scancode {
+        Some(Scancode::W) => { Some(GbButton::GbButtonUp) }
+        Some(Scancode::A) => { Some(GbButton::GbButtonLeft) }
+        Some(Scancode::S) => { Some(GbButton::GbButtonDown) }
+        Some(Scancode::D) => { Some(GbButton::GbButtonRight) }
+        Some(Scancode::E) | Some(Scancode::O) => { Some(GbButton::GbButtonA) }
+        Some(Scancode::R) | Some(Scancode::P) => { Some(GbButton::GbButtonB) }
+        Some(Scancode::N) => { Some(GbButton::GbButtonSelect) }
+        Some(Scancode::M) => { Some(GbButton::GbButtonStart) }
+        _ => { None }
+    }
 }
 
 fn main() {
@@ -54,8 +70,9 @@ fn main() {
         .unwrap();
 
     let (frame_sender, frame_receiver) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
+    let (input_sender, input_receiver) = std::sync::mpsc::sync_channel::<InputEvent>(1);
 
-    let emu_thread = std::thread::spawn(move || run_emulator(frame_sender));
+    let emu_thread = std::thread::spawn(move || run_emulator(frame_sender, input_receiver));
     
     let mut last_frame = std::time::Instant::now();
     let mut event_pump = sdl_ctx.event_pump().unwrap();
@@ -65,8 +82,23 @@ fn main() {
                 sdl2::event::Event::Quit {..} => {
                     break 'eventloop;
                 }
-                sdl2::event::Event::KeyDown {..} => {
-                    println!("keydown lol");
+                sdl2::event::Event::KeyDown { scancode, repeat, .. } => {
+                    if !repeat {
+                        if let Some(gb_button) = scancode_to_gb_button(scancode) {
+                            if let Err(err) = input_sender.send(InputEvent { down: true, button: gb_button }) {
+                                println!("err={:?}", err);
+                                break 'eventloop;
+                            }
+                        }
+                    }
+                }
+                sdl2::event::Event::KeyUp { scancode, .. } => {
+                    if let Some(gb_button) = scancode_to_gb_button(scancode) {
+                        if let Err(err) = input_sender.send(InputEvent { down: false, button: gb_button }) {
+                            println!("err={:?}", err);
+                            break 'eventloop;
+                        }
+                    }
                 },
                 _ => {}
             }
