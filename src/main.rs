@@ -23,6 +23,7 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
     let window = // video_subsystem.window("Gameboy", 160, 144 as u32) //
         video_subsystem.window("Gameboy", 512, (512.0 * asp) as u32)
         .position_centered()
+        .resizable()
         .opengl()
         .build()
         .expect("could not create window");
