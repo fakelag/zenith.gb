@@ -15,7 +15,7 @@ pub const INTERRUPT_BIT_VBLANK: u8  = 1 << 0;
 pub const INTERRUPT_BIT_LCD: u8     = 1 << 1;
 pub const INTERRUPT_BIT_TIMER: u8   = 1 << 2;
 const INTERRUPT_BIT_SERIAL: u8  = 1 << 3;
-const INTERRUPT_BIT_JOYPAD: u8  = 1 << 4;
+pub const INTERRUPT_BIT_JOYPAD: u8  = 1 << 4;
 
 const INTERRUPT_ADDR_VBLANK: u16  = 0x40;
 const INTERRUPT_ADDR_LCD: u16     = 0x48;

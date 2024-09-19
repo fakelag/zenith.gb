@@ -10,7 +10,7 @@ use crate::{
 
 pub type FrameBuffer = [[u8; 160]; 144];
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 pub enum GbButton {
     GbButtonUp = 0,
     GbButtonRight,
@@ -90,14 +90,19 @@ impl Emu {
    }
 
    fn input_update(&mut self) {
-        match self.input_chan.try_recv() {
-            Ok(input_event) => {
-                self.mmu.update_input(input_event);
+        loop {
+            match self.input_chan.try_recv() {
+                Ok(input_event) => {
+                    self.mmu.update_input(input_event);
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return;
+                }
+                Err(TryRecvError::Empty) => {
+                    return;
+                }
             }
-            Err(TryRecvError::Disconnected) => {
-                return;
-            }
-            Err(TryRecvError::Empty) => {}
         }
    }
 

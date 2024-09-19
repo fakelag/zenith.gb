@@ -1,4 +1,5 @@
 use crate::cartridge::cartridge::*;
+use crate::cpu::cpu;
 use crate::emu::emu::{self, GbButton::*};
 use crate::util::util;
 
@@ -83,7 +84,14 @@ impl MMU {
     }
 
     pub fn update_input(&mut self, input_event: emu::InputEvent) {
+        let was_down = self.buttons[input_event.button as usize];
+
         self.buttons[input_event.button as usize] = input_event.down;
+
+        if !was_down && input_event.down {
+            let flags_if = self.bus_read(cpu::HREG_IF);
+            self.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_JOYPAD);
+        }
     }
 
     pub fn lock_region(&mut self, region: u8) {
@@ -159,30 +167,7 @@ impl MMU {
                     HWR_P1 => {
                         let p1 = self.memory[address as usize];
 
-                        let select_buttons = (p1 & (1 << 5)) == 0;
-                        let select_dpad = (p1 & (1 << 4)) == 0;
-        
-                        let button_bits: u8 = if select_buttons && select_dpad {
-                            0xF
-                        } else if select_buttons {
-                            let start   = (!self.buttons[GbButtonStart as usize] as u8) << 3;
-                            let select  = (!self.buttons[GbButtonSelect as usize] as u8) << 2;
-                            let b       = (!self.buttons[GbButtonB as usize] as u8) << 1;
-                            let a       = (!self.buttons[GbButtonA as usize] as u8) << 0;
-        
-                            start | select | a | b
-                        } else if select_dpad {
-                            let down    = (!self.buttons[GbButtonDown as usize] as u8) << 3;
-                            let up      = (!self.buttons[GbButtonUp as usize] as u8) << 2;
-                            let left    = (!self.buttons[GbButtonLeft as usize] as u8) << 1;
-                            let right   = (!self.buttons[GbButtonRight as usize] as u8) << 0;
-        
-                            let btn = down | up | left | right;
-                            btn
-                        } else {
-                            0xF
-                        };
-
+                        let button_bits = self.calc_button_bits(p1);
                         return button_bits | (p1 & 0x30);
                     }
                     HWR_SB => { return 0xFF; }
@@ -350,6 +335,33 @@ impl MMU {
                 self.memory[usize::from(address)] = data;
             }
         }
+    }
+
+    fn calc_button_bits(&self, p1_val: u8) -> u8 {
+        let select_buttons = (p1_val & (1 << 5)) == 0;
+        let select_dpad = (p1_val & (1 << 4)) == 0;
+
+        let button_bits: u8 = if select_buttons && select_dpad {
+            0xF
+        } else if select_buttons {
+            let start   = (!self.buttons[GbButtonStart as usize] as u8) << 3;
+            let select  = (!self.buttons[GbButtonSelect as usize] as u8) << 2;
+            let b       = (!self.buttons[GbButtonB as usize] as u8) << 1;
+            let a       = (!self.buttons[GbButtonA as usize] as u8) << 0;
+
+            start | select | a | b
+        } else if select_dpad {
+            let down    = (!self.buttons[GbButtonDown as usize] as u8) << 3;
+            let up      = (!self.buttons[GbButtonUp as usize] as u8) << 2;
+            let left    = (!self.buttons[GbButtonLeft as usize] as u8) << 1;
+            let right   = (!self.buttons[GbButtonRight as usize] as u8) << 0;
+
+            down | up | left | right
+        } else {
+            0xF
+        };
+
+        return button_bits & 0xF;
     }
 
     pub fn p1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_P1, self) }
