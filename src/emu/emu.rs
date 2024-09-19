@@ -35,9 +35,6 @@ pub struct Emu {
     pub mmu: mmu::MMU,
     pub timer: timer::Timer,
 
-    // debug
-    pub start_at: time::Instant,
-
     pub frame_chan: SyncSender<FrameBuffer>,
     pub input_chan: Receiver<InputEvent>,
 }
@@ -46,7 +43,6 @@ impl Display for Emu {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.cpu.fmt(f)?;
         self.ppu.fmt(f)?;
-        println!("took {}ms", self.start_at.elapsed().as_millis());
         Ok(())
     }
 }
@@ -58,16 +54,13 @@ impl Emu {
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
             timer: timer::Timer::new(),
-            start_at: time::Instant::now(),
             cartridge,
             frame_chan,
             input_chan,
         }
     }
 
-    pub fn run(self: &mut Emu, num_cycles: u64) -> u64 {
-        self.start_at = time::Instant::now();
-
+    pub fn run(self: &mut Emu, num_cycles: u64) -> Option<u64> {
         let mut cycles_run: u64 = 0;
         while cycles_run < num_cycles {
             self.input_update();
@@ -76,7 +69,7 @@ impl Emu {
             let cycles = self.cpu.step(&mut self.mmu);
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginPPU);
-            self.ppu.step(&mut self.mmu, &mut self.frame_chan, cycles);
+            let exit = self.ppu.step(&mut self.mmu, &mut self.frame_chan, cycles);
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.timer.step(&mut self.mmu, cycles);
@@ -85,9 +78,13 @@ impl Emu {
             self.mmu.step(cycles);
 
             cycles_run += u64::from(cycles);
+
+            if exit {
+                return None;
+            }
        }
 
-       cycles_run
+       return Some(cycles_run);
    }
 
    fn input_update(&mut self) {

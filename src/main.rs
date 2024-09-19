@@ -52,7 +52,11 @@ fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputE
 
     loop {
         let start_time = time::Instant::now();
-        emu.run(m_cycles_per_frame);
+        let cycles_run = emu.run(m_cycles_per_frame);
+
+        if cycles_run.is_none() {
+            return;
+        }
 
         let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
         let sleep_time = (16000 as u64).saturating_sub(elapsed);

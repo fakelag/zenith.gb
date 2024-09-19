@@ -117,12 +117,12 @@ impl PPU {
         self.set_mode(mmu, PpuMode::PpuOamScan);
     }
 
-    pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut SyncSender<FrameBuffer>, cycles_passed: u8) -> u8 {
+    pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut SyncSender<FrameBuffer>, cycles_passed: u8) -> bool {
         let lcd_enable = mmu.lcdc().check_bit(7);
 
         if !lcd_enable {
             self.reset(mmu);
-            return 0;
+            return false;
         }
 
         if self.is_disabled {
@@ -131,10 +131,11 @@ impl PPU {
         }
     
         debug_assert!(mmu.ly().get() <= 153);
-    
+        
         let mut dots_budget = u16::from(cycles_passed * 4) + self.dots_leftover;
+        let mut exit = false;
         self.dots_leftover = 0;
-    
+
         while dots_budget > 0 {
             let mode_result = match self.get_mode(mmu) {
                 PpuMode::PpuOamScan => { self.mode_oam_scan(mmu, dots_budget) }
@@ -180,9 +181,9 @@ impl PPU {
                             self.window_line_counter = 0;
                             self.draw_window = false;
 
-                            // @todo - Sending will fail when exiting the app.
-                            // - A way to close emu thread and exit gracefully
-                            frame_chan.send(self.rt).unwrap();
+                            if let Err(_err) = frame_chan.send(self.rt) {
+                                exit = true;
+                            }
 
                             // set vblank interrupt
                             let flags_if = mmu.bus_read(cpu::HREG_IF);
@@ -228,7 +229,7 @@ impl PPU {
 
         self.handle_stat_interrupt(mmu);
     
-        return 1;
+        return exit;
     }
 
         
