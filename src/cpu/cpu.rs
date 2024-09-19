@@ -1,4 +1,4 @@
-use std::fmt::{self, Display};
+use std::{fmt::{self, Display}, sync::mpsc::Sender};
 
 use crate::{util::*, mmu::mmu::MMU};
 use super::{inst_def, register::{Reg8b, Reg16b}};
@@ -39,6 +39,8 @@ pub struct CPU {
     //  https://gbdev.io/pandocs/Interrupts.html
     pub ime: bool,
     pub halted: bool,
+
+    pub ld_bb_breakpoint: Option<Sender<u8>>,
 }
 
 impl Display for CPU {
@@ -73,7 +75,12 @@ impl CPU {
             branch_skipped: false,
             ime: false,
             halted: false,
+            ld_bb_breakpoint: None,
         }
+    }
+
+    pub fn set_breakpoint(&mut self, bp_send: Option<Sender<u8>>) {
+        self.ld_bb_breakpoint = bp_send;
     }
 
     // Register wrappers

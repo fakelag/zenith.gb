@@ -117,7 +117,7 @@ impl PPU {
         self.set_mode(mmu, PpuMode::PpuOamScan);
     }
 
-    pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut SyncSender<FrameBuffer>, cycles_passed: u8) -> bool {
+    pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut Option<SyncSender<FrameBuffer>>, cycles_passed: u8) -> bool {
         let lcd_enable = mmu.lcdc().check_bit(7);
 
         if !lcd_enable {
@@ -181,8 +181,10 @@ impl PPU {
                             self.window_line_counter = 0;
                             self.draw_window = false;
 
-                            if let Err(_err) = frame_chan.send(self.rt) {
-                                exit = true;
+                            if let Some(channel) = frame_chan { 
+                                if let Err(_err) = channel.send(self.rt) {
+                                    exit = true;
+                                }
                             }
 
                             // set vblank interrupt

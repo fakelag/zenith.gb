@@ -103,7 +103,7 @@ const INSTR_INDEX: [Instruction; 256] = [
 /* 0x3D DEC A        | Z 1 H - */  Instruction{dst:OperandKind::R8,         src:OperandKind::None,       cycles:1,   cycles_skipped:0,   exec:CPU::opcode_dec},
 /* 0x3E LD A n8      | - - - - */  Instruction{dst:OperandKind::R8,         src:OperandKind::Imm8,       cycles:2,   cycles_skipped:0,   exec:CPU::opcode_ld},
 /* 0x3F CCF          | - 0 0 C */  Instruction{dst:OperandKind::None,       src:OperandKind::None,       cycles:1,   cycles_skipped:0,   exec:CPU::opcode_ccf},
-/* 0x40 LD B B       | - - - - */  Instruction{dst:OperandKind::R8,         src:OperandKind::R8,         cycles:1,   cycles_skipped:0,   exec:CPU::opcode_ld},
+/* 0x40 LD B B       | - - - - */  Instruction{dst:OperandKind::R8,         src:OperandKind::R8,         cycles:1,   cycles_skipped:0,   exec:CPU::opcode_ld_b_b},
 /* 0x41 LD B C       | - - - - */  Instruction{dst:OperandKind::R8,         src:OperandKind::R8,         cycles:1,   cycles_skipped:0,   exec:CPU::opcode_ld},
 /* 0x42 LD B D       | - - - - */  Instruction{dst:OperandKind::R8,         src:OperandKind::R8,         cycles:1,   cycles_skipped:0,   exec:CPU::opcode_ld},
 /* 0x43 LD B E       | - - - - */  Instruction{dst:OperandKind::R8,         src:OperandKind::R8,         cycles:1,   cycles_skipped:0,   exec:CPU::opcode_ld},

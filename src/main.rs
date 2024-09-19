@@ -45,7 +45,7 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
 
 fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputEvent>) {
     let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
-    let mut emu = Emu::new(cart, frame_chan, input_chan);
+    let mut emu = Emu::new(cart, Some(frame_chan), Some(input_chan));
     emu.dmg_boot();
 
     let m_cycles_per_frame = T_CYCLES_PER_FRAME / 4;
@@ -169,9 +169,154 @@ fn main() {
             Err(..) => break 'eventloop,
         }
 
-        // std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     drop(frame_receiver);
     emu_thread.join().unwrap();
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use colored::Colorize;
+    use cpu::cpu::CPU;
+    use rayon::prelude::*;
+
+    fn run_emulator(rom_path: &str) -> Emu {
+        let cart = Cartridge::new(rom_path);
+        let mut emu = Emu::new(cart, None, None);
+        emu.dmg_boot();
+        emu
+    }
+
+    fn mts_passed(cpu: &mut CPU) -> bool {
+        if cpu.b().get() != 3
+            || cpu.c().get() != 5
+            || cpu.d().get() != 8
+            || cpu.e().get() != 13
+            || cpu.h().get() != 21
+            || cpu.l().get() != 34 {
+            return false;
+        }
+
+        return true;
+    }
+
+    fn mts_test(rom_path: &str) -> bool {
+        let mut emu = run_emulator(rom_path);
+
+        let (result_send, result_recv) = std::sync::mpsc::channel::<u8>();
+
+        emu.cpu.set_breakpoint(Some(result_send));
+
+        let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
+        let max_cycles = mcycles_per_frame * 60 * 30; // 30 seconds
+
+        let mut bp_triggered = false;
+        let mut cycles_run = 0;
+        while cycles_run < max_cycles {
+            let cycles_passed = emu.run(mcycles_per_frame);
+
+            if let Some(cycles) = cycles_passed {
+                cycles_run += cycles;
+            } else {
+                unreachable!();
+            }
+
+            if let Ok(_) = result_recv.try_recv() {
+                bp_triggered = true;
+                break;
+            }
+        }
+
+        let test_passed = bp_triggered && mts_passed(&mut emu.cpu);
+        return test_passed;
+    }
+
+    fn roms_in_dir(path: &str) -> Vec<String> {
+        let mut roms = Vec::new();
+        let paths = fs::read_dir(path).unwrap();
+
+        for path in paths {
+            let p = path.unwrap();
+            let metadata = p.metadata().unwrap();
+
+            if !metadata.is_file() {
+                continue;
+            }
+
+            if p.path().extension().unwrap() != "gb" {
+                continue;
+            }
+
+            let full_path: String = p.path().display().to_string();
+            roms.push(full_path);
+        }
+
+        return roms;
+    }
+
+    fn mts_suite(dir: &str) -> Vec<(String, bool)> {
+        let rom_paths = roms_in_dir(dir);
+    
+        let result_vec = rom_paths
+            .par_iter()
+            .map(|rom_path| (
+                rom_path.to_string(),
+                mts_test(rom_path.as_str()),
+            ))
+            .collect::<Vec<(String, bool)>>();
+
+        return result_vec;
+    }
+
+    #[test]
+    fn mts() {
+        let mut results: Vec<(String, bool)> = Vec::new();
+        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/bits/"));
+        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/instr/"));
+        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/interrupts/"));
+        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/oam_dma/"));
+        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/ppu/"));
+        // results.append(&mut mts_suite("dev/rgbds/mts/acceptance/serial/"));
+        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/timer/"));
+
+        // Rest of acceptance suite
+        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/"));
+
+        // MBC
+        results.append(&mut mts_suite("dev/rgbds/mts/emulator-only/mbc1/"));
+        // results.append(&mut mts_suite("dev/rgbds/mts/emulator-only/mbc2"));
+        // results.append(&mut mts_suite("dev/rgbds/mts/emulator-only/mbc3"));
+
+        results.append(&mut mts_suite("dev/rgbds/mts/misc/bits/"));
+        results.append(&mut mts_suite("dev/rgbds/mts/misc/ppu/"));
+        results.append(&mut mts_suite("dev/rgbds/mts/misc/"));
+
+        results
+            .iter()
+            .for_each(|(path, pass)| {
+                if *pass {
+                    println!("[{}]: {path}", "Passed".green().bold());
+                } else {
+                    eprintln!("[{}]: {path}", "Failed".red().bold());
+                }
+            });
+        
+        let stats = results
+            .iter()
+            .fold((0, 0), |acc, res| {
+                if res.1 {
+                    return (acc.0 + 1, acc.1);
+                } else {
+                    return (acc.0, acc.1 + 1);
+                }
+            });
+
+        println!("{} passed out of {} total", stats.0, results.len());
+
+        // assert!(result_vec.iter().all(|(_, pass)| *pass));
+    }
 }

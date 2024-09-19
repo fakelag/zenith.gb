@@ -35,8 +35,8 @@ pub struct Emu {
     pub mmu: mmu::MMU,
     pub timer: timer::Timer,
 
-    pub frame_chan: SyncSender<FrameBuffer>,
-    pub input_chan: Receiver<InputEvent>,
+    pub frame_chan: Option<SyncSender<FrameBuffer>>,
+    pub input_chan: Option<Receiver<InputEvent>>,
 }
 
 impl Display for Emu {
@@ -48,7 +48,11 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge: Cartridge, frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputEvent>) -> Emu {
+    pub fn new(
+        cartridge: Cartridge,
+        frame_chan: Option<SyncSender<FrameBuffer>>,
+        input_chan: Option<Receiver<InputEvent>>,
+    ) -> Emu {
         Self {
             mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
@@ -88,17 +92,19 @@ impl Emu {
    }
 
    fn input_update(&mut self) {
-        loop {
-            match self.input_chan.try_recv() {
-                Ok(input_event) => {
-                    self.mmu.update_input(input_event);
-                    continue;
-                }
-                Err(TryRecvError::Disconnected) => {
-                    return;
-                }
-                Err(TryRecvError::Empty) => {
-                    return;
+        if let Some(input_chan) = &self.input_chan {
+            loop {
+                match input_chan.try_recv() {
+                    Ok(input_event) => {
+                        self.mmu.update_input(input_event);
+                        continue;
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        return;
+                    }
+                    Err(TryRecvError::Empty) => {
+                        return;
+                    }
                 }
             }
         }

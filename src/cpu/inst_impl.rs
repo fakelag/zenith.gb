@@ -7,6 +7,12 @@ use super::inst_def::*;
 impl cpu::CPU {
     pub fn opcode_nop(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) { }
 
+    pub fn opcode_ld_b_b(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
+        if let Some(bp) = &self.ld_bb_breakpoint {
+            _ = bp.send(0);
+        }
+    }
+
     pub fn opcode_ld(&mut self, mmu: &mut MMU, instr: &Instruction, opcode: u8) {
         match (instr.dst, instr.src) {
             (OperandKind::R8, OperandKind::R8) => {
