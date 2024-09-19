@@ -1,4 +1,4 @@
-use std::sync::mpsc::{Receiver, SyncSender};
+use std::{sync::mpsc::{Receiver, SyncSender}, time};
 
 use cartridge::cartridge::Cartridge;
 
@@ -12,6 +12,8 @@ mod util;
 
 use emu::emu::{Emu, FrameBuffer, GbButton, InputEvent};
 use sdl2::keyboard::Scancode;
+
+const T_CYCLES_PER_FRAME: u64 = 4_194_304 / 60;
 
 fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl) {
     let sdl_ctx = sdl2::init().unwrap();
@@ -44,7 +46,21 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
 fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputEvent>) {
     let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
     let mut emu = Emu::new(cart, frame_chan, input_chan);
-    emu.run()
+    emu.dmg_boot();
+
+    let m_cycles_per_frame = T_CYCLES_PER_FRAME / 4;
+
+    loop {
+        let start_time = time::Instant::now();
+        emu.run(m_cycles_per_frame);
+
+        let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
+        let sleep_time = (16000 as u64).saturating_sub(elapsed);
+
+        if sleep_time > 0 {
+            spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+        }
+    }
 }
 
 fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {
@@ -108,6 +124,9 @@ fn main() {
         match frame_receiver.recv() {
             Ok(rt) => {
                 let frame_time = last_frame.elapsed();
+                last_frame = std::time::Instant::now();
+
+                // println!("received frame");
                 
                 canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
 
@@ -142,7 +161,6 @@ fn main() {
                 //     false,
                 // ).unwrap();
                 canvas.present();
-                last_frame = std::time::Instant::now();
             },
             Err(..) => break 'eventloop,
         }

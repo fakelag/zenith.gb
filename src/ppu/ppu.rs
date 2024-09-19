@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt::{self, Display}, sync::mpsc::SyncSender};
+use std::{fmt::{self, Display}, sync::mpsc::SyncSender};
 
 use crate::{cpu::*, emu::emu::FrameBuffer, mmu::mmu::{MMU, MemoryRegion}};
 
@@ -195,8 +195,6 @@ impl PPU {
 
                             mmu.ly().set(0);
                             self.dots_frame = 0;
-
-                            std::thread::sleep(std::time::Duration::from_millis(1 as u64));
                         }
                         _=> { unreachable!() }
                     }

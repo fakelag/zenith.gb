@@ -65,14 +65,11 @@ impl Emu {
         }
     }
 
-    pub fn run(self: &mut Emu) {
-        self.dmg_boot();
-
-        // @todo - 4,194304 MHz
-
+    pub fn run(self: &mut Emu, num_cycles: u64) -> u64 {
         self.start_at = time::Instant::now();
 
-        loop {
+        let mut cycles_run: u64 = 0;
+        while cycles_run < num_cycles {
             self.input_update();
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginCPU);
@@ -86,7 +83,11 @@ impl Emu {
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.mmu.step(cycles);
+
+            cycles_run += u64::from(cycles);
        }
+
+       cycles_run
    }
 
    fn input_update(&mut self) {
@@ -106,7 +107,7 @@ impl Emu {
         }
    }
 
-    fn dmg_boot(&mut self) {
+    pub fn dmg_boot(&mut self) {
         self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
 
         // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
