@@ -179,16 +179,41 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{fs, path::Path};
     use colored::Colorize;
     use cpu::cpu::CPU;
     use rayon::prelude::*;
 
-    fn run_emulator(rom_path: &str) -> Emu {
+    fn create_emulator(rom_path: &str, frame_chan: Option<SyncSender<FrameBuffer>>) -> Emu {
         let cart = Cartridge::new(rom_path);
-        let mut emu = Emu::new(cart, None, None);
+        let mut emu = Emu::new(cart, frame_chan, None);
         emu.dmg_boot();
         emu
+    }
+
+    fn run_emulator<T>(emu: &mut Emu, break_chan: Receiver<T>) -> Option<T> {
+        let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
+        let max_cycles = mcycles_per_frame * 60 * 60; // 60 seconds
+
+        let mut trigger: Option<T> = None;
+        let mut cycles_run = 0;
+
+        while cycles_run < max_cycles {
+            let cycles_passed = emu.run(mcycles_per_frame);
+
+            if let Some(cycles) = cycles_passed {
+                cycles_run += cycles;
+            } else {
+                unreachable!("tests should never close framebuffer channel abruptly");
+            }
+
+            if let Ok(val) = break_chan.try_recv() {
+                trigger = Some(val);
+                break;
+            }
+        }
+
+        return trigger;
     }
 
     fn mts_passed(cpu: &mut CPU) -> bool {
@@ -205,39 +230,110 @@ mod tests {
     }
 
     fn mts_test(rom_path: &str) -> bool {
-        let mut emu = run_emulator(rom_path);
+        let mut emu = create_emulator(rom_path, None);
 
-        let (result_send, result_recv) = std::sync::mpsc::channel::<u8>();
+        let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
 
-        emu.cpu.set_breakpoint(Some(result_send));
+        emu.cpu.set_breakpoint(Some(break_send));
 
-        let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
-        let max_cycles = mcycles_per_frame * 60 * 30; // 30 seconds
+        let bp_triggered = run_emulator(&mut emu, break_recv);
+        let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
+        return test_passed;
+    }
 
-        let mut bp_triggered = false;
-        let mut cycles_run = 0;
-        while cycles_run < max_cycles {
-            let cycles_passed = emu.run(mcycles_per_frame);
+    fn blargg_test(rom_path: &str) -> bool {
+        let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
+        let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
+        let mut emu = create_emulator(rom_path, Some(frame_send));
 
-            if let Some(cycles) = cycles_passed {
-                cycles_run += cycles;
+        let rom_path_string = rom_path.to_string();
+
+        std::thread::spawn(move || {
+            let mut last_frame: Option<[[u8; 160]; 144]> = None;
+            let rom_filepath = Path::new(&rom_path_string);
+            let rom_filename = rom_filepath
+                .file_name()
+                .expect("filename must exist")
+                .to_str()
+                .expect("filename must be valid utf-8");
+
+            let cmp_image = if let Ok(snapshot) = bmp::open(format!("tests/snapshots/blargg/{rom_filename}.bmp")) {
+                if snapshot.get_height() != 144 || snapshot.get_width() != 160 {
+                    eprintln!("Invalid image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
+                    None
+                } else {
+                    Some(snapshot)
+                }
             } else {
-                unreachable!();
-            }
+                eprintln!("No image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
+                None
+            };
 
-            if let Ok(_) = result_recv.try_recv() {
-                bp_triggered = true;
+            loop {
+                match frame_recv.recv() {
+                    Ok(rt) => {
+                        last_frame = Some(rt);
+
+                        if let Some(img) = &cmp_image {
+                            let mut match_snapshot = true;
+
+                            'img_check: for x in 0..160 {
+                                for y in 0..144 {
+                                    let gb_color = rt[y][x];
+                                    let palette_color = PALETTE[gb_color as usize];
+
+                                    let snapshot_pixel = img.get_pixel(x as u32, y as u32);
+                                    if snapshot_pixel.r != palette_color.r
+                                        || snapshot_pixel.g != palette_color.g
+                                        || snapshot_pixel.b != palette_color.b {
+                                            match_snapshot = false;
+                                            break 'img_check;
+                                        }
+                                }
+                            }
+
+                            if match_snapshot {
+                                _ = break_send.send(0);
+                                // break;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        if cmp_image.is_none() {
+                            if let Some(frame) = last_frame {
+                                let mut bmp_img = bmp::Image::new(160, 144);
+
+                                for x in 0..160 {
+                                    for y in 0..144 {
+                                        let gb_color = frame[y][x];
+                                        let palette_color = PALETTE[gb_color as usize];
+                                        bmp_img.set_pixel(
+                                            x as u32,
+                                            y as u32,
+                                            bmp::Pixel{ r: palette_color.r, g: palette_color.g, b: palette_color.b }
+                                        );
+                                    }
+                                }
+
+                                _ = bmp_img.save(format!("tests/snapshots/verify/{rom_filename}.bmp"));
+                            }
+                        }
+
+                        drop(break_send);
                 break;
             }
         }
+            }
+        });
 
-        let test_passed = bp_triggered && mts_passed(&mut emu.cpu);
+        let frame_check_passed = run_emulator(&mut emu, break_recv);
+        let test_passed = frame_check_passed.is_some();
         return test_passed;
     }
 
     fn roms_in_dir(path: &str) -> Vec<String> {
         let mut roms = Vec::new();
-        let paths = fs::read_dir(path).unwrap();
+        let paths = fs::read_dir(path).expect("directory must exist");
 
         for path in paths {
             let p = path.unwrap();
@@ -272,28 +368,42 @@ mod tests {
         return result_vec;
     }
 
+    fn blargg_suite(dir: &str) -> Vec<(String, bool)> {
+        let rom_paths = roms_in_dir(dir);
+    
+        let result_vec = rom_paths
+            .par_iter()
+            .map(|rom_path| (
+                rom_path.to_string(),
+                blargg_test(rom_path.as_str()),
+            ))
+            .collect::<Vec<(String, bool)>>();
+
+        return result_vec;
+    }
+
     #[test]
     fn mts() {
         let mut results: Vec<(String, bool)> = Vec::new();
-        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/bits/"));
-        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/instr/"));
-        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/interrupts/"));
-        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/oam_dma/"));
-        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/ppu/"));
-        // results.append(&mut mts_suite("dev/rgbds/mts/acceptance/serial/"));
-        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/timer/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/bits/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/instr/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/interrupts/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/oam_dma/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/ppu/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/serial/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/timer/"));
 
         // Rest of acceptance suite
-        results.append(&mut mts_suite("dev/rgbds/mts/acceptance/"));
+        results.append(&mut mts_suite("tests/roms/mts/acceptance/"));
 
         // MBC
-        results.append(&mut mts_suite("dev/rgbds/mts/emulator-only/mbc1/"));
-        // results.append(&mut mts_suite("dev/rgbds/mts/emulator-only/mbc2"));
-        // results.append(&mut mts_suite("dev/rgbds/mts/emulator-only/mbc3"));
+        results.append(&mut mts_suite("tests/roms/mts/emulator-only/mbc1/"));
+        // results.append(&mut mts_suite("tests/roms/mts/emulator-only/mbc2"));
+        // results.append(&mut mts_suite("tests/roms/mts/emulator-only/mbc3"));
 
-        results.append(&mut mts_suite("dev/rgbds/mts/misc/bits/"));
-        results.append(&mut mts_suite("dev/rgbds/mts/misc/ppu/"));
-        results.append(&mut mts_suite("dev/rgbds/mts/misc/"));
+        results.append(&mut mts_suite("tests/roms/mts/misc/bits/"));
+        results.append(&mut mts_suite("tests/roms/mts/misc/ppu/"));
+        results.append(&mut mts_suite("tests/roms/mts/misc/"));
 
         results
             .iter()
@@ -318,5 +428,11 @@ mod tests {
         println!("{} passed out of {} total", stats.0, results.len());
 
         // assert!(result_vec.iter().all(|(_, pass)| *pass));
+    }
+
+    #[test]
+    fn blargg_cpu_instr() {
+        let res = blargg_suite("tests/roms/blargg/cpu_instrs/");
+        assert!(res.iter().all(|(_, pass)| *pass));
     }
 }

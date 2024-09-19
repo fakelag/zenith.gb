@@ -2,3 +2,5 @@
 /rom
 /dev
 *.dll
+/tests/roms
+/tests/snapshots/verify
