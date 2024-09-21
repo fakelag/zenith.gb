@@ -62,8 +62,6 @@ impl Timer {
                 if tima_prev == 0xFF {
                     self.tima_overflow = true;
                     self.tima_overflow_tstates = 4;
-                    self.and_result = and_result;
-                    break;
                 }
             }
 
