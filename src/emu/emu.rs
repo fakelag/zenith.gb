@@ -119,7 +119,8 @@ impl Emu {
         self.mmu.p1().set(0xCF);
         self.mmu.sb().set(0x00);
         self.mmu.sc().set(0x7E);
-        self.mmu.div().set(0x18);
+        self.mmu.div_lsb().set(0xD4);
+        self.mmu.div().set(0xAB);
         self.mmu.tima().set(0x00);
         self.mmu.tma().set(0x00);
         self.mmu.tac().set(0xF8);
@@ -146,7 +147,11 @@ impl Emu {
         self.mmu.nr51().set(0xF3);
         self.mmu.nr52().set(0xF1);
         self.mmu.lcdc().set(0x91);
-        self.mmu.stat().set(0x81);
+        self.mmu.stat().set(0x85);
+        self.mmu.scy().set(0x0);
+        self.mmu.scx().set(0x0);
+        self.mmu.ly().set(0x0);
+        self.mmu.lyc().set(0x0);
         self.mmu.dma().set(0xFF);
         self.mmu.bgp().set(0xFC);
         self.mmu.obp0().set(0xFF);
