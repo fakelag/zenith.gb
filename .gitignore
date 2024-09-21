@@ -4,3 +4,4 @@
 *.dll
 /tests/roms
 /tests/snapshots/verify
+*.bat

@@ -460,9 +460,16 @@ impl PPU {
             .collect();
 
         for sprite in sprites_with_tiles.iter() {
+            let sprite_screen_x = sprite.oam_entry.x.saturating_sub(8);
             let skip_pixels = 8 - std::cmp::min(sprite.oam_entry.x, 8);
 
             for bit_idx in skip_pixels..8 {
+                let x = sprite_screen_x + (7-bit_idx);
+
+                if x >= 160 {
+                    continue;
+                }
+
                 let x_flip = sprite.oam_entry.attr & OAM_BIT_X_FLIP != 0;
 
                 let bit_idx_flip = if x_flip {
@@ -488,8 +495,6 @@ impl PPU {
                 } else {
                     mmu.obp1().get()
                 };
-
-                let x = sprite.oam_entry.x.saturating_sub(8) + (7-bit_idx);
 
                 if sprite_bgpriority == 1 && self.bg_scanline_mask[x as usize] != 0 {
                     // According to pandocs, sprites with higher priority sprite but bg-over-obj
