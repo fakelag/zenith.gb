@@ -91,8 +91,8 @@ impl MMU {
         self.buttons[input_event.button as usize] = input_event.down;
 
         if !was_down && input_event.down {
-            let flags_if = self.bus_read(cpu::HREG_IF);
-            self.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_JOYPAD);
+            let flags_if = self.r#if().get();
+            self.r#if().set(flags_if | cpu::INTERRUPT_BIT_JOYPAD);
         }
     }
 
@@ -244,6 +244,7 @@ impl MMU {
                 self.memory[usize::from(address)] = data;
             }
             0xFFFF => {
+                // @todo - IE flag top 3 bits are unused (still writable?)
                 self.memory[usize::from(address)] = data;
             }
         }
@@ -444,6 +445,7 @@ impl MMU {
     pub fn obp1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_OBP1, self) }
     pub fn wy<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WY, self) }
     pub fn wx<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WX, self) }
+    pub fn ie<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_IE, self) }
 }
 
 impl MbcRomOnly {

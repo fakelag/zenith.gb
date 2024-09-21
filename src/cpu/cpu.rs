@@ -8,9 +8,6 @@ pub const FLAG_H: u8 = 1 << 5;
 pub const FLAG_N: u8 = 1 << 6;
 pub const FLAG_Z: u8 = 1 << 7;
 
-pub const HREG_IE: u16 = 0xFFFF;
-pub const HREG_IF: u16 = 0xFF0F;
-
 pub const INTERRUPT_BIT_VBLANK: u8  = 1 << 0;
 pub const INTERRUPT_BIT_LCD: u8     = 1 << 1;
 pub const INTERRUPT_BIT_TIMER: u8   = 1 << 2;
@@ -127,12 +124,15 @@ impl CPU {
         inst_cycles
     }
 
+    pub fn active_interrupts(&self, mmu: &mut MMU) -> u8 {
+        let ie_flags = mmu.ie().get();
+        let if_flags = mmu.r#if().get();
+
+        return ie_flags & if_flags;
+    }
     
     fn check_interrupts(&mut self, mmu: &mut MMU) {
-        let ie_flags = mmu.bus_read(HREG_IE);
-        let if_flags = mmu.bus_read(HREG_IF);
-
-        let active_interrupts = ie_flags & if_flags;
+        let active_interrupts = self.active_interrupts(mmu);
 
         if active_interrupts == 0x0 {
             return;
@@ -146,37 +146,52 @@ impl CPU {
             return;
         }
 
-        if self.handle_interrupt(mmu, active_interrupts, INTERRUPT_BIT_VBLANK, INTERRUPT_ADDR_VBLANK) {
+        if self.handle_interrupt(mmu, INTERRUPT_BIT_VBLANK, INTERRUPT_ADDR_VBLANK) {
             return;
         }
-        if self.handle_interrupt(mmu, active_interrupts, INTERRUPT_BIT_LCD, INTERRUPT_ADDR_LCD) {
+        if self.handle_interrupt(mmu, INTERRUPT_BIT_LCD, INTERRUPT_ADDR_LCD) {
             return;
         }
-        if self.handle_interrupt(mmu, active_interrupts, INTERRUPT_BIT_TIMER, INTERRUPT_ADDR_TIMER) {
+        if self.handle_interrupt(mmu, INTERRUPT_BIT_TIMER, INTERRUPT_ADDR_TIMER) {
             return;
         }
-        if self.handle_interrupt(mmu, active_interrupts, INTERRUPT_BIT_SERIAL, INTERRUPT_ADDR_SERIAL) {
+        if self.handle_interrupt(mmu, INTERRUPT_BIT_SERIAL, INTERRUPT_ADDR_SERIAL) {
             return;
         }
-        if self.handle_interrupt(mmu, active_interrupts, INTERRUPT_BIT_JOYPAD, INTERRUPT_ADDR_JOYPAD) {
+        if self.handle_interrupt(mmu, INTERRUPT_BIT_JOYPAD, INTERRUPT_ADDR_JOYPAD) {
             return;
         }
     }
 
-    fn handle_interrupt(&mut self, mmu: &mut MMU, active_interrupts: u8, interrupt_bit: u8, interrupt_vec: u16) -> bool {
-        if active_interrupts & interrupt_bit == 0 {
+    fn handle_interrupt(&mut self, mmu: &mut MMU, interrupt_bit: u8, interrupt_vec: u16) -> bool {
+        if self.active_interrupts(mmu) & interrupt_bit == 0 {
             return false;
         }
 
         let pc_val = self.pc().get();
-        self.push_u16(mmu, pc_val);
-        self.pc().set(interrupt_vec);
+
+        // Note: push pc is done in 2 parts to allow interrupt canceling
+        self.sp().dec();
+        mmu.bus_write(self.sp().get(), util::get_high(pc_val));
+
+        let fire_interrupt = self.active_interrupts(mmu) & interrupt_bit != 0;
+
+        self.sp().dec();
+        mmu.bus_write(self.sp().get(), util::get_low(pc_val));
+
+        if fire_interrupt {
+            self.pc().set(interrupt_vec);
+            let if_flags = mmu.r#if().get();
+            mmu.r#if().set(if_flags & !interrupt_bit);
+        } else {
+            // Interrupt canceling - push pc overwrote interrupt flags,
+            // PC will be set to 0x0000 instead
+            self.pc().set(0x0);
+        }
         self.cycles += 5;
         self.ime = false;
 
-        let if_flags = mmu.bus_read(HREG_IF);
-        mmu.bus_write(HREG_IF, if_flags & !interrupt_bit);
-        return true;
+        return fire_interrupt;
     }
 
     pub fn write_r8(&mut self, mmu: &mut MMU, r8_encoded: u8, val: u8) {

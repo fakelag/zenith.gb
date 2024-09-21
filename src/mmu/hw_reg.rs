@@ -42,6 +42,7 @@ pub const HWR_OBP0: u16 = 0xFF48;
 pub const HWR_OBP1: u16 = 0xFF49;
 pub const HWR_WY: u16 = 0xFF4A;
 pub const HWR_WX: u16 = 0xFF4B;
+pub const HWR_IE: u16 = 0xFFFF;
 
 pub struct HwReg<'a> {
     addr: u16,

@@ -440,7 +440,7 @@ impl cpu::CPU {
             return;
         }
 
-        if mmu.bus_read(cpu::HREG_IE) & mmu.bus_read(cpu::HREG_IF) == 0 {
+        if self.active_interrupts(mmu) == 0 {
             self.halted = true;
             return;
         }

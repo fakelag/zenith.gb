@@ -191,8 +191,8 @@ impl PPU {
                             }
 
                             // set vblank interrupt
-                            let flags_if = mmu.bus_read(cpu::HREG_IF);
-                            mmu.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_VBLANK);
+                            let flags_if = mmu.r#if().get();
+                            mmu.r#if().set(flags_if | cpu::INTERRUPT_BIT_VBLANK);
                         }
                         (PpuMode::PpuVBlank, PpuMode::PpuOamScan) => {
                             debug_assert!(self.dots_mode == DOTS_PER_VBLANK);
@@ -668,8 +668,8 @@ impl PPU {
 
         // low to high transition
         if self.stat_interrupt_prev == 0 && self.stat_interrupt != 0 {
-            let flags_if = mmu.bus_read(cpu::HREG_IF);
-            mmu.bus_write(cpu::HREG_IF, flags_if | cpu::INTERRUPT_BIT_LCD);
+            let flags_if = mmu.r#if().get();
+            mmu.r#if().set(flags_if | cpu::INTERRUPT_BIT_LCD);
         }
 
         self.stat_interrupt_prev = self.stat_interrupt;
