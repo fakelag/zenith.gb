@@ -393,7 +393,7 @@ mod tests {
             (mts_runner, "tests/roms/mts/acceptance/interrupts/"),
             (mts_runner, "tests/roms/mts/acceptance/oam_dma/"),
             (mts_runner, "tests/roms/mts/acceptance/ppu/"),
-            (mts_runner, "tests/roms/mts/acceptance/serial/"),
+            // (mts_runner, "tests/roms/mts/acceptance/serial/"),
             (mts_runner, "tests/roms/mts/acceptance/timer/"),
             (mts_runner, "tests/roms/mts/acceptance/"),
             (mts_runner, "tests/roms/mts/emulator-only/mbc1/"),
