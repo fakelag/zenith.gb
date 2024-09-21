@@ -127,12 +127,7 @@ fn main() {
 
         match frame_receiver.recv() {
             Ok(rt) => {
-                let frame_time = last_frame.elapsed();
-                last_frame = std::time::Instant::now();
-
                 // println!("received frame");
-                
-                canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
 
                 texture.with_lock(None, |buffer, size| {
                     for x in 0..160 {
@@ -165,6 +160,10 @@ fn main() {
                 //     false,
                 // ).unwrap();
                 canvas.present();
+
+                let frame_time = last_frame.elapsed();
+                last_frame = std::time::Instant::now();
+                canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
             },
             Err(..) => break 'eventloop,
         }
@@ -193,7 +192,7 @@ mod tests {
 
     fn run_emulator<T>(emu: &mut Emu, break_chan: Receiver<T>) -> Option<T> {
         let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
-        let max_cycles = mcycles_per_frame * 60 * 60; // 60 seconds
+        let max_cycles = mcycles_per_frame * 60 * 60; // 60 seconds, 60 fps
 
         let mut trigger: Option<T> = None;
         let mut cycles_run = 0;

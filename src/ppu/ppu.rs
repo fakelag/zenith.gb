@@ -16,6 +16,9 @@ const STAT_SELECT_MODE1_BIT: u8 = 4;
 const STAT_SELECT_MODE0_BIT: u8 = 3;
 const STAT_LY_EQ_SCY_BIT: u8 = 2;
 
+const OAM_BIT_Y_FLIP: u8 = 1 << 6;
+const OAM_BIT_X_FLIP: u8 = 1 << 5;
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PpuMode {
@@ -304,11 +307,19 @@ impl PPU {
         return mmu.bus_read(tilemap_data_addr);
     }
 
-    fn fetch_sprite_tile_tuple(mmu: &mut MMU, tile_number: u8, sprite_y: u8) -> (u8, u8) {
+    fn fetch_sprite_tile_tuple(mmu: &mut MMU, sprite_oam: &Sprite) -> (u8, u8) {
         let ly = mmu.ly().get();
 
-        let line_offset = u16::from(((ly.wrapping_add(sprite_y)) % 8) * 2);
-        let tile_base = 0x8000 + (u16::from(tile_number) * 16) + line_offset;
+        let y_with_flip = if sprite_oam.attr & OAM_BIT_Y_FLIP == 0 {
+            ly.wrapping_sub(sprite_oam.y)
+        } else {
+            let obj_height: u8 = if mmu.lcdc().check_bit(2) { 16 } else { 8 };
+            obj_height.wrapping_sub(ly.wrapping_sub(sprite_oam.y)).wrapping_sub(1)
+        };
+
+        let line_offset = u16::from((y_with_flip % 8) * 2);
+
+        let tile_base = 0x8000 + ((u16::from(sprite_oam.tile) * 16) + line_offset);
 
         return (mmu.bus_read(tile_base), mmu.bus_read(tile_base + 1));
     }
@@ -443,7 +454,7 @@ impl PPU {
         let sprites_with_tiles: Vec<SpriteWithTile> = self.sprite_buffer
             .iter()
             .map(|oam_entry| {
-                let (tile_lsb, tile_msb) = PPU::fetch_sprite_tile_tuple(mmu, oam_entry.tile, oam_entry.y);
+                let (tile_lsb, tile_msb) = PPU::fetch_sprite_tile_tuple(mmu, oam_entry);
                 SpriteWithTile{ oam_entry: *oam_entry, tile_lsb, tile_msb }
             })
             .collect();
@@ -452,8 +463,16 @@ impl PPU {
             let skip_pixels = 8 - std::cmp::min(sprite.oam_entry.x, 8);
 
             for bit_idx in skip_pixels..8 {
-                let hb = (sprite.tile_msb >> bit_idx) & 0x1;
-                let lb = (sprite.tile_lsb >> bit_idx) & 0x1;
+                let x_flip = sprite.oam_entry.attr & OAM_BIT_X_FLIP != 0;
+
+                let bit_idx_flip = if x_flip {
+                    7 - bit_idx
+                } else {
+                    bit_idx
+                };
+
+                let hb = (sprite.tile_msb >> bit_idx_flip) & 0x1;
+                let lb = (sprite.tile_lsb >> bit_idx_flip) & 0x1;
                 let sprite_color = lb | (hb << 1);
 
                 if sprite_color == 0 {
