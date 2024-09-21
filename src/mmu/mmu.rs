@@ -176,7 +176,6 @@ impl MMU {
                         let button_bits = self.calc_button_bits(p1);
                         return button_bits | (p1 & 0xF0);
                     }
-                    HWR_SB => { return 0xFF; }
                     HWR_DIV_LSB => { return 0xFF; }
                     0xFF08..=0xFF0E => { return 0xFF; }
                     HWR_NR13 => { return 0xFF; }
@@ -186,7 +185,7 @@ impl MMU {
                     HWR_NR33 => { return 0xFF; }
                     0xFF1F => { return 0xFF; }
                     HWR_NR41 => { return 0xFF; }
-                    0xFF27..=0xFF29 => { return 0xFF; }
+                    0xFF27..=0xFF2F => { return 0xFF; }
                     0xFF4C => { return 0xFF; }
                     0xFF4D..=0xFF7F => {
                         // Reads ignored for non-dmg registers
