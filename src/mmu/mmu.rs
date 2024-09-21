@@ -35,7 +35,6 @@ struct DmaTransfer {
     src: u16,
     src_end: u16,
     dst: u16,
-    next_byte_in_tstates: u8,
     tstates: u16,
 }
 
@@ -43,6 +42,7 @@ pub struct MMU {
     memory: [u8; 0x10000],
     access_flags: u8,
     access_origin: AccessOrigin,
+    supported_carttype: bool,
 
     mbc: Box<dyn MBC>,
 
@@ -60,6 +60,7 @@ impl MMU {
             mbc: Box::new(MbcRomOnly::new()),
             oam_dma: None,
             buttons: [false; emu::GbButton::GbButtonMax as usize],
+            supported_carttype: true,
         };
         mmu.load(cartridge);
         mmu
@@ -78,6 +79,7 @@ impl MMU {
             _ => {
                 if cartridge.header.cart_type != 0 {
                     println!("WARN: Unsupported cartridge/MBC: {}", cartridge.header.cart_type);
+                    self.supported_carttype = false;
                 }
                 self.mbc = Box::new(MbcRomOnly::new());
                 self.mbc.load(cartridge);
@@ -121,9 +123,7 @@ impl MMU {
     }
 
     pub fn bus_read(&self, address: u16) -> u8 {
-        if self.access_origin != AccessOrigin::AccessOriginCPU {
-            return self.memory[usize::from(address)];
-        }
+        let cpu_access = self.access_origin == AccessOrigin::AccessOriginCPU;
 
         if !self.address_accessible(address) {
             return 0xFF;
@@ -165,6 +165,10 @@ impl MMU {
                 return 0;
             }
             0xFF00..=0xFF7F => {
+                if !cpu_access {
+                    return self.memory[usize::from(address)];
+                }
+
                 match address {
                     HWR_P1 => {
                         let p1 = self.memory[address as usize];
@@ -250,6 +254,16 @@ impl MMU {
         }
     }
 
+    pub fn dma_copy(&mut self, mut src: u16, mut dst: u16, num_bytes: u8) {
+        for _b in 0..num_bytes {
+            let byte = self.bus_read(src);
+            self.bus_write(dst, byte);
+
+            src += 1;
+            dst += 1;
+        }
+    }
+    
     pub fn step(&mut self, cycles_passed: u8) {
         // @todo - Precise timings
         // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
@@ -257,38 +271,38 @@ impl MMU {
         // the byte that is currently being transferred by the DMA transfer is returned.
         // This also affects the CPU when fetching opcodes, allowing for code execution through DMA transfers.
         // https://hacktix.github.io/GBEDG/dma/
-        let mut tstates = cycles_passed * 4;
+        let tstates = cycles_passed * 4;
 
-        if let Some(dma) = &mut self.oam_dma {
+        let bytes_copied = if let Some(active_dma) = &self.oam_dma {
+            let bytes_to_copy = std::cmp::min(
+                tstates / 4,
+                (active_dma.src_end + 1 - active_dma.src).try_into().expect("dma.src_end - dma.src < 256"),
+            );
 
-            if dma.tstates == 0 {
-                tstates -= 4;
-                dma.tstates = 4;
-            }
+            self.dma_copy(active_dma.src, active_dma.dst, bytes_to_copy);
+            Some(bytes_to_copy)
+        } else {
+            None
+        };
 
-            let mut bytes_left = tstates / dma.next_byte_in_tstates;
-            let mut b: u16 = 0;
-            
-            while dma.src != dma.src_end + 1 && bytes_left > 0 {
-                bytes_left -= 1;
+        if let Some(num_copied) = bytes_copied {
+            if let Some(dma) = &mut self.oam_dma {
+                dma.src += u16::from(num_copied);
+                dma.dst += u16::from(num_copied);
+                dma.tstates += u16::from(num_copied) * 4;
 
-                let byte = self.memory[dma.src as usize];
-                self.memory[dma.dst as usize] = byte;
-
-                dma.src += 1;
-                dma.dst += 1;
-                b += 1;
-            }
-
-            dma.tstates += u16::from(b * 4);
-
-            if dma.src == dma.src_end + 1 {
-                // println!("{}", dma.tstates);
-                self.oam_dma = None;
+                if dma.src >= dma.src_end + 1 {
+                    // println!("{}", dma.tstates);
+                    self.oam_dma = None;
+                }
             }
         }
     }
 
+    pub fn is_supported_cart_type(&self) -> bool {
+        self.supported_carttype
+    }
+    
     fn bus_write_hwreg(&mut self, address: u16, data: u8) {
         if self.access_origin != AccessOrigin::AccessOriginCPU {
             self.memory[usize::from(address)] = data;
@@ -362,9 +376,9 @@ impl MMU {
                     src,
                     src_end,
                     dst: 0xFE00,
-                    next_byte_in_tstates: 4,
                     tstates: 0,
                 });
+                self.memory[usize::from(address)] = data;
             }
             // 0xFF4F => { todo!("select vram bank cgb"); }
             0xFF4D..=0xFF70 => {

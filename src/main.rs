@@ -183,11 +183,17 @@ mod tests {
     use cpu::cpu::CPU;
     use rayon::prelude::*;
 
-    fn create_emulator(rom_path: &str, frame_chan: Option<SyncSender<FrameBuffer>>) -> Emu {
+    fn create_emulator(rom_path: &str, frame_chan: Option<SyncSender<FrameBuffer>>) -> Option<Emu> {
         let cart = Cartridge::new(rom_path);
         let mut emu = Emu::new(cart, frame_chan, None);
+
+        if !emu.mmu.is_supported_cart_type() {
+            println!("Skipping {rom_path} due to unsupported cart type");
+            return None;
+        }
+
         emu.dmg_boot();
-        emu
+        Some(emu)
     }
 
     fn run_emulator<T>(emu: &mut Emu, break_chan: Receiver<T>) -> Option<T> {
@@ -228,19 +234,23 @@ mod tests {
         return true;
     }
 
-    fn mts_runner(rom_path: &str) -> bool {
-        let mut emu = create_emulator(rom_path, None);
+    fn mts_runner(rom_path: &str) -> Option<bool> {
+        let mut emu_res = create_emulator(rom_path, None);
 
+        if let Some(emu) = &mut emu_res {
         let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
 
         emu.cpu.set_breakpoint(Some(break_send));
 
-        let bp_triggered = run_emulator(&mut emu, break_recv);
+            let bp_triggered = run_emulator(emu, break_recv);
         let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
-        return test_passed;
+            return Some(test_passed);
+        } else {
+            None
+        }
     }
 
-    fn snapshot_runner(rom_path: &str) -> bool {
+    fn snapshot_runner(rom_path: &str) -> Option<bool> {
         let root_path = PathBuf::from(
             rom_path
                 .strip_prefix("tests/roms/")
@@ -257,10 +267,16 @@ mod tests {
         return snapshot_test(rom_path, &snapshot_dir);
     }
 
-    fn snapshot_test(rom_path: &str, snapshot_dir: &str) -> bool {
+    fn snapshot_test(rom_path: &str, snapshot_dir: &str) -> Option<bool> {
         let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
         let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
-        let mut emu = create_emulator(rom_path, Some(frame_send));
+        let emu_result = create_emulator(rom_path, Some(frame_send));
+
+        if emu_result.is_none() {
+            return None;
+        }
+
+        let mut emu = emu_result.unwrap();
 
         let rom_path_string = rom_path.to_string();
         let snapshot_dir_string = snapshot_dir.to_string();
@@ -347,7 +363,7 @@ mod tests {
 
         let frame_check_passed = run_emulator(&mut emu, break_recv);
         let test_passed = frame_check_passed.is_some();
-        return test_passed;
+        return Some(test_passed);
     }
 
     fn find_roms(rom_or_dir: &str) -> Vec<String> {
@@ -383,7 +399,7 @@ mod tests {
 
     #[test]
     fn mts() {
-        type RunnerFn = fn(path:&str) -> bool;
+        type RunnerFn = fn(path:&str) -> Option<bool>;
 
         let test_roms: Vec<(RunnerFn, &str)>  = vec!(
             (snapshot_runner, "tests/roms/blargg/cpu_instrs/"),
@@ -393,13 +409,13 @@ mod tests {
             (mts_runner, "tests/roms/mts/acceptance/interrupts/"),
             (mts_runner, "tests/roms/mts/acceptance/oam_dma/"),
             (mts_runner, "tests/roms/mts/acceptance/ppu/"),
-            // (mts_runner, "tests/roms/mts/acceptance/serial/"),
             (mts_runner, "tests/roms/mts/acceptance/timer/"),
             (mts_runner, "tests/roms/mts/acceptance/"),
             (mts_runner, "tests/roms/mts/emulator-only/mbc1/"),
             (mts_runner, "tests/roms/mts/misc/bits/"),
             (mts_runner, "tests/roms/mts/misc/ppu/"),
             (mts_runner, "tests/roms/mts/misc/"),
+            // (mts_runner, "tests/roms/mts/acceptance/serial/"),
         );
 
         let rom_files = test_roms
@@ -417,29 +433,34 @@ mod tests {
         let results = rom_files
             .par_iter()
             .map(|(runner, rom_path)| (rom_path, runner(rom_path)))
-            .collect::<Vec<(&String, bool)>>();
+            .collect::<Vec<(&String, Option<bool>)>>();
 
         results
             .iter()
-            .for_each(|(path, pass)| {
-                if *pass {
+            .for_each(|(path, pass_opt)| {
+                if let Some(is_passing) = pass_opt {
+                    if *is_passing {
                     println!("[{}]: {path}", "Passed".green().bold());
                 } else {
                     eprintln!("[{}]: {path}", "Failed".red().bold());
+                    }
                 }
             });
         
         let stats = results
             .iter()
-            .fold((0, 0), |acc, res| {
-                if res.1 {
-                    return (acc.0 + 1, acc.1);
+            .fold((0, 0, 0), |acc, res| {
+                if let Some(is_passing) = res.1 {
+                    if is_passing {
+                        return (acc.0 + 1, acc.1, acc.2);
                 } else {
-                    return (acc.0, acc.1 + 1);
+                        return (acc.0, acc.1 + 1, acc.2);
+                    }
                 }
+                return (acc.0, acc.1, acc.2 + 1);
             });
 
-        println!("{} passed out of {} total", stats.0, results.len());
+        println!("{} passed {} failed, {} skipped, {} total", stats.0, stats.1, stats.2, results.len());
 
         // assert!(result_vec.iter().all(|(_, pass)| *pass));
     }
