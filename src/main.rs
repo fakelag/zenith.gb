@@ -240,12 +240,13 @@ mod tests {
         return test_passed;
     }
 
-    fn blargg_test(rom_path: &str) -> bool {
+    fn snapshot_test(rom_path: &str, snapshot_dir: &str) -> bool {
         let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
         let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
         let mut emu = create_emulator(rom_path, Some(frame_send));
 
         let rom_path_string = rom_path.to_string();
+        let snapshot_dir_string = snapshot_dir.to_string();
 
         std::thread::spawn(move || {
             let mut last_frame: Option<[[u8; 160]; 144]> = None;
@@ -256,7 +257,9 @@ mod tests {
                 .to_str()
                 .expect("filename must be valid utf-8");
 
-            let cmp_image = if let Ok(snapshot) = bmp::open(format!("tests/snapshots/blargg/{rom_filename}.bmp")) {
+            let cmp_image = if let Ok(snapshot) = bmp::open(
+                format!("tests/snapshots/{snapshot_dir_string}/{rom_filename}.bmp")
+            ) {
                 if snapshot.get_height() != 144 || snapshot.get_width() != 160 {
                     eprintln!("Invalid image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
                     None
@@ -374,7 +377,7 @@ mod tests {
             .par_iter()
             .map(|rom_path| (
                 rom_path.to_string(),
-                blargg_test(rom_path.as_str()),
+                snapshot_test(rom_path.as_str(), "blargg"),
             ))
             .collect::<Vec<(String, bool)>>();
 
@@ -427,6 +430,12 @@ mod tests {
         println!("{} passed out of {} total", stats.0, results.len());
 
         // assert!(result_vec.iter().all(|(_, pass)| *pass));
+    }
+
+    #[test]
+    fn mts_sprite_priority() {
+        let res = snapshot_test("tests/roms/mts/manual-only/sprite_priority.gb", "mts");
+        assert!(res);
     }
 
     #[test]
