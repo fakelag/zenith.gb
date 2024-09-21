@@ -68,6 +68,8 @@ impl MMU {
     pub fn load(&mut self, cartridge: &Cartridge) {
         self.memory = [0; 0x10000];
 
+        // println!("Cart type={}", cartridge.header.cart_type);
+
         match cartridge.header.cart_type {
             1..=3 => {
                 self.mbc = Box::new(mbc1::MBC1::new());
@@ -168,15 +170,21 @@ impl MMU {
                         let p1 = self.memory[address as usize];
 
                         let button_bits = self.calc_button_bits(p1);
-                        return button_bits | (p1 & 0x30);
+                        return button_bits | (p1 & 0xF0);
                     }
                     HWR_SB => { return 0xFF; }
+                    HWR_DIV_LSB => { return 0xFF; }
+                    0xFF08..=0xFF0E => { return 0xFF; }
                     HWR_NR13 => { return 0xFF; }
+                    0xFF15 => { return 0xFF; }
                     HWR_NR23 => { return 0xFF; }
                     HWR_NR31 => { return 0xFF; }
                     HWR_NR33 => { return 0xFF; }
+                    0xFF1F => { return 0xFF; }
                     HWR_NR41 => { return 0xFF; }
-                    0xFF4D..=0xFF70 => {
+                    0xFF27..=0xFF29 => { return 0xFF; }
+                    0xFF4C => { return 0xFF; }
+                    0xFF4D..=0xFF7F => {
                         // Reads ignored for non-dmg registers
                         return 0xFF;
                     }
@@ -289,9 +297,10 @@ impl MMU {
         match address {
             HWR_P1 => {
                 // Lower nibble RO
-                let low_nibble = self.memory[usize::from(address)] & 0xF;
-                self.memory[usize::from(address)] = (data & 0xF0) | low_nibble;
+                let ro_bits = self.memory[usize::from(address)] & 0xCF;
+                self.memory[usize::from(address)] = (data & 0x30) | ro_bits;
             }
+            HWR_SC => {}
             HWR_DIV_LSB => {
                 // RO
             }
@@ -299,18 +308,47 @@ impl MMU {
                 // Writing to 0xFF04 resets whole DIV clock
                 self.memory[usize::from(HWR_DIV_LSB)] = 0;
                 self.memory[usize::from(HWR_DIV)] = 0;
-
+            }
+            HWR_TAC => {
+                // Top 5 bits unused
+                let ro_bits = self.memory[usize::from(address)] & 0xF8;
+                self.memory[usize::from(address)] = (data & 0x7) | ro_bits;
+            }
+            HWR_IF => {
+                // Top 3 bits unused
+                let ro_bits = self.memory[usize::from(address)] & 0xE0;
+                self.memory[usize::from(address)] = (data & 0x1F) | ro_bits;
+            }
+            HWR_NR10 => {
+                // bit 7 unused
+                let ro_bits = self.memory[usize::from(address)] & 0x80;
+                self.memory[usize::from(address)] = (data & 0x7F) | ro_bits;
+            }
+            HWR_NR30 => {
+                // Lower 6 bits unused
+                let ro_bits = self.memory[usize::from(address)] & 0x7F;
+                self.memory[usize::from(address)] = (data & 0x80) | ro_bits;
+            }
+            HWR_NR32 => {
+                // Bits 7 & lower 5 bits unused
+                let ro_bits = self.memory[usize::from(address)] & 0x9F;
+                self.memory[usize::from(address)] = (data & 0x60) | ro_bits;
+            }
+            HWR_NR44 => {
+                // Lower 5 bits unused
+                let ro_bits = self.memory[usize::from(address)] & 0x3F;
+                self.memory[usize::from(address)] = (data & 0xC0) | ro_bits;
             }
             HWR_NR52 => {
-                // Lower nibble RO
+                // Bits 6-4 unused, lower nibble RO
                 // https://gbdev.io/pandocs/Audio_Registers.html#ff26--nr52-audio-master-control
-                let low_nibble = self.memory[usize::from(address)] & 0xF;
-                self.memory[usize::from(address)] = (data & 0xF0) | low_nibble;
+                let ro_bits = self.memory[usize::from(address)] & 0x7F;
+                self.memory[usize::from(address)] = (data & 0x80) | ro_bits;
             }
             HWR_STAT => {
-                // Lower 3 bits RO
-                let low_3_bits = self.memory[usize::from(address)] & 0x7;
-                self.memory[usize::from(address)] = (data & 0xF8) | low_3_bits;
+                // Bit 7 unused, lower 3 bits RO
+                let ro_bits = self.memory[usize::from(address)] & 0x87;
+                self.memory[usize::from(address)] = (data & 0x78) | ro_bits;
             }
             HWR_LY => {
                 // RO
