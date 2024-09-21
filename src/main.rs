@@ -178,7 +178,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::Path};
+    use std::{fs, path::{Path, PathBuf}};
     use colored::Colorize;
     use cpu::cpu::CPU;
     use rayon::prelude::*;
@@ -192,7 +192,7 @@ mod tests {
 
     fn run_emulator<T>(emu: &mut Emu, break_chan: Receiver<T>) -> Option<T> {
         let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
-        let max_cycles = mcycles_per_frame * 60 * 60; // 60 seconds, 60 fps
+        let max_cycles = mcycles_per_frame * 120 * 60; // 120 seconds, 60 fps
 
         let mut trigger: Option<T> = None;
         let mut cycles_run = 0;
@@ -228,7 +228,7 @@ mod tests {
         return true;
     }
 
-    fn mts_test(rom_path: &str) -> bool {
+    fn mts_runner(rom_path: &str) -> bool {
         let mut emu = create_emulator(rom_path, None);
 
         let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
@@ -238,6 +238,23 @@ mod tests {
         let bp_triggered = run_emulator(&mut emu, break_recv);
         let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
         return test_passed;
+    }
+
+    fn snapshot_runner(rom_path: &str) -> bool {
+        let root_path = PathBuf::from(
+            rom_path
+                .strip_prefix("tests/roms/")
+                .unwrap_or("unnamed")
+            );
+
+        let snapshot_dir = root_path
+            .parent()
+            .expect("must be a valid path")
+            .to_str()
+            .unwrap_or("unnamed")
+            .to_string();
+
+        return snapshot_test(rom_path, &snapshot_dir);
     }
 
     fn snapshot_test(rom_path: &str, snapshot_dir: &str) -> bool {
@@ -333,12 +350,17 @@ mod tests {
         return test_passed;
     }
 
-    fn roms_in_dir(path: &str) -> Vec<String> {
-        let mut roms = Vec::new();
-        let paths = fs::read_dir(path).expect("directory must exist");
+    fn find_roms(rom_or_dir: &str) -> Vec<String> {
+        let path = PathBuf::from(rom_or_dir);
 
-        for path in paths {
-            let p = path.unwrap();
+        let roms = if path.is_file() {
+            vec!(rom_or_dir.to_string())
+        } else {
+            let mut rom_paths = Vec::new();
+            let dir_files = fs::read_dir(rom_or_dir).expect("directory must exist");
+
+            for dir_file in dir_files {
+                let p = dir_file.unwrap();
             let metadata = p.metadata().unwrap();
 
             if !metadata.is_file() {
@@ -350,62 +372,52 @@ mod tests {
             }
 
             let full_path: String = p.path().display().to_string();
-            roms.push(full_path);
+                rom_paths.push(full_path);
         }
+
+            rom_paths
+        };
 
         return roms;
     }
 
-    fn mts_suite(dir: &str) -> Vec<(String, bool)> {
-        let rom_paths = roms_in_dir(dir);
-    
-        let result_vec = rom_paths
-            .par_iter()
-            .map(|rom_path| (
-                rom_path.to_string(),
-                mts_test(rom_path.as_str()),
-            ))
-            .collect::<Vec<(String, bool)>>();
-
-        return result_vec;
-    }
-
-    fn blargg_suite(dir: &str) -> Vec<(String, bool)> {
-        let rom_paths = roms_in_dir(dir);
-    
-        let result_vec = rom_paths
-            .par_iter()
-            .map(|rom_path| (
-                rom_path.to_string(),
-                snapshot_test(rom_path.as_str(), "blargg"),
-            ))
-            .collect::<Vec<(String, bool)>>();
-
-        return result_vec;
-    }
-
     #[test]
     fn mts() {
-        let mut results: Vec<(String, bool)> = Vec::new();
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/bits/"));
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/instr/"));
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/interrupts/"));
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/oam_dma/"));
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/ppu/"));
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/serial/"));
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/timer/"));
+        type RunnerFn = fn(path:&str) -> bool;
 
-        // Rest of acceptance suite
-        results.append(&mut mts_suite("tests/roms/mts/acceptance/"));
+        let test_roms: Vec<(RunnerFn, &str)>  = vec!(
+            (snapshot_runner, "tests/roms/blargg/cpu_instrs/"),
+            (snapshot_runner, "tests/roms/mts/manual-only/sprite_priority.gb"),
+            (mts_runner, "tests/roms/mts/acceptance/bits/"),
+            (mts_runner, "tests/roms/mts/acceptance/instr/"),
+            (mts_runner, "tests/roms/mts/acceptance/interrupts/"),
+            (mts_runner, "tests/roms/mts/acceptance/oam_dma/"),
+            (mts_runner, "tests/roms/mts/acceptance/ppu/"),
+            (mts_runner, "tests/roms/mts/acceptance/serial/"),
+            (mts_runner, "tests/roms/mts/acceptance/timer/"),
+            (mts_runner, "tests/roms/mts/acceptance/"),
+            (mts_runner, "tests/roms/mts/emulator-only/mbc1/"),
+            (mts_runner, "tests/roms/mts/misc/bits/"),
+            (mts_runner, "tests/roms/mts/misc/ppu/"),
+            (mts_runner, "tests/roms/mts/misc/"),
+        );
 
-        // MBC
-        results.append(&mut mts_suite("tests/roms/mts/emulator-only/mbc1/"));
-        // results.append(&mut mts_suite("tests/roms/mts/emulator-only/mbc2"));
-        // results.append(&mut mts_suite("tests/roms/mts/emulator-only/mbc3"));
+        let rom_files = test_roms
+            .par_iter()
+            .flat_map(|(runner, rom_or_dir)| {
+                let roms_with_runners = find_roms(rom_or_dir)
+                    .iter()
+                    .map(|path| (runner.clone(), path.clone()))
+                    .collect::<Vec<(RunnerFn, String)>>();
 
-        results.append(&mut mts_suite("tests/roms/mts/misc/bits/"));
-        results.append(&mut mts_suite("tests/roms/mts/misc/ppu/"));
-        results.append(&mut mts_suite("tests/roms/mts/misc/"));
+                return roms_with_runners;
+            })
+            .collect::<Vec<(RunnerFn, String)>>();
+    
+        let results = rom_files
+            .par_iter()
+            .map(|(runner, rom_path)| (rom_path, runner(rom_path)))
+            .collect::<Vec<(&String, bool)>>();
 
         results
             .iter()
@@ -430,17 +442,5 @@ mod tests {
         println!("{} passed out of {} total", stats.0, results.len());
 
         // assert!(result_vec.iter().all(|(_, pass)| *pass));
-    }
-
-    #[test]
-    fn mts_sprite_priority() {
-        let res = snapshot_test("tests/roms/mts/manual-only/sprite_priority.gb", "mts");
-        assert!(res);
-    }
-
-    #[test]
-    fn blargg_cpu_instr() {
-        let res = blargg_suite("tests/roms/blargg/cpu_instrs/");
-        assert!(res.iter().all(|(_, pass)| *pass));
     }
 }
