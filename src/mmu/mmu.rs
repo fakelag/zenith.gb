@@ -35,7 +35,7 @@ struct DmaTransfer {
     src: u16,
     src_end: u16,
     dst: u16,
-    tstates: u16,
+    cycles: u16, // 160 + 1
 }
 
 pub struct MMU {
@@ -109,6 +109,14 @@ impl MMU {
     pub fn address_accessible(&self, address: u16) -> bool {
         if self.access_origin != AccessOrigin::AccessOriginCPU {
             return true;
+        }
+
+        // @todo Optimise memory access checking
+
+        if let Some(dma) = &self.oam_dma {
+            if dma.cycles > 0 {
+                return address >= 0xFF80 && address <= 0xFFFE;
+            }
         }
 
         match address {
@@ -270,11 +278,16 @@ impl MMU {
         // the byte that is currently being transferred by the DMA transfer is returned.
         // This also affects the CPU when fetching opcodes, allowing for code execution through DMA transfers.
         // https://hacktix.github.io/GBEDG/dma/
-        let tstates = cycles_passed * 4;
+        if let Some(active_dma) = &mut self.oam_dma {
+            if active_dma.cycles == 0 {
+                active_dma.cycles += u16::from(cycles_passed);
+                return;
+            }
+        }
 
         let bytes_copied = if let Some(active_dma) = &self.oam_dma {
             let bytes_to_copy = std::cmp::min(
-                tstates / 4,
+                cycles_passed,
                 (active_dma.src_end + 1 - active_dma.src).try_into().expect("dma.src_end - dma.src < 256"),
             );
 
@@ -288,10 +301,10 @@ impl MMU {
             if let Some(dma) = &mut self.oam_dma {
                 dma.src += u16::from(num_copied);
                 dma.dst += u16::from(num_copied);
-                dma.tstates += u16::from(num_copied) * 4;
+                dma.cycles += u16::from(num_copied);
 
                 if dma.src >= dma.src_end + 1 {
-                    // println!("{}", dma.tstates);
+                    println!("{}", dma.cycles);
                     self.oam_dma = None;
                 }
             }
@@ -375,7 +388,7 @@ impl MMU {
                     src,
                     src_end,
                     dst: 0xFE00,
-                    tstates: 0,
+                    cycles: 0,
                 });
                 self.memory[usize::from(address)] = data;
             }
