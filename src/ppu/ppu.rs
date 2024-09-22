@@ -233,7 +233,7 @@ impl PPU {
         mmu.stat().set_bit(STAT_LY_EQ_SCY_BIT, ly == lyc);
 
         self.handle_stat_interrupt(mmu);
-    
+
         return exit;
     }
 
@@ -608,6 +608,7 @@ impl PPU {
 
     fn mode_hblank(&mut self, mmu: &mut MMU, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
         let hblank_length = 376 - self.draw_length;
+        debug_assert!(80 + self.draw_length + hblank_length == 456);
 
         if self.dots_mode + dots_to_run >= hblank_length {
             let dots = hblank_length - self.dots_mode;

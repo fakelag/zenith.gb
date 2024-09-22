@@ -20,6 +20,8 @@ const INTERRUPT_ADDR_TIMER: u16   = 0x50;
 const INTERRUPT_ADDR_SERIAL: u16  = 0x58;
 const INTERRUPT_ADDR_JOYPAD: u16  = 0x60;
 
+const INTERRUPT_CYCLES: u8 = 5;
+
 pub struct CPU {
     pub reg_af: u16,
     pub reg_bc: u16,
@@ -98,7 +100,7 @@ impl CPU {
     pub fn pc(&mut self) -> Reg16b { Reg16b::new(&mut self.reg_pc) }
     
     pub fn step(&mut self, mmu: &mut MMU) -> u8 {
-        self.check_interrupts(mmu);
+        let intr_cycles = self.check_interrupts(mmu);
 
         if self.halted {
             return 1;
@@ -118,10 +120,12 @@ impl CPU {
         let inst_cycles: u8 = if self.branch_skipped { inst.cycles_skipped } else { inst.cycles };
         debug_assert!(inst_cycles != 0);
 
-        self.cycles += u64::from(inst_cycles);
+        let total_cycles = inst_cycles + intr_cycles;
+
+        self.cycles += u64::from(total_cycles);
         self.branch_skipped = false;
 
-        inst_cycles
+        total_cycles
     }
 
     pub fn active_interrupts(&self, mmu: &mut MMU) -> u8 {
@@ -131,11 +135,11 @@ impl CPU {
         return ie_flags & if_flags;
     }
     
-    fn check_interrupts(&mut self, mmu: &mut MMU) {
+    fn check_interrupts(&mut self, mmu: &mut MMU) -> u8 {
         let active_interrupts = self.active_interrupts(mmu);
 
         if active_interrupts == 0x0 {
-            return;
+            return 0;
         }
 
         // https://gbdev.io/pandocs/halt.html
@@ -143,24 +147,26 @@ impl CPU {
         self.halted = false;
 
         if !self.ime {
-            return;
+            return 0;
         }
 
         if self.handle_interrupt(mmu, INTERRUPT_BIT_VBLANK, INTERRUPT_ADDR_VBLANK) {
-            return;
+            return INTERRUPT_CYCLES;
         }
         if self.handle_interrupt(mmu, INTERRUPT_BIT_LCD, INTERRUPT_ADDR_LCD) {
-            return;
+            return INTERRUPT_CYCLES;
         }
         if self.handle_interrupt(mmu, INTERRUPT_BIT_TIMER, INTERRUPT_ADDR_TIMER) {
-            return;
+            return INTERRUPT_CYCLES;
         }
         if self.handle_interrupt(mmu, INTERRUPT_BIT_SERIAL, INTERRUPT_ADDR_SERIAL) {
-            return;
+            return INTERRUPT_CYCLES;
         }
         if self.handle_interrupt(mmu, INTERRUPT_BIT_JOYPAD, INTERRUPT_ADDR_JOYPAD) {
-            return;
+            return INTERRUPT_CYCLES;
         }
+
+        return 0;
     }
 
     fn handle_interrupt(&mut self, mmu: &mut MMU, interrupt_bit: u8, interrupt_vec: u16) -> bool {
@@ -188,7 +194,7 @@ impl CPU {
             // PC will be set to 0x0000 instead
             self.pc().set(0x0);
         }
-        self.cycles += 5;
+
         self.ime = false;
 
         return fire_interrupt;
