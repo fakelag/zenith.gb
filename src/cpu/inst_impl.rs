@@ -615,7 +615,7 @@ impl cpu::CPU {
     }
 
     pub fn opcode_ei(&mut self, _mmu: &mut MMU, _instr: &Instruction, _opcode: u8) {
-        self.ime = true;
+        self.ime_next = true;
     }
 
     pub fn opcode_ldh(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {

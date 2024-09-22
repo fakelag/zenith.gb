@@ -32,10 +32,7 @@ pub struct CPU {
     pub cycles: u64,
     pub branch_skipped: bool,
 
-    // @todo - Enabling interrupts should have one instruction delay:
-    //  The effect of ei is delayed by one instruction.
-    //  This means that ei followed immediately by di does not allow any interrupts between them.
-    //  https://gbdev.io/pandocs/Interrupts.html
+    pub ime_next: bool,
     pub ime: bool,
     pub halted: bool,
 
@@ -73,6 +70,7 @@ impl CPU {
             cycles: 0,
             branch_skipped: false,
             ime: false,
+            ime_next: false,
             halted: false,
             ld_bb_breakpoint: None,
         }
@@ -101,6 +99,11 @@ impl CPU {
     
     pub fn step(&mut self, mmu: &mut MMU) -> u8 {
         let intr_cycles = self.check_interrupts(mmu);
+
+        if self.ime_next {
+            self.ime = true;
+            self.ime_next = false;
+        }
 
         if self.halted {
             return 1;
