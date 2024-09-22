@@ -117,7 +117,9 @@ impl PPU {
         self.draw_length = 0;
         self.is_disabled = true;
 
-        self.set_mode(mmu, PpuMode::PpuOamScan);
+        // Reset mode bits to 0 to signal that
+        // its safe to write to vram/oam
+        self.set_mode(mmu, PpuMode::PpuHBlank);
     }
 
     pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut Option<SyncSender<FrameBuffer>>, cycles_passed: u8) -> bool {
@@ -130,6 +132,7 @@ impl PPU {
 
         if self.is_disabled {
             self.is_disabled = false;
+            self.set_mode(mmu, PpuMode::PpuOamScan);
             mmu.lock_region(MemoryRegion::MemRegionOAM as u8);
         }
     
