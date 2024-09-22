@@ -31,11 +31,11 @@ pub enum AccessOrigin {
     AccessOriginCPU
 }
 
-struct DmaTransfer {
-    src: u16,
-    src_end: u16,
-    dst: u16,
-    cycles: u16, // 160 + 1
+pub struct DmaTransfer {
+    pub src: u16,
+    pub count: u8,
+    pub delay: u8,
+    pub cycles: u16, // 160 + 1
 }
 
 pub struct MMU {
@@ -46,7 +46,8 @@ pub struct MMU {
 
     mbc: Box<dyn MBC>,
 
-    oam_dma: Option<DmaTransfer>,
+    dma_request: Option<u8>,
+    pub active_dma: Option<DmaTransfer>,
 
     buttons: [bool; emu::GbButton::GbButtonMax as usize],
 }
@@ -58,7 +59,8 @@ impl MMU {
             access_flags: 0,
             access_origin: AccessOrigin::AccessOriginNone,
             mbc: Box::new(MbcRomOnly::new()),
-            oam_dma: None,
+            active_dma: None,
+            dma_request: None,
             buttons: [false; emu::GbButton::GbButtonMax as usize],
             supported_carttype: true,
         };
@@ -112,16 +114,20 @@ impl MMU {
         }
 
         // @todo Optimise memory access checking
+        // @todo Bus conflicts - during DMA RAM/ROM should be inaccessible
 
-        if let Some(dma) = &self.oam_dma {
-            if dma.cycles > 0 {
-                return address >= 0xFF80 && address <= 0xFFFE;
-            }
-        }
+        // if self.active_dma.is_some() {
+        //     match address {
+        //         0x0000..=0x7FFF => return false,
+        //         0xA000..=0xBFFF => return false,
+        //         0xC000..=0xDFFF => return false,
+        //         _ => {}
+        //     }
+        // }
 
         match address {
             0x8000..=0x9FFF => (self.access_flags & MemoryRegion::MemRegionVRAM as u8) == 0,
-            0xFE00..=0xFE9F => (self.access_flags & MemoryRegion::MemRegionOAM as u8) == 0,
+            0xFE00..=0xFE9F => (self.access_flags & MemoryRegion::MemRegionOAM as u8) == 0 && !self.active_dma.is_some(),
             _ => true
         }
     }
@@ -261,16 +267,6 @@ impl MMU {
         }
     }
 
-    pub fn dma_copy(&mut self, mut src: u16, mut dst: u16, num_bytes: u8) {
-        for _b in 0..num_bytes {
-            let byte = self.bus_read(src);
-            self.bus_write(dst, byte);
-
-            src += 1;
-            dst += 1;
-        }
-    }
-    
     pub fn step(&mut self, cycles_passed: u8) {
         // @todo - Precise timings
         // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
@@ -278,36 +274,48 @@ impl MMU {
         // the byte that is currently being transferred by the DMA transfer is returned.
         // This also affects the CPU when fetching opcodes, allowing for code execution through DMA transfers.
         // https://hacktix.github.io/GBEDG/dma/
-        if let Some(active_dma) = &mut self.oam_dma {
-            if active_dma.cycles == 0 {
-                active_dma.cycles += u16::from(cycles_passed);
-                return;
-            }
-        }
+        let mut cycles_left = cycles_passed;
 
-        let bytes_copied = if let Some(active_dma) = &self.oam_dma {
-            let bytes_to_copy = std::cmp::min(
-                cycles_passed,
-                (active_dma.src_end + 1 - active_dma.src).try_into().expect("dma.src_end - dma.src < 256"),
-            );
+        while cycles_left > 0 {
+            let inc_count = if let Some(active_dma) = &self.active_dma {
+                if active_dma.delay == 0 {
+                    let c = u16::from(active_dma.count);
+                    let byte = self.bus_read(active_dma.src + c);
+                    self.bus_write(0xFE00 + c, byte);
+                }
+                true
+            } else {
+                false
+            };
 
-            self.dma_copy(active_dma.src, active_dma.dst, bytes_to_copy);
-            Some(bytes_to_copy)
-        } else {
-            None
-        };
+            if inc_count {
+                if let Some(active_dma) = &mut self.active_dma {
+                    if active_dma.delay > 0 {
+                        active_dma.delay -= 1;
+                    } else {
+                        active_dma.count += 1;
+                        active_dma.cycles += 1;
 
-        if let Some(num_copied) = bytes_copied {
-            if let Some(dma) = &mut self.oam_dma {
-                dma.src += u16::from(num_copied);
-                dma.dst += u16::from(num_copied);
-                dma.cycles += u16::from(num_copied);
-
-                if dma.src >= dma.src_end + 1 {
-                    println!("{}", dma.cycles);
-                    self.oam_dma = None;
+                        if active_dma.count > 0x9F {
+                            self.active_dma = None;
+                        }
+                    }
                 }
             }
+
+            if let Some(dma_request) = self.dma_request.take() {
+                let dma = DmaTransfer{
+                    src: util::value(dma_request, 0x0),
+                    count: 0,
+                     // @todo - Despite passing the tests, this timing is probably wrong.
+                     // -> Sub-instruction clocking
+                    delay: 2,
+                    cycles: 1, // cycle 1 initialization delay
+                };
+                self.active_dma = Some(dma);
+            }
+
+            cycles_left -= 1;
         }
     }
 
@@ -382,14 +390,7 @@ impl MMU {
                 return;
             }
             HWR_DMA => {
-                let src = util::value(data, 0x0);
-                let src_end = util::value(data, 0x9F);
-                self.oam_dma = Some(DmaTransfer {
-                    src,
-                    src_end,
-                    dst: 0xFE00,
-                    cycles: 0,
-                });
+                self.dma_request = Some(data);
                 self.memory[usize::from(address)] = data;
             }
             // 0xFF4F => { todo!("select vram bank cgb"); }
