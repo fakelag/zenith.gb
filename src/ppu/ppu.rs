@@ -371,8 +371,9 @@ impl PPU {
         'outer: loop {
             let tile = self.fetch_bg_tile_number(mmu, false);
             let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(mmu, tile, false);
+            let scx_max = 8 - skip_pixels;
 
-            for bit_idx in (skip_pixels..8).rev() {
+            for bit_idx in (0..scx_max).rev() {
                 let hb = (tile_msb >> bit_idx) & 0x1;
                 let lb = (tile_lsb >> bit_idx) & 0x1;
                 let bg_pixel = lb | (hb << 1);
