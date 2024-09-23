@@ -413,6 +413,7 @@ mod tests {
             (mts_runner, "tests/roms/mts/acceptance/timer/"),
             (mts_runner, "tests/roms/mts/acceptance/"),
             (mts_runner, "tests/roms/mts/emulator-only/mbc1/"),
+            (mts_runner, "tests/roms/mts/emulator-only/mbc2/"),
             (mts_runner, "tests/roms/mts/misc/bits/"),
             (mts_runner, "tests/roms/mts/misc/ppu/"),
             (mts_runner, "tests/roms/mts/misc/"),

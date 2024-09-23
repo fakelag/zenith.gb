@@ -5,6 +5,7 @@ use crate::util::util;
 
 use super::hw_reg::*;
 use super::mbc1;
+use super::mbc2;
 
 pub trait MBC {
     fn load(&mut self, cartridge: &Cartridge);
@@ -73,20 +74,26 @@ impl MMU {
 
         // println!("Cart type={}", cartridge.header.cart_type);
 
-        match cartridge.header.cart_type {
+        // @todo - If cartridge header has +BATTERY, MBCs should store
+        // state of their RAM to a file and load it on boot
+
+        self.mbc = match cartridge.header.cart_type {
             1..=3 => {
-                self.mbc = Box::new(mbc1::MBC1::new());
-                self.mbc.load(cartridge);
+                Box::new(mbc1::MBC1::new())
+            }
+            5..=6 => {
+                Box::new(mbc2::MBC2::new())
             }
             _ => {
                 if cartridge.header.cart_type != 0 {
                     println!("WARN: Unsupported cartridge/MBC: {}", cartridge.header.cart_type);
                     self.supported_carttype = false;
                 }
-                self.mbc = Box::new(MbcRomOnly::new());
-                self.mbc.load(cartridge);
+                Box::new(MbcRomOnly::new())
             }
-        }
+        };
+
+        self.mbc.load(cartridge);
     }
 
     pub fn update_input(&mut self, input_event: emu::InputEvent) {

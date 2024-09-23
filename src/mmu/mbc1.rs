@@ -12,7 +12,9 @@ pub struct MBC1 {
     ram: Vec<u8>,
 
     rom_mask: u8,
+    // 5-bit rom bank number
     rom_bank: u8,
+    // 2-bit ram bank number
     ram_bank: u8,
     mode_flag: bool,
     ram_enabled: bool,
