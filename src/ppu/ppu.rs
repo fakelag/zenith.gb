@@ -463,13 +463,12 @@ impl PPU {
             .collect();
 
         for sprite in sprites_with_tiles.iter() {
-            let sprite_screen_x = sprite.oam_entry.x.saturating_sub(8);
-            let skip_pixels = 8 - std::cmp::min(sprite.oam_entry.x, 8);
+            let sprite_screen_x: i16 = i16::from(sprite.oam_entry.x) - 8;
 
-            for bit_idx in skip_pixels..8 {
-                let x = sprite_screen_x + (7-bit_idx);
+            for bit_idx in 0..8 {
+                let x: i16 = sprite_screen_x + (7-bit_idx);
 
-                if x >= 160 {
+                if x >= 160 || x < 0 {
                     continue;
                 }
 
