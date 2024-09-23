@@ -499,7 +499,7 @@ impl PPU {
                     mmu.obp1().get()
                 };
 
-                if sprite_bgpriority == 1 && self.bg_scanline_mask[x as usize] != 0 {
+                if sprite_bgpriority != 0 && self.bg_scanline_mask[x as usize] != 0 {
                     // According to pandocs, sprites with higher priority sprite but bg-over-obj
                     // will "mask" lower priority sprites, and draw background over them. Copy background pixel
                     // back to the framebuffer to emulate this
