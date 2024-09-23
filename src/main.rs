@@ -403,6 +403,7 @@ mod tests {
 
         let test_roms: Vec<(RunnerFn, &str)>  = vec!(
             (snapshot_runner, "tests/roms/blargg/cpu_instrs/"),
+            (snapshot_runner, "tests/roms/blargg/instr_timing/"),
             (snapshot_runner, "tests/roms/mts/manual-only/sprite_priority.gb"),
             (mts_runner, "tests/roms/mts/acceptance/bits/"),
             (mts_runner, "tests/roms/mts/acceptance/instr/"),
