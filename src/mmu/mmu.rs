@@ -6,6 +6,7 @@ use crate::util::util;
 use super::hw_reg::*;
 use super::mbc1;
 use super::mbc2;
+use super::mbc3;
 
 pub trait MBC {
     fn load(&mut self, cartridge: &Cartridge);
@@ -78,11 +79,14 @@ impl MMU {
         // state of their RAM to a file and load it on boot
 
         self.mbc = match cartridge.header.cart_type {
-            1..=3 => {
+            0x1..=0x3 => {
                 Box::new(mbc1::MBC1::new())
             }
-            5..=6 => {
+            0x5..=0x6 => {
                 Box::new(mbc2::MBC2::new())
+            }
+            0x0F..=0x13 => {
+                Box::new(mbc3::MBC3::new())
             }
             _ => {
                 if cartridge.header.cart_type != 0 {
