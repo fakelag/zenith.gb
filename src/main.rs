@@ -183,9 +183,13 @@ mod tests {
     use cpu::cpu::CPU;
     use rayon::prelude::*;
 
-    fn create_emulator(rom_path: &str, frame_chan: Option<SyncSender<FrameBuffer>>) -> Option<Emu> {
+    fn create_emulator(
+        rom_path: &str,
+        frame_chan: Option<SyncSender<FrameBuffer>>,
+        input_chan: Option<Receiver<InputEvent>>,
+    ) -> Option<Emu> {
         let cart = Cartridge::new(rom_path);
-        let mut emu = Emu::new(cart, frame_chan, None);
+        let mut emu = Emu::new(cart, frame_chan, input_chan);
 
         if !emu.mmu.is_supported_cart_type() {
             println!("Skipping {rom_path} due to unsupported cart type");
@@ -234,8 +238,8 @@ mod tests {
         return true;
     }
 
-    fn mts_runner(rom_path: &str) -> Option<bool> {
-        let mut emu_res = create_emulator(rom_path, None);
+    fn mts_runner(rom_path: &str, _inputs: Option<Vec<GbButton>>) -> Option<bool> {
+        let mut emu_res = create_emulator(rom_path, None, None);
 
         if let Some(emu) = &mut emu_res {
         let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
@@ -250,7 +254,7 @@ mod tests {
         }
     }
 
-    fn snapshot_runner(rom_path: &str) -> Option<bool> {
+    fn snapshot_runner(rom_path: &str, inputs: Option<Vec<GbButton>>) -> Option<bool> {
         let root_path = PathBuf::from(
             rom_path
                 .strip_prefix("tests/roms/")
@@ -264,13 +268,23 @@ mod tests {
             .unwrap_or("unnamed")
             .to_string();
 
-        return snapshot_test(rom_path, &snapshot_dir);
+        return snapshot_test(rom_path, &snapshot_dir, inputs);
     }
 
-    fn snapshot_test(rom_path: &str, snapshot_dir: &str) -> Option<bool> {
+    fn snapshot_test(rom_path: &str, snapshot_dir: &str, mut inputs: Option<Vec<GbButton>>) -> Option<bool> {
         let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
         let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
-        let emu_result = create_emulator(rom_path, Some(frame_send));
+        let (input_send, input_recv) = std::sync::mpsc::channel::<InputEvent>();
+
+        if let Some(input_list) = &mut inputs {
+            input_list.reverse();
+        }
+
+        let emu_result = create_emulator(
+            rom_path,
+            Some(frame_send),
+            Some(input_recv),
+        );
 
         if emu_result.is_none() {
             return None;
@@ -282,6 +296,8 @@ mod tests {
         let snapshot_dir_string = snapshot_dir.to_string();
 
         std::thread::spawn(move || {
+            let mut frame_count: u64 = 0;
+            let mut release_inputs: Vec<(u64, GbButton)> = Vec::new();
             let mut last_frame: Option<[[u8; 160]; 144]> = None;
             let rom_filepath = Path::new(&rom_path_string);
             let rom_filename = rom_filepath
@@ -308,6 +324,25 @@ mod tests {
                 match frame_recv.recv() {
                     Ok(rt) => {
                         last_frame = Some(rt);
+                        frame_count += 1;
+
+                        if let Some(input_vector) = &mut inputs {
+                            if frame_count > 60 && frame_count % 20 == 0 {
+                                if let Some(press_next) = input_vector.pop() {
+                                    input_send.send(InputEvent{ button: press_next, down: true }).unwrap();
+                                    release_inputs.push((frame_count + 10, press_next));
+                                }
+                            }
+                        }
+
+                        release_inputs.retain(|release_next| {
+                            if release_next.0 > frame_count {
+                                return true;
+                            }
+
+                            input_send.send(InputEvent{ button: release_next.1, down: false }).unwrap();
+                            return false;
+                        });
 
                         if let Some(img) = &cmp_image {
                             let mut match_snapshot = true;
@@ -399,42 +434,45 @@ mod tests {
 
     #[test]
     fn mts() {
-        type RunnerFn = fn(path:&str) -> Option<bool>;
+        type RunnerFn = fn(path:&str, Option<Vec<GbButton>>) -> Option<bool>;
 
-        let test_roms: Vec<(RunnerFn, &str)>  = vec!(
-            (snapshot_runner, "tests/roms/blargg/cpu_instrs/"),
-            (snapshot_runner, "tests/roms/blargg/instr_timing/"),
-            (snapshot_runner, "tests/roms/mts/manual-only/sprite_priority.gb"),
-            (mts_runner, "tests/roms/mts/acceptance/bits/"),
-            (mts_runner, "tests/roms/mts/acceptance/instr/"),
-            (mts_runner, "tests/roms/mts/acceptance/interrupts/"),
-            (mts_runner, "tests/roms/mts/acceptance/oam_dma/"),
-            (mts_runner, "tests/roms/mts/acceptance/ppu/"),
-            (mts_runner, "tests/roms/mts/acceptance/timer/"),
-            (mts_runner, "tests/roms/mts/acceptance/"),
-            (mts_runner, "tests/roms/mts/emulator-only/mbc1/"),
-            (mts_runner, "tests/roms/mts/emulator-only/mbc2/"),
-            (mts_runner, "tests/roms/mts/misc/bits/"),
-            (mts_runner, "tests/roms/mts/misc/ppu/"),
-            (mts_runner, "tests/roms/mts/misc/"),
-            // (mts_runner, "tests/roms/mts/acceptance/serial/"),
+        let test_roms: Vec<(RunnerFn, &str, Option<Vec<GbButton>>)>  = vec!(
+            (snapshot_runner, "tests/roms/blargg/cpu_instrs/", None),
+            (snapshot_runner, "tests/roms/rtc3test/rtc3test.0.gb", Some(vec![GbButton::GbButtonA])),
+            (snapshot_runner, "tests/roms/rtc3test/rtc3test.1.gb", Some(vec![GbButton::GbButtonDown, GbButton::GbButtonA])),
+            (snapshot_runner, "tests/roms/rtc3test/rtc3test.2.gb", Some(vec![GbButton::GbButtonDown, GbButton::GbButtonDown, GbButton::GbButtonA])),
+            (snapshot_runner, "tests/roms/blargg/instr_timing/", None),
+            (snapshot_runner, "tests/roms/mts/manual-only/sprite_priority.gb", None),
+            (mts_runner, "tests/roms/mts/acceptance/bits/", None),
+            (mts_runner, "tests/roms/mts/acceptance/instr/", None),
+            (mts_runner, "tests/roms/mts/acceptance/interrupts/", None),
+            (mts_runner, "tests/roms/mts/acceptance/oam_dma/", None),
+            (mts_runner, "tests/roms/mts/acceptance/ppu/", None),
+            (mts_runner, "tests/roms/mts/acceptance/timer/", None),
+            (mts_runner, "tests/roms/mts/acceptance/", None),
+            (mts_runner, "tests/roms/mts/emulator-only/mbc1/", None),
+            (mts_runner, "tests/roms/mts/emulator-only/mbc2/", None),
+            (mts_runner, "tests/roms/mts/misc/bits/", None),
+            (mts_runner, "tests/roms/mts/misc/ppu/", None),
+            (mts_runner, "tests/roms/mts/misc/", None),
+            // (mts_runner, "tests/roms/mts/acceptance/serial/", None),
         );
 
         let rom_files = test_roms
             .par_iter()
-            .flat_map(|(runner, rom_or_dir)| {
+            .flat_map(|(runner, rom_or_dir, inputs)| {
                 let roms_with_runners = find_roms(rom_or_dir)
                     .iter()
-                    .map(|path| (runner.clone(), path.clone()))
-                    .collect::<Vec<(RunnerFn, String)>>();
+                    .map(|path: &String| (runner.clone(), path.clone(), inputs.clone()))
+                    .collect::<Vec<(RunnerFn, String, Option<Vec<GbButton>>)>>();
 
                 return roms_with_runners;
             })
-            .collect::<Vec<(RunnerFn, String)>>();
+            .collect::<Vec<(RunnerFn, String, Option<Vec<GbButton>>)>>();
     
         let results = rom_files
             .par_iter()
-            .map(|(runner, rom_path)| (rom_path, runner(rom_path)))
+            .map(|(runner, rom_path, inputs)| (rom_path, runner(rom_path, inputs.clone())))
             .collect::<Vec<(&String, Option<bool>)>>();
 
         results

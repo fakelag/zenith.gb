@@ -10,7 +10,7 @@ use crate::{
 
 pub type FrameBuffer = [[u8; 160]; 144];
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum GbButton {
     GbButtonUp = 0,
     GbButtonRight,
