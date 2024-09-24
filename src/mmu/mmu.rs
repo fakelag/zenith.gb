@@ -12,6 +12,7 @@ pub trait MBC {
     fn load(&mut self, cartridge: &Cartridge);
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, data: u8);
+    fn step(&mut self, cycles: u8);
 }
 
 struct MbcRomOnly {
@@ -328,6 +329,8 @@ impl MMU {
 
             cycles_left -= 1;
         }
+
+        self.mbc.step(cycles_passed);
     }
 
     pub fn is_supported_cart_type(&self) -> bool {
@@ -502,6 +505,10 @@ impl MBC for MbcRomOnly {
     }
 
     fn write(&mut self, _address: u16, _data: u8) {
+        // noop
+    }
+
+    fn step(&mut self, _cycles: u8) {
         // noop
     }
 }

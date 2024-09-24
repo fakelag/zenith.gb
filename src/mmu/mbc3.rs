@@ -4,21 +4,34 @@ use super::mmu;
 
 const BYTES_8KIB: usize = 8 * 1024;
 const BYTES_32KIB: usize = 32 * 1024;
+const GB_CLOCKS_PER_SECOND: u32 = 4_194_304 / 4;
+
+const RTC_S: usize = 0;
+const RTC_M: usize = 1;
+const RTC_H: usize = 2;
+const RTC_DL: usize = 3;
+const RTC_DH: usize = 4;
 
 pub struct MBC3 {
     rom: Vec<u8>,
     ram: Vec<u8>,
 
     // 7-bit rom bank number
-    rom_bank: u8,
+    rom_bank: usize,
     // 2-bit ram bank number
-    ram_bank: u8,
+    ram_bank: Option<usize>,
     ram_enabled: bool,
 
-    has_rtc: bool,
     num_rom_banks: u8,
-
+    
     cart_type: u8,
+    has_rtc: bool,
+
+    rtc_registers: [u8; 5],
+    rtc_latch: Option<[u8; 5]>,
+    rtc_select: Option<usize>,
+    rtc_latch_next: bool,
+    rtc_cycles_left: u32,
 }
 
 impl MBC3 {
@@ -27,11 +40,67 @@ impl MBC3 {
             rom: Vec::new(),
             ram: Vec::new(),
             rom_bank: 1,
-            ram_bank: 0,
+            ram_bank: None,
             num_rom_banks: 1,
             ram_enabled: false,
             has_rtc: false,
             cart_type: 0,
+            rtc_registers: [0; 5],
+            rtc_latch: None,
+            rtc_select: None,
+            rtc_latch_next: false,
+            rtc_cycles_left: GB_CLOCKS_PER_SECOND,
+        }
+    }
+
+    fn rtc_register_mask(rtc_select: usize) -> u8 {
+        return match rtc_select {
+            0..=1   => 0b111111,
+            2       => 0b11111,
+            3       => 0b11111111,
+            4       => 0b11000001,
+            _       => unreachable!("invalid register"),
+        };
+    }
+
+    fn rtc_rollover(rtc_select: usize) -> u16 {
+        return match rtc_select {
+            0..=1   => 60,
+            2       => 24,
+            3       => 0x1FF,
+            4       => unreachable!("dh does not have rollover"),
+            _       => unreachable!("invalid register"),
+        };
+    }
+
+    fn rtc_inc(&mut self, rtc_select: usize) {
+        match rtc_select {
+            RTC_S..=RTC_H => {
+                let rtc_reg = &mut self.rtc_registers[rtc_select];
+
+                *rtc_reg = rtc_reg.wrapping_add(1);
+
+                if *rtc_reg & MBC3::rtc_register_mask(rtc_select) == 0 {
+                    *rtc_reg = 0;
+                } else if MBC3::rtc_rollover(rtc_select) == (*rtc_reg).into() {
+                    *rtc_reg = 0;
+                    self.rtc_inc(rtc_select + 1);
+                }
+            }
+            RTC_DL => {
+                let mut day_counter: u16 = (u16::from(self.rtc_registers[RTC_DH]) << 8) | u16::from(self.rtc_registers[RTC_DL]);
+                day_counter = day_counter.wrapping_add(1);
+    
+                if day_counter & (1 << 9) != 0 {
+                    // overflow
+                    day_counter = 1 << 15               // day counter carry bit
+                        | (day_counter & (1 << 14));    // halt bit
+                }
+    
+                self.rtc_registers[RTC_DH] = (day_counter >> 8).try_into().unwrap();
+                self.rtc_registers[RTC_DL] = (day_counter & 0xFF).try_into().unwrap();
+            }
+            _ => unreachable!("invalid register"),
         }
     }
 }
@@ -64,7 +133,7 @@ impl mmu::MBC for MBC3 {
                 return self.rom[usize::from(address)];
             }
             0x4000..=0x7FFF => {
-                let rom_addr = 0x4000 * usize::from(self.rom_bank) + usize::from(address - 0x4000);
+                let rom_addr = 0x4000 * self.rom_bank + usize::from(address - 0x4000);
                 return self.rom[rom_addr];
             }
             0xA000..=0xBFFF => {
@@ -72,10 +141,20 @@ impl mmu::MBC for MBC3 {
                     return 0xFF;
                 }
 
-                // @todo - Reading from a RTC register when its mapped
+                if let Some(rtc_select) = self.rtc_select {
+                    if let Some(rtc_latch) = self.rtc_latch {
+                        return rtc_latch[rtc_select];
+                    } else {
+                        return 0xFF;
+                    }
+                }
 
-                let ram_addr = 0x2000 * usize::from(self.ram_bank) + usize::from(address - 0xA000);
-                return self.ram[ram_addr];
+                if let Some(ram_bank) = self.ram_bank {
+                    let ram_addr = 0x2000 * usize::from(ram_bank) + usize::from(address - 0xA000);
+                    return self.ram[ram_addr];
+                }
+
+                return 0xFF;
             }
             _ => {
                 unreachable!();
@@ -95,44 +174,79 @@ impl mmu::MBC for MBC3 {
                 if bank_num == 0 {
                     self.rom_bank = 1;
                 } else {
-                    self.rom_bank = bank_num % self.num_rom_banks;
+                    self.rom_bank = usize::from(bank_num % self.num_rom_banks);
                 }
             }
             0x4000..=0x5FFF => {
                 match data {
                     0..=0x3 => {
-                        self.ram_bank = data;
+                        self.ram_bank = Some(data.into());
+                        self.rtc_select = None;
                     }
                     0x8..=0x0C => {
-                        // @todo - MAP RTC
-                        unreachable!();
+                        if self.has_rtc {
+                            self.ram_bank = None;
+                            self.rtc_select = Some((data - 0x8).into());
+                        }
                     }
-                    _ => {
-                        // println!("write {address} - {data}");
-                        // unreachable!();
-                    }
+                    _ => {}
                 }
             }
             0x6000..=0x7FFF => {
-                return;
-               // println!("write {address} - {data}");
-                // @todo - RTC Data Latch
-               // unreachable!();
-                // if data == 0 {
+                if !self.has_rtc {
+                    return;
+                }
 
-                // }
+                if self.rtc_latch_next && data == 1 {
+                    self.rtc_latch = Some(self.rtc_registers);
+                }
+                self.rtc_latch_next = data == 0;
             }
             0xA000..=0xBFFF => {
                 if !self.ram_enabled {
                     return;
                 }
 
-                // @todo - Writing to a RTC register when its mapped
+                if let Some(rtc_select) = self.rtc_select {
+                    let mask = MBC3::rtc_register_mask(rtc_select);
 
-                let ram_addr = 0x2000 * usize::from(self.ram_bank) + usize::from(address - 0xA000);
-                self.ram[ram_addr] = data;
+                    let val_masked = data & mask;
+
+                    if rtc_select == 0 {
+                        self.rtc_cycles_left = GB_CLOCKS_PER_SECOND;
+                    }
+
+                    self.rtc_registers[rtc_select] = val_masked;
+
+                    if let Some(rtc_latch) = &mut self.rtc_latch {
+                        rtc_latch[rtc_select] = val_masked;
+                    }
+                    return;
+                }
+
+                if let Some(ram_bank) = self.ram_bank {
+                    let ram_addr = 0x2000 * ram_bank + usize::from(address - 0xA000);
+                    self.ram[ram_addr] = data;
+                }
             }
             _ => {}
+        }
+    }
+
+    fn step(&mut self, cycles: u8) {
+        if !self.has_rtc {
+            return;
+        }
+
+        if self.rtc_registers[RTC_DH] & (1 << 6) != 0 {
+            return;
+        }
+
+        if self.rtc_cycles_left <= cycles.into() {
+            self.rtc_inc(RTC_S);
+            self.rtc_cycles_left = GB_CLOCKS_PER_SECOND - (u32::from(cycles) - self.rtc_cycles_left);
+        } else {
+            self.rtc_cycles_left =self.rtc_cycles_left.wrapping_sub(cycles.into());
         }
     }
 }

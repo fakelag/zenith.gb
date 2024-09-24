@@ -144,4 +144,8 @@ impl mmu::MBC for MBC1 {
             _ => {}
         }
     }
+
+    fn step(&mut self, _cycles: u8) {
+        // noop
+    }
 }
