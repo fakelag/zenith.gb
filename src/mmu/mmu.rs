@@ -7,6 +7,7 @@ use super::hw_reg::*;
 use super::mbc1;
 use super::mbc2;
 use super::mbc3;
+use super::mbc5;
 
 pub trait MBC {
     fn load(&mut self, cartridge: &Cartridge);
@@ -50,7 +51,7 @@ pub struct MMU {
     mbc: Box<dyn MBC>,
 
     dma_request: Option<u8>,
-    pub active_dma: Option<DmaTransfer>,
+    active_dma: Option<DmaTransfer>,
 
     buttons: [bool; emu::GbButton::GbButtonMax as usize],
 }
@@ -88,6 +89,9 @@ impl MMU {
             }
             0x0F..=0x13 => {
                 Box::new(mbc3::MBC3::new())
+            }
+            0x19..=0x1E => {
+                Box::new(mbc5::MBC5::new())
             }
             _ => {
                 if cartridge.header.cart_type != 0 {

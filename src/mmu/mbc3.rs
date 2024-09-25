@@ -150,7 +150,7 @@ impl mmu::MBC for MBC3 {
                 }
 
                 if let Some(ram_bank) = self.ram_bank {
-                    let ram_addr = 0x2000 * usize::from(ram_bank) + usize::from(address - 0xA000);
+                    let ram_addr = 0x2000 * ram_bank + usize::from(address - 0xA000);
                     return self.ram[ram_addr];
                 }
 

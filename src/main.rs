@@ -452,6 +452,7 @@ mod tests {
             (mts_runner, "tests/roms/mts/acceptance/", None),
             (mts_runner, "tests/roms/mts/emulator-only/mbc1/", None),
             (mts_runner, "tests/roms/mts/emulator-only/mbc2/", None),
+            (mts_runner, "tests/roms/mts/emulator-only/mbc5/", None),
             (mts_runner, "tests/roms/mts/misc/bits/", None),
             (mts_runner, "tests/roms/mts/misc/ppu/", None),
             (mts_runner, "tests/roms/mts/misc/", None),
