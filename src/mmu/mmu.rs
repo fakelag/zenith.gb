@@ -296,7 +296,13 @@ impl MMU {
             let inc_count = if let Some(active_dma) = &self.active_dma {
                 if active_dma.delay == 0 {
                     let c = u16::from(active_dma.count);
-                    let byte = self.bus_read(active_dma.src + c);
+
+                    let dma_read_addr = match active_dma.src + c {
+                        0xFE00..=0xFFFF => 0xC000 + ((active_dma.src + c) & 0x1FFF),
+                        _ => active_dma.src + c,
+                    };
+
+                    let byte = self.bus_read(dma_read_addr);
                     self.bus_write(0xFE00 + c, byte);
                 }
                 true
