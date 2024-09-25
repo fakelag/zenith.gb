@@ -109,9 +109,7 @@ impl mmu::MBC for MBC5 {
                 let ram_addr = 0x2000 * self.ram_bank + usize::from(address - 0xA000);
                 self.ram[ram_addr] = data;
             }
-            _ => {
-                unreachable!();
-            }
+            _ => {}
         }
     }
 
