@@ -251,7 +251,7 @@ impl PPU {
 
         let num_obj_scan = dots / 2;
         let ly = mmu.ly().get();
-        let obj_height: u8 = if mmu.lcdc().check_bit(2) { 16 } else { 8 }; 
+        let obj_height: u8 = if mmu.lcdc().check_bit(2) { 16 } else { 8 };
 
         for _ in 1..=num_obj_scan {
             debug_assert!(self.oam_cursor < 40);
@@ -312,15 +312,15 @@ impl PPU {
 
     fn fetch_sprite_tile_tuple(mmu: &mut MMU, sprite_oam: &Sprite) -> (u8, u8) {
         let ly = mmu.ly().get();
+        let obj_height: u8 = if mmu.lcdc().check_bit(2) { 16 } else { 8 };
 
         let y_with_flip = if sprite_oam.attr & OAM_BIT_Y_FLIP == 0 {
             ly.wrapping_sub(sprite_oam.y)
         } else {
-            let obj_height: u8 = if mmu.lcdc().check_bit(2) { 16 } else { 8 };
             obj_height.wrapping_sub(ly.wrapping_sub(sprite_oam.y)).wrapping_sub(1)
         };
 
-        let line_offset = u16::from((y_with_flip % 8) * 2);
+        let line_offset = u16::from((y_with_flip % obj_height) * 2);
 
         let tile_base = 0x8000 + ((u16::from(sprite_oam.tile) * 16) + line_offset);
 
