@@ -1,3 +1,5 @@
+use std::{fs, path::Path};
+
 use crate::cartridge::cartridge::CartridgeHeader;
 
 const BYTES_1KIB: usize = 1024;
@@ -27,4 +29,45 @@ pub fn rom_banks(hdr: &CartridgeHeader) -> Banks {
     let size_bytes = (32 * BYTES_1KIB) * (1 << hdr.rom_size);
 
     Banks { num_banks, size_bytes }
+}
+
+pub fn read_save(save_path: &str, mbc_ram: &mut Vec<u8>) {
+    if let Ok(data) = fs::read(save_path) {
+        debug_assert!(data.len() == mbc_ram.len());
+        *mbc_ram = data;
+    }
+}
+
+pub fn write_save(save_path: &str, mbc_ram: &Vec<u8>) -> std::io::Result<()> {
+    fs::write(save_path, mbc_ram)
+}
+
+pub fn save_file_from_rom_path(rom_path: &str) -> std::io::Result<String> {
+    let path = Path::new(rom_path);
+
+    if !path.is_file() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Rom path is not a file"));
+    }
+
+    if let Some(ext) = path.extension() {
+        if ext != "gb" {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Rom path is not a valid gb file"));
+        }
+    } else {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid rom path"));
+    }
+
+    if let Some(rom_file_name) = path.file_name() {
+        let rom_file_name_string = rom_file_name.to_str().expect("file name should be valid unicode string");
+
+        if let Some(parent) = path.parent().clone() {
+            let mut save_path = parent.to_path_buf();
+            save_path.push(format!("{rom_file_name_string}.sav"));
+            return Ok(save_path.into_os_string().to_str().expect("path must be valid unicode string").to_string());
+        } else {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid rom path"));
+        }
+    }
+
+    return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid rom path"));
 }

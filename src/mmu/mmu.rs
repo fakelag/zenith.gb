@@ -14,6 +14,7 @@ pub trait MBC {
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, data: u8);
     fn step(&mut self, cycles: u8);
+    fn save(&mut self);
 }
 
 struct MbcRomOnly {
@@ -103,6 +104,10 @@ impl MMU {
         };
 
         self.mbc.load(cartridge);
+    }
+
+    pub fn close(&mut self) {
+        self.mbc.save();
     }
 
     pub fn update_input(&mut self, input_event: emu::InputEvent) {
@@ -519,6 +524,10 @@ impl MBC for MbcRomOnly {
     }
 
     fn step(&mut self, _cycles: u8) {
+        // noop
+    }
+
+    fn save(&mut self) {
         // noop
     }
 }

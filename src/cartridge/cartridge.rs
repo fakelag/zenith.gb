@@ -3,6 +3,7 @@ use std::fs;
 pub struct Cartridge {
     pub data: Vec<u8>,
     pub header: CartridgeHeader,
+    pub rom_path: String,
 }
 
 impl Cartridge {
@@ -12,6 +13,7 @@ impl Cartridge {
         Self {
             data,
             header,
+            rom_path: file_path.to_string(),
         }
     }
 }

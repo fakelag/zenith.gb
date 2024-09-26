@@ -22,7 +22,6 @@ pub struct MBC3 {
 
     num_rom_banks: usize,
     num_ram_banks: usize,
-    cart_type: u8,
 
     has_rtc: bool,
     rtc_registers: [u8; 5],
@@ -30,6 +29,8 @@ pub struct MBC3 {
     rtc_select: Option<usize>,
     rtc_latch_next: bool,
     rtc_cycles_left: u32,
+
+    save_path: Option<String>,
 }
 
 impl MBC3 {
@@ -43,12 +44,12 @@ impl MBC3 {
             num_ram_banks: 1,
             ram_enabled: false,
             has_rtc: false,
-            cart_type: 0,
             rtc_registers: [0; 5],
             rtc_latch: None,
             rtc_select: None,
             rtc_latch_next: false,
             rtc_cycles_left: GB_CLOCKS_PER_SECOND,
+            save_path: None,
         }
     }
 
@@ -108,8 +109,6 @@ impl mmu::MBC for MBC3 {
     fn load(&mut self, cartridge: &Cartridge) {
         let hdr = &cartridge.header;
 
-        self.cart_type = hdr.cart_type;
-
         let rom_banks = mbc::rom_banks(hdr);
         let ram_banks = mbc::ram_banks(hdr);
 
@@ -122,6 +121,16 @@ impl mmu::MBC for MBC3 {
         self.num_ram_banks = ram_banks.num_banks;
 
         self.has_rtc = [0x0F, 0x10].contains(&cartridge.header.cart_type);
+
+        match hdr.cart_type {
+            0x10 | 0x13 => {
+                if let Ok(save_path) = mbc::save_file_from_rom_path(&cartridge.rom_path) {
+                    mbc::read_save(&save_path, &mut self.ram);
+                    self.save_path = Some(save_path);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn read(&self, address: u16) -> u8 {
@@ -244,6 +253,12 @@ impl mmu::MBC for MBC3 {
             self.rtc_cycles_left = GB_CLOCKS_PER_SECOND - (u32::from(cycles) - self.rtc_cycles_left);
         } else {
             self.rtc_cycles_left =self.rtc_cycles_left.wrapping_sub(cycles.into());
+        }
+    }
+
+    fn save(&mut self) {
+        if let Some(save_path) = &self.save_path {
+            _ = mbc::write_save(save_path, &self.ram);
         }
     }
 }

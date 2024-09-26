@@ -55,7 +55,7 @@ fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputE
         let cycles_run = emu.run(m_cycles_per_frame);
 
         if cycles_run.is_none() {
-            return;
+            break;
         }
 
         let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
@@ -65,6 +65,8 @@ fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputE
             spin_sleep::sleep(time::Duration::from_micros(sleep_time));
         }
     }
+
+    emu.close();
 }
 
 fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {

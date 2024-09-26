@@ -19,7 +19,7 @@ pub struct MBC1 {
     mode_flag: bool,
     ram_enabled: bool,
 
-    cart_type: u8,
+    save_path: Option<String>,
 }
 
 impl MBC1 {
@@ -32,7 +32,7 @@ impl MBC1 {
             ram_bank: 0,
             mode_flag: false,
             ram_enabled: false,
-            cart_type: 0,
+            save_path: None,
         }
     }
 
@@ -52,8 +52,6 @@ impl mmu::MBC for MBC1 {
     fn load(&mut self, cartridge: &Cartridge) {
         let hdr = &cartridge.header;
 
-        self.cart_type = hdr.cart_type;
-
         let rom_banks = mbc::rom_banks(hdr);
         debug_assert!(rom_banks.size_bytes == cartridge.data.len());
 
@@ -65,6 +63,16 @@ impl mmu::MBC for MBC1 {
             self.ram = vec![0; ram_banks.size_bytes];
         } else if hdr.ram_size != 0 {
             panic!("cart_type={} should have ram size 0 (has {})", hdr.cart_type, hdr.ram_size);
+        }
+
+        match hdr.cart_type {
+            0x3 => {
+                if let Ok(save_path) = mbc::save_file_from_rom_path(&cartridge.rom_path) {
+                    mbc::read_save(&save_path, &mut self.ram);
+                    self.save_path = Some(save_path);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -142,5 +150,11 @@ impl mmu::MBC for MBC1 {
 
     fn step(&mut self, _cycles: u8) {
         // noop
+    }
+
+    fn save(&mut self) {
+        if let Some(save_path) = &self.save_path {
+            _ = mbc::write_save(save_path, &self.ram);
+        }
     }
 }

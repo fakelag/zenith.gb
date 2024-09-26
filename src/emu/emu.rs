@@ -64,7 +64,7 @@ impl Emu {
         }
     }
 
-    pub fn run(self: &mut Emu, num_cycles: u64) -> Option<u64> {
+    pub fn run(&mut self, num_cycles: u64) -> Option<u64> {
         let mut cycles_run: u64 = 0;
         while cycles_run < num_cycles {
             self.input_update();
@@ -91,7 +91,11 @@ impl Emu {
        return Some(cycles_run);
    }
 
-   fn input_update(&mut self) {
+    pub fn close(&mut self) {
+        self.mmu.close();
+    }
+
+    fn input_update(&mut self) {
         if let Some(input_chan) = &self.input_chan {
             loop {
                 match input_chan.try_recv() {

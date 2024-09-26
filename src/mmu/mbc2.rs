@@ -12,7 +12,7 @@ pub struct MBC2 {
 
     ram_enabled: bool,
 
-    cart_type: u8,
+    save_path: Option<String>,
 }
 
 impl MBC2 {
@@ -22,8 +22,8 @@ impl MBC2 {
             ram: Vec::new(),
             rom_bank: 1,
             num_rom_banks: 1,
-            cart_type: 0,
             ram_enabled: false,
+            save_path: None,
         }
     }
 }
@@ -31,8 +31,6 @@ impl MBC2 {
 impl mmu::MBC for MBC2 {
     fn load(&mut self, cartridge: &Cartridge) {
         let hdr = &cartridge.header;
-
-        self.cart_type = hdr.cart_type;
 
         let rom_banks = mbc::rom_banks(hdr);
 
@@ -43,6 +41,16 @@ impl mmu::MBC for MBC2 {
         self.num_rom_banks = rom_banks.num_banks;
 
         self.ram = vec![0; 0x200];
+
+        match hdr.cart_type {
+            0x6 => {
+                if let Ok(save_path) = mbc::save_file_from_rom_path(&cartridge.rom_path) {
+                    mbc::read_save(&save_path, &mut self.ram);
+                    self.save_path = Some(save_path);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn read(&self, address: u16) -> u8 {
@@ -94,5 +102,11 @@ impl mmu::MBC for MBC2 {
 
     fn step(&mut self, _cycles: u8) {
         // noop
+    }
+
+    fn save(&mut self) {
+        if let Some(save_path) = &self.save_path {
+            _ = mbc::write_save(save_path, &self.ram);
+        }
     }
 }
