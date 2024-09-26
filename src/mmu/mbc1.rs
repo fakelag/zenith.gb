@@ -1,4 +1,4 @@
-use crate::cartridge::cartridge::Cartridge;
+use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
 
 use super::mmu;
 
@@ -54,20 +54,15 @@ impl mmu::MBC for MBC1 {
 
         self.cart_type = hdr.cart_type;
 
-        let rom_size_bytes = (32 * 1024) * (1 << hdr.rom_size);
-        debug_assert!(rom_size_bytes == cartridge.data.len());
+        let rom_banks = mbc::rom_banks(hdr);
+        debug_assert!(rom_banks.size_bytes == cartridge.data.len());
 
         self.rom_mask = 0xFF >> std::cmp::max(7 - hdr.rom_size, 3);
-        self.rom = cartridge.data[0..rom_size_bytes].to_vec();
+        self.rom = cartridge.data[0..rom_banks.size_bytes].to_vec();
 
         if hdr.cart_type == 2 || hdr.cart_type == 3 {
-            let ram_size_bytes: usize = match hdr.ram_size {
-                0..=1 => 0,
-                2 => BYTES_8KIB,
-                3 => BYTES_32KIB,
-                _ => unreachable!(),
-            };
-            self.ram = vec![0; ram_size_bytes];
+            let ram_banks = mbc::ram_banks(hdr);
+            self.ram = vec![0; ram_banks.size_bytes];
         } else if hdr.ram_size != 0 {
             panic!("cart_type={} should have ram size 0 (has {})", hdr.cart_type, hdr.ram_size);
         }

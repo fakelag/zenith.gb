@@ -1,13 +1,11 @@
-use crate::cartridge::cartridge::Cartridge;
+use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
 
 use super::mmu;
 
-const BYTES_8KIB: usize = 8 * 1024;
-const BYTES_32KIB: usize = 32 * 1024;
 const GB_CLOCKS_PER_SECOND: u32 = 4_194_304 / 4;
 
 const RTC_S: usize = 0;
-const RTC_M: usize = 1;
+// const RTC_M: usize = 1;
 const RTC_H: usize = 2;
 const RTC_DL: usize = 3;
 const RTC_DH: usize = 4;
@@ -22,11 +20,11 @@ pub struct MBC3 {
     ram_bank: Option<usize>,
     ram_enabled: bool,
 
-    num_rom_banks: u8,
-    
+    num_rom_banks: usize,
+    num_ram_banks: usize,
     cart_type: u8,
-    has_rtc: bool,
 
+    has_rtc: bool,
     rtc_registers: [u8; 5],
     rtc_latch: Option<[u8; 5]>,
     rtc_select: Option<usize>,
@@ -42,6 +40,7 @@ impl MBC3 {
             rom_bank: 1,
             ram_bank: None,
             num_rom_banks: 1,
+            num_ram_banks: 1,
             ram_enabled: false,
             has_rtc: false,
             cart_type: 0,
@@ -111,19 +110,17 @@ impl mmu::MBC for MBC3 {
 
         self.cart_type = hdr.cart_type;
 
-        let rom_size_bytes = (32 * 1024) * (1 << hdr.rom_size);
-        debug_assert!(rom_size_bytes == cartridge.data.len());
+        let rom_banks = mbc::rom_banks(hdr);
+        let ram_banks = mbc::ram_banks(hdr);
 
-        self.rom = cartridge.data[0..rom_size_bytes].to_vec();
-        self.num_rom_banks = 1 << (hdr.rom_size + 1);
+        debug_assert!(rom_banks.size_bytes == cartridge.data.len());
 
-        let ram_size_bytes: usize = match hdr.ram_size {
-            0..=1 => 0,
-            2 => BYTES_8KIB,
-            3 => BYTES_32KIB,
-            _ => unreachable!(),
-        };
-        self.ram = vec![0; ram_size_bytes];
+        self.rom = cartridge.data[0..rom_banks.size_bytes].to_vec();
+        self.num_rom_banks = rom_banks.num_banks;
+
+        self.ram = vec![0; ram_banks.size_bytes];
+        self.num_ram_banks = ram_banks.num_banks;
+
         self.has_rtc = [0x0F, 0x10].contains(&cartridge.header.cart_type);
     }
 
@@ -174,13 +171,13 @@ impl mmu::MBC for MBC3 {
                 if bank_num == 0 {
                     self.rom_bank = 1;
                 } else {
-                    self.rom_bank = usize::from(bank_num % self.num_rom_banks);
+                    self.rom_bank = usize::from(bank_num) % self.num_rom_banks;
                 }
             }
             0x4000..=0x5FFF => {
                 match data {
                     0..=0x3 => {
-                        self.ram_bank = Some(data.into());
+                        self.ram_bank = Some(usize::from(data) % self.num_ram_banks);
                         self.rtc_select = None;
                     }
                     0x8..=0x0C => {

@@ -1,14 +1,15 @@
-use crate::cartridge::cartridge::Cartridge;
+use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
 
 use super::mmu;
 
 pub struct MBC2 {
     rom: Vec<u8>,
     ram: Vec<u8>,
-    num_rom_banks: u8,
 
     // 4-bit rom bank number
-    rom_bank: u8,
+    rom_bank: usize,
+    num_rom_banks: usize,
+
     ram_enabled: bool,
 
     cart_type: u8,
@@ -33,13 +34,13 @@ impl mmu::MBC for MBC2 {
 
         self.cart_type = hdr.cart_type;
 
-        let rom_size_bytes = (32 * 1024) * (1 << hdr.rom_size);
+        let rom_banks = mbc::rom_banks(hdr);
 
-        debug_assert!(cartridge.data.len() == rom_size_bytes);
+        debug_assert!(cartridge.data.len() == rom_banks.size_bytes);
 
-        self.rom = vec![0; rom_size_bytes];
+        self.rom = vec![0; rom_banks.size_bytes];
         self.rom[0..cartridge.data.len()].clone_from_slice(&cartridge.data[0..cartridge.data.len()]);
-        self.num_rom_banks = 1 << (hdr.rom_size + 1);
+        self.num_rom_banks = rom_banks.num_banks;
 
         self.ram = vec![0; 0x200];
     }
@@ -73,7 +74,7 @@ impl mmu::MBC for MBC2 {
                 if address & (1 << 8) == 0 {
                     self.ram_enabled = (data & 0xF) == 0xA
                 } else {
-                    let select_bank = data & 0xF;
+                    let select_bank = usize::from(data & 0xF);
                     self.rom_bank = if select_bank == 0 { 1 } else { select_bank % self.num_rom_banks };
                 }
             }

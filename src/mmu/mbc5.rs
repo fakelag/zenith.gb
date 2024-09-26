@@ -1,8 +1,6 @@
-use crate::cartridge::cartridge::Cartridge;
+use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
 
 use super::mmu;
-
-const BYTES_1KIB: usize = 1024;
 
 pub struct MBC5 {
     rom: Vec<u8>,
@@ -15,10 +13,9 @@ pub struct MBC5 {
     ram_enabled: bool,
 
     num_rom_banks: usize,
-    num_ram_banks: u8,
+    num_ram_banks: usize,
     
     cart_type: u8,
-    has_rumble: bool,
 }
 
 impl MBC5 {
@@ -32,7 +29,6 @@ impl MBC5 {
             num_ram_banks: 1,
             ram_enabled: false,
             cart_type: 0,
-            has_rumble: false,
         }
     }
 }
@@ -43,25 +39,15 @@ impl mmu::MBC for MBC5 {
 
         self.cart_type = hdr.cart_type;
 
-        let rom_size_bytes = (32 * 1024) * (1 << hdr.rom_size);
-        debug_assert!(rom_size_bytes == cartridge.data.len());
+        let rom_banks = mbc::rom_banks(hdr);
+        let ram_banks = mbc::ram_banks(hdr);
+        debug_assert!(rom_banks.size_bytes == cartridge.data.len());
 
-        self.rom = cartridge.data[0..rom_size_bytes].to_vec();
-        self.num_rom_banks = 1 << (hdr.rom_size + 1);
+        self.rom = cartridge.data[0..rom_banks.size_bytes].to_vec();
+        self.num_rom_banks = rom_banks.num_banks;
 
-        self.num_ram_banks = match hdr.ram_size {
-            0..=1 => 0,
-            2 => 1,
-            3 => 4,
-            4 => 16,
-            5 => 8,
-            _ => unreachable!(),
-        };
-
-        let ram_size_bytes = usize::from(self.num_ram_banks) * 8 * BYTES_1KIB;
-        self.ram = vec![0; ram_size_bytes];
-
-        self.has_rumble = [0x1C, 0x1D, 0x1E].contains(&cartridge.header.cart_type);
+        self.num_ram_banks = ram_banks.num_banks;
+        self.ram = vec![0; ram_banks.size_bytes];
     }
 
     fn read(&self, address: u16) -> u8 {
@@ -99,7 +85,7 @@ impl mmu::MBC for MBC5 {
                 self.rom_bank = ((self.rom_bank & 0xFF) | (usize::from(data & 1) << 8)) % self.num_rom_banks;
             }
             0x4000..=0x5FFF => {
-                self.ram_bank = (usize::from(data) & 0xF) % usize::from(self.num_ram_banks);
+                self.ram_bank = (usize::from(data) & 0xF) % self.num_ram_banks;
             }
             0xA000..=0xBFFF => {
                 if !self.ram_enabled {
