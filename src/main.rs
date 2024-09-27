@@ -30,8 +30,14 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
         .build()
         .expect("could not create window");
 
-    let canvas = window.into_canvas().build()
+    let mut canvas = window
+        .into_canvas()
+        .build()
         .expect("could not create canvas");
+
+    canvas
+        .set_logical_size(144, 160)
+        .expect("canvast must set device independent resolution");
 
     return (canvas, sdl_ctx);
 }
@@ -62,7 +68,7 @@ fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputE
         let sleep_time = (16000 as u64).saturating_sub(elapsed);
 
         if sleep_time > 0 {
-            spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+           spin_sleep::sleep(time::Duration::from_micros(sleep_time));
         }
     }
 
@@ -244,12 +250,12 @@ mod tests {
         let mut emu_res = create_emulator(rom_path, None, None);
 
         if let Some(emu) = &mut emu_res {
-        let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
+            let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
 
-        emu.cpu.set_breakpoint(Some(break_send));
+            emu.cpu.set_breakpoint(Some(break_send));
 
             let bp_triggered = run_emulator(emu, break_recv);
-        let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
+            let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
             return Some(test_passed);
         } else {
             None
@@ -392,9 +398,9 @@ mod tests {
                         }
 
                         drop(break_send);
-                break;
-            }
-        }
+                        break;
+                    }
+                }
             }
         });
 
@@ -414,19 +420,19 @@ mod tests {
 
             for dir_file in dir_files {
                 let p = dir_file.unwrap();
-            let metadata = p.metadata().unwrap();
-
-            if !metadata.is_file() {
-                continue;
-            }
-
-            if p.path().extension().unwrap() != "gb" {
-                continue;
-            }
-
-            let full_path: String = p.path().display().to_string();
+                let metadata = p.metadata().unwrap();
+    
+                if !metadata.is_file() {
+                    continue;
+                }
+    
+                if p.path().extension().unwrap() != "gb" {
+                    continue;
+                }
+    
+                let full_path: String = p.path().display().to_string();
                 rom_paths.push(full_path);
-        }
+            }
 
             rom_paths
         };
@@ -472,7 +478,7 @@ mod tests {
                 return roms_with_runners;
             })
             .collect::<Vec<(RunnerFn, String, Option<Vec<GbButton>>)>>();
-    
+
         let results = rom_files
             .par_iter()
             .map(|(runner, rom_path, inputs)| (rom_path, runner(rom_path, inputs.clone())))
@@ -483,9 +489,9 @@ mod tests {
             .for_each(|(path, pass_opt)| {
                 if let Some(is_passing) = pass_opt {
                     if *is_passing {
-                    println!("[{}]: {path}", "Passed".green().bold());
-                } else {
-                    eprintln!("[{}]: {path}", "Failed".red().bold());
+                        println!("[{}]: {path}", "Passed".green().bold());
+                    } else {
+                        eprintln!("[{}]: {path}", "Failed".red().bold());
                     }
                 }
             });
@@ -496,7 +502,7 @@ mod tests {
                 if let Some(is_passing) = res.1 {
                     if is_passing {
                         return (acc.0 + 1, acc.1, acc.2);
-                } else {
+                    } else {
                         return (acc.0, acc.1 + 1, acc.2);
                     }
                 }
