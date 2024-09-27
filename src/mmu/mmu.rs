@@ -18,7 +18,7 @@ pub trait MBC {
 }
 
 struct MbcRomOnly {
-    rom: [u8; 0x8000],
+    rom: Vec<u8>,
 }
 
 #[repr(u8)]
@@ -44,7 +44,7 @@ pub struct DmaTransfer {
 }
 
 pub struct MMU {
-    memory: [u8; 0x10000],
+    memory: Vec<u8>,
     access_flags: u8,
     access_origin: AccessOrigin,
     supported_carttype: bool,
@@ -60,7 +60,7 @@ pub struct MMU {
 impl MMU {
     pub fn new(cartridge: &Cartridge) -> MMU {
         let mut mmu = Self {
-            memory: [0; 0x10000],
+            memory: vec![0; 0x10000],
             access_flags: 0,
             access_origin: AccessOrigin::AccessOriginNone,
             mbc: Box::new(MbcRomOnly::new()),
@@ -74,7 +74,7 @@ impl MMU {
     }
 
     pub fn load(&mut self, cartridge: &Cartridge) {
-        self.memory = [0; 0x10000];
+        self.memory = vec![0; 0x10000];
 
         // println!("Cart type={}", cartridge.header.cart_type);
 
@@ -506,7 +506,7 @@ impl MMU {
 
 impl MbcRomOnly {
     pub fn new() -> MbcRomOnly {
-        Self { rom: [0; 0x8000] }
+        Self { rom: vec![0; 0x8000] }
     }
 }
 

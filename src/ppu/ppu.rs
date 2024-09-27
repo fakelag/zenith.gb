@@ -67,6 +67,7 @@ pub struct PPU {
 
     bg_scanline_mask: [u8; 160],
 
+    // @todo - 160*144=23040, allocate on the heaps
     rt: FrameBuffer,
 }
 
