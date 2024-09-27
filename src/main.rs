@@ -1,4 +1,4 @@
-use std::{sync::mpsc::{Receiver, SyncSender}, time};
+use std::{sync::mpsc::{Receiver, SyncSender}, time::{self}};
 
 use cartridge::cartridge::Cartridge;
 
@@ -14,16 +14,21 @@ use emu::emu::{Emu, FrameBuffer, GbButton, InputEvent};
 use sdl2::keyboard::Scancode;
 
 const T_CYCLES_PER_FRAME: u64 = 4_194_304 / 60;
+const GB_SCREEN_WIDTH: u32 = 160;
+const GB_SCREEN_HEIGHT: u32 = 144;
+const WINDOW_SIZE_MULT: u32 = 4;
+
+enum ECommand {
+    ECmdLoadRom(String),
+}
 
 fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl) {
     let sdl_ctx = sdl2::init().unwrap();
 
     let video_subsystem = sdl_ctx.video().unwrap();
 
-    let asp = 144.0 / 160.0;
-
-    let window = // video_subsystem.window("Gameboy", 160, 144 as u32) //
-        video_subsystem.window("Gameboy", 512, (512.0 * asp) as u32)
+    let window = video_subsystem
+        .window("Gameboy", GB_SCREEN_WIDTH * WINDOW_SIZE_MULT, GB_SCREEN_HEIGHT * WINDOW_SIZE_MULT)
         .position_centered()
         .resizable()
         .opengl()
@@ -36,7 +41,7 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
         .expect("could not create canvas");
 
     canvas
-        .set_logical_size(144, 160)
+        .set_logical_size(GB_SCREEN_HEIGHT, GB_SCREEN_WIDTH)
         .expect("canvast must set device independent resolution");
 
     return (canvas, sdl_ctx);
@@ -49,30 +54,59 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
 ];
 
-fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputEvent>) {
-    let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
-    let mut emu = Emu::new(cart, Some(frame_chan), Some(input_chan));
+fn create_emulator(
+    rom_path: &str,
+    frame_chan: SyncSender<FrameBuffer>,
+) -> Emu {
+    let cart = Cartridge::new(rom_path);
+    let mut emu = Emu::new(cart, Some(frame_chan));
     emu.dmg_boot();
+    emu
+}
 
-    let m_cycles_per_frame = T_CYCLES_PER_FRAME / 4;
+fn run_emulator(
+    frame_chan: SyncSender<FrameBuffer>,
+    input_chan: Receiver<InputEvent>,
+    cmd_chan: Receiver<ECommand>,
+) {
+    let init_rom = loop {
+        match cmd_chan.recv() {
+            Ok(ECommand::ECmdLoadRom(rom_path)) => {
+                break rom_path;
+            },
+            Err(_) => {},
+        };
+    };
 
-    loop {
-        let start_time = time::Instant::now();
-        let cycles_run = emu.run(m_cycles_per_frame);
+    'outer: loop {
+        let mut emu = create_emulator(&init_rom, frame_chan.clone());
+        let m_cycles_per_frame = T_CYCLES_PER_FRAME / 4;
 
-        if cycles_run.is_none() {
-            break;
-        }
+        loop {
+            let start_time = time::Instant::now();
+            let cycles_run = emu.run(m_cycles_per_frame, Some(&input_chan));
 
-        let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
-        let sleep_time = (16000 as u64).saturating_sub(elapsed);
+            if cycles_run.is_none() {
+                emu.close();
+                break 'outer;
+            }
 
-        if sleep_time > 0 {
-            spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+            match cmd_chan.try_recv() {
+                Ok(ECommand::ECmdLoadRom(rom_path)) => {
+                    emu = create_emulator(&rom_path, frame_chan.clone());
+                    continue;
+                },
+                Err(_) => {},
+            };
+
+            let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
+            let sleep_time = (16000 as u64).saturating_sub(elapsed);
+
+            if sleep_time > 0 {
+                spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+            }
         }
     }
-
-    emu.close();
 }
 
 fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {
@@ -100,40 +134,42 @@ fn main() {
 
     let (frame_sender, frame_receiver) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
     let (input_sender, input_receiver) = std::sync::mpsc::sync_channel::<InputEvent>(1);
+    let (ecmd_sender, ecmd_receiver) = std::sync::mpsc::sync_channel::<ECommand>(1);
 
-    let emu_thread = std::thread::spawn(move || run_emulator(frame_sender, input_receiver));
+    let emu_thread = std::thread::spawn(
+        move || run_emulator(frame_sender, input_receiver, ecmd_receiver),
+    );
     
     let mut last_frame = std::time::Instant::now();
     let mut event_pump = sdl_ctx.event_pump().unwrap();
+
     'eventloop: loop {
-        for event in event_pump.poll_iter() {
+        'nextevent: for event in event_pump.poll_iter() {
             match event {
+                sdl2::event::Event::DropFile { filename, .. } => {
+                    _ = ecmd_sender.send(ECommand::ECmdLoadRom(filename));
+                }
                 sdl2::event::Event::Quit {..} => {
                     break 'eventloop;
                 }
                 sdl2::event::Event::KeyDown { scancode, repeat, .. } => {
-                    if !repeat {
-                        if let Some(gb_button) = scancode_to_gb_button(scancode) {
-                            if let Err(err) = input_sender.send(InputEvent { down: true, button: gb_button }) {
-                                println!("err={:?}", err);
-                                break 'eventloop;
-                            }
-                        }
+                    if repeat {
+                        continue 'nextevent;
+                    }
+                    if let Some(gb_button) = scancode_to_gb_button(scancode) {
+                        _ = input_sender.try_send(InputEvent { down: true, button: gb_button });
                     }
                 }
                 sdl2::event::Event::KeyUp { scancode, .. } => {
                     if let Some(gb_button) = scancode_to_gb_button(scancode) {
-                        if let Err(err) = input_sender.send(InputEvent { down: false, button: gb_button }) {
-                            println!("err={:?}", err);
-                            break 'eventloop;
-                        }
+                        _ = input_sender.try_send(InputEvent { down: false, button: gb_button });
                     }
                 },
                 _ => {}
             }
         }
 
-        match frame_receiver.recv() {
+        match frame_receiver.recv_timeout(time::Duration::from_millis(100)) {
             Ok(rt) => {
                 // println!("received frame");
 
@@ -173,7 +209,7 @@ fn main() {
                 last_frame = std::time::Instant::now();
                 canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
             },
-            Err(..) => break 'eventloop,
+            Err(..) => {} // break 'eventloop,
         }
 
     }
@@ -191,13 +227,12 @@ mod tests {
     use cpu::cpu::CPU;
     use rayon::prelude::*;
 
-    fn create_emulator(
+    fn create_test_emulator(
         rom_path: &str,
         frame_chan: Option<SyncSender<FrameBuffer>>,
-        input_chan: Option<Receiver<InputEvent>>,
     ) -> Option<Emu> {
         let cart = Cartridge::new(rom_path);
-        let mut emu = Emu::new(cart, frame_chan, input_chan);
+        let mut emu = Emu::new(cart, frame_chan);
 
         if !emu.mmu.is_supported_cart_type() {
             println!("Skipping {rom_path} due to unsupported cart type");
@@ -208,7 +243,7 @@ mod tests {
         Some(emu)
     }
 
-    fn run_emulator<T>(emu: &mut Emu, break_chan: Receiver<T>) -> Option<T> {
+    fn run_test_emulator<T>(emu: &mut Emu, break_chan: Receiver<T>, input_chan: Option<&Receiver<InputEvent>>) -> Option<T> {
         let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
         let max_cycles = mcycles_per_frame * 120 * 60; // 120 seconds, 60 fps
 
@@ -216,7 +251,7 @@ mod tests {
         let mut cycles_run = 0;
 
         while cycles_run < max_cycles {
-            let cycles_passed = emu.run(mcycles_per_frame);
+            let cycles_passed = emu.run(mcycles_per_frame, input_chan);
 
             if let Some(cycles) = cycles_passed {
                 cycles_run += cycles;
@@ -247,14 +282,14 @@ mod tests {
     }
 
     fn mts_runner(rom_path: &str, _inputs: Option<Vec<GbButton>>) -> Option<bool> {
-        let mut emu_res = create_emulator(rom_path, None, None);
+        let mut emu_res = create_test_emulator(rom_path, None);
 
         if let Some(emu) = &mut emu_res {
             let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
 
             emu.cpu.set_breakpoint(Some(break_send));
 
-            let bp_triggered = run_emulator(emu, break_recv);
+            let bp_triggered = run_test_emulator(emu, break_recv, None);
             let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
             return Some(test_passed);
         } else {
@@ -288,10 +323,10 @@ mod tests {
             input_list.reverse();
         }
 
-        let emu_result = create_emulator(
+        let emu_result = create_test_emulator(
             rom_path,
             Some(frame_send),
-            Some(input_recv),
+            // Some(input_recv),
         );
 
         if emu_result.is_none() {
@@ -404,7 +439,7 @@ mod tests {
             }
         });
 
-        let frame_check_passed = run_emulator(&mut emu, break_recv);
+        let frame_check_passed = run_test_emulator(&mut emu, break_recv, Some(&input_recv));
         let test_passed = frame_check_passed.is_some();
         return Some(test_passed);
     }

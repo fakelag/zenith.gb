@@ -36,7 +36,6 @@ pub struct Emu {
     pub timer: timer::Timer,
 
     pub frame_chan: Option<SyncSender<FrameBuffer>>,
-    pub input_chan: Option<Receiver<InputEvent>>,
 }
 
 impl Display for Emu {
@@ -51,7 +50,6 @@ impl Emu {
     pub fn new(
         cartridge: Cartridge,
         frame_chan: Option<SyncSender<FrameBuffer>>,
-        input_chan: Option<Receiver<InputEvent>>,
     ) -> Emu {
         Self {
             mmu: mmu::MMU::new(&cartridge),
@@ -60,14 +58,13 @@ impl Emu {
             timer: timer::Timer::new(),
             cartridge,
             frame_chan,
-            input_chan,
         }
     }
 
-    pub fn run(&mut self, num_cycles: u64) -> Option<u64> {
+    pub fn run(&mut self, num_cycles: u64, input_chan: Option<&Receiver<InputEvent>>) -> Option<u64> {
         let mut cycles_run: u64 = 0;
         while cycles_run < num_cycles {
-            self.input_update();
+            self.input_update(input_chan);
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginCPU);
             let cycles = self.cpu.step(&mut self.mmu);
@@ -95,8 +92,8 @@ impl Emu {
         self.mmu.close();
     }
 
-    fn input_update(&mut self) {
-        if let Some(input_chan) = &self.input_chan {
+    fn input_update(&mut self, input_chan: Option<&Receiver<InputEvent>>) {
+        if let Some(input_chan) = input_chan {
             loop {
                 match input_chan.try_recv() {
                     Ok(input_event) => {
