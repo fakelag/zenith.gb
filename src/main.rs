@@ -68,7 +68,7 @@ fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputE
         let sleep_time = (16000 as u64).saturating_sub(elapsed);
 
         if sleep_time > 0 {
-           spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+            spin_sleep::sleep(time::Duration::from_micros(sleep_time));
         }
     }
 
