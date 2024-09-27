@@ -110,7 +110,7 @@ impl MMU {
         self.mbc.save();
     }
 
-    pub fn update_input(&mut self, input_event: emu::InputEvent) {
+    pub fn update_input(&mut self, input_event: &emu::InputEvent) {
         let was_down = self.buttons[input_event.button as usize];
 
         self.buttons[input_event.button as usize] = input_event.down;

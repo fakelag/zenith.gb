@@ -1,4 +1,4 @@
-use std::{sync::mpsc::{Receiver, SyncSender}, time};
+use std::time;
 
 use cartridge::cartridge::Cartridge;
 
@@ -10,20 +10,24 @@ mod ppu;
 mod timer;
 mod util;
 
-use emu::emu::{Emu, FrameBuffer, GbButton, InputEvent};
+use emu::emu::{Emu, GbButton, InputEvent};
+use ppu::ppu::FrameBuffer;
 use sdl2::keyboard::Scancode;
 
 const T_CYCLES_PER_FRAME: u64 = 4_194_304 / 60;
+const M_CYCLES_PER_FRAME: u64 = T_CYCLES_PER_FRAME / 4;
+
+const GB_SCREEN_WIDTH: u32 = 160;
+const GB_SCREEN_HEIGHT: u32 = 144;
+const WINDOW_SIZE_MULT: u32 = 4;
 
 fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl) {
     let sdl_ctx = sdl2::init().unwrap();
 
     let video_subsystem = sdl_ctx.video().unwrap();
 
-    let asp = 144.0 / 160.0;
-
-    let window = // video_subsystem.window("Gameboy", 160, 144 as u32) //
-        video_subsystem.window("Gameboy", 512, (512.0 * asp) as u32)
+    let window = video_subsystem
+        .window("Gameboy", GB_SCREEN_WIDTH * WINDOW_SIZE_MULT, GB_SCREEN_HEIGHT * WINDOW_SIZE_MULT)
         .position_centered()
         .resizable()
         .opengl()
@@ -36,7 +40,7 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
         .expect("could not create canvas");
 
     canvas
-        .set_logical_size(144, 160)
+        .set_logical_size(GB_SCREEN_HEIGHT, GB_SCREEN_WIDTH)
         .expect("canvast must set device independent resolution");
 
     return (canvas, sdl_ctx);
@@ -49,30 +53,11 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
 ];
 
-fn run_emulator(frame_chan: SyncSender<FrameBuffer>, input_chan: Receiver<InputEvent>) {
-    let cart = Cartridge::new("dev/rgbds/gb_helloworld.gb");
-    let mut emu = Emu::new(cart, Some(frame_chan), Some(input_chan));
+fn create_emulator(rom_path: &str) -> Emu {
+    let cart = Cartridge::new(rom_path);
+    let mut emu = Emu::new(cart);
     emu.dmg_boot();
-
-    let m_cycles_per_frame = T_CYCLES_PER_FRAME / 4;
-
-    loop {
-        let start_time = time::Instant::now();
-        let cycles_run = emu.run(m_cycles_per_frame);
-
-        if cycles_run.is_none() {
-            break;
-        }
-
-        let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
-        let sleep_time = (16000 as u64).saturating_sub(elapsed);
-
-        if sleep_time > 0 {
-            spin_sleep::sleep(time::Duration::from_micros(sleep_time));
-        }
-    }
-
-    emu.close();
+    emu
 }
 
 fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {
@@ -89,115 +74,180 @@ fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {
     }
 }
 
-fn main() {
-    let (mut canvas, sdl_ctx) = sdl2_create_window();
+enum State {
+    Exit,
+    Idle,
+    Running(Emu),
+}
 
-    let texture_creator = canvas.texture_creator();
-
-    let mut texture = texture_creator
-        .create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24, 160, 144)
-        .unwrap();
-
-    let (frame_sender, frame_receiver) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
-    let (input_sender, input_receiver) = std::sync::mpsc::sync_channel::<InputEvent>(1);
-
-    let emu_thread = std::thread::spawn(move || run_emulator(frame_sender, input_receiver));
-    
-    let mut last_frame = std::time::Instant::now();
-    let mut event_pump = sdl_ctx.event_pump().unwrap();
-    'eventloop: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                sdl2::event::Event::Quit {..} => {
-                    break 'eventloop;
-                }
-                sdl2::event::Event::KeyDown { scancode, repeat, .. } => {
-                    if !repeat {
-                        if let Some(gb_button) = scancode_to_gb_button(scancode) {
-                            if let Err(err) = input_sender.send(InputEvent { down: true, button: gb_button }) {
-                                println!("err={:?}", err);
-                                break 'eventloop;
-                            }
-                        }
-                    }
-                }
-                sdl2::event::Event::KeyUp { scancode, .. } => {
-                    if let Some(gb_button) = scancode_to_gb_button(scancode) {
-                        if let Err(err) = input_sender.send(InputEvent { down: false, button: gb_button }) {
-                            println!("err={:?}", err);
-                            break 'eventloop;
-                        }
-                    }
-                },
-                _ => {}
+fn poll_events(
+    input_vec: &mut Vec<InputEvent>,
+    event_pump: &mut sdl2::EventPump,
+) -> Option<State> {
+    for event in event_pump.poll_iter() {
+        match event {
+            sdl2::event::Event::DropFile { filename, .. } => {
+                return Some(State::Running(create_emulator(&filename)));
             }
-        }
-
-        match frame_receiver.recv() {
-            Ok(rt) => {
-                // println!("received frame");
-
-                texture.with_lock(None, |buffer, size| {
-                    for x in 0..160 {
-                        for y in 0..144 {
-                            let color = rt[y][x];
-
-                            let index = y * size + x * 3;
-                            match color {
-                                0..=3 => {
-                                    let c = PALETTE[color as usize];
-                                    buffer[index] = c.r;
-                                    buffer[index+1] = c.g;
-                                    buffer[index+2] = c.b;
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                    }
-                }).unwrap();
-
-                canvas.clear();
-                canvas.copy(&texture, None, None).unwrap();
-                // canvas.copy_ex(
-                //     &texture,
-                //     None,
-                //     None,
-                //     0.0,
-                //     None,
-                //     false,
-                //     false,
-                // ).unwrap();
-                canvas.present();
-
-                let frame_time = last_frame.elapsed();
-                last_frame = std::time::Instant::now();
-                canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
+            sdl2::event::Event::Quit {..} => {
+                return Some(State::Exit);
+            }
+            sdl2::event::Event::KeyDown { scancode, repeat, .. } => {
+                if repeat {
+                    continue;
+                }
+                if let Some(gb_button) = scancode_to_gb_button(scancode) {
+                    input_vec.push(InputEvent { down: true, button: gb_button });
+                }
+            }
+            sdl2::event::Event::KeyUp { scancode, .. } => {
+                if let Some(gb_button) = scancode_to_gb_button(scancode) {
+                    input_vec.push(InputEvent { down: false, button: gb_button });
+                }
             },
-            Err(..) => break 'eventloop,
+            _ => {}
         }
-
     }
 
-    drop(frame_receiver);
-    emu_thread.join().unwrap();
+    None
+}
+
+fn vsync_canvas(
+    rt: &FrameBuffer,
+    texture: &mut sdl2::render::Texture,
+    canvas: &mut sdl2::render::WindowCanvas,
+    last_frame: &mut std::time::Instant, // @todo - Refactor into a system
+) {
+    texture.with_lock(None, |buffer, size| {
+        for x in 0..160 {
+            for y in 0..144 {
+                let color = rt[y][x];
+
+                let index = y * size + x * 3;
+                match color {
+                    0..=3 => {
+                        let c = PALETTE[color as usize];
+                        buffer[index] = c.r;
+                        buffer[index+1] = c.g;
+                        buffer[index+2] = c.b;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }).unwrap();
+
+    canvas.clear();
+    canvas.copy(&texture, None, None).unwrap();
+    canvas.present();
+
+    let frame_time = last_frame.elapsed();
+    *last_frame = std::time::Instant::now();
+    canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
+}
+
+fn run(
+    state: &mut State,
+    canvas: &mut sdl2::render::WindowCanvas,
+    event_pump: &mut sdl2::EventPump,
+) -> State {
+    match state {
+        State::Idle => {
+            loop {
+                for event in event_pump.wait_timeout_iter(100) {
+                    match event {
+                        sdl2::event::Event::DropFile { filename, .. } => {
+                            return State::Running(create_emulator(&filename));
+                        }
+                        sdl2::event::Event::Quit {..} => {
+                            return State::Exit;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        State::Running(ref mut emu) => {
+            let mut last_frame = std::time::Instant::now();
+            let texture_creator = canvas.texture_creator();
+
+            let mut texture = texture_creator
+                .create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24, 160, 144)
+                .unwrap();
+
+            let mut input_vec = Vec::new();
+            loop {
+                let start_time = time::Instant::now();
+
+                if let Some(next_state) = poll_events(&mut input_vec, event_pump) {
+                    return next_state;
+                }
+
+                if input_vec.len() > 0 {
+                    emu.input_update(&input_vec);
+                    input_vec.clear();
+                }
+
+                loop {
+                    let (cycles_run, vsync) = emu.run(M_CYCLES_PER_FRAME);
+
+                    if vsync {
+                        let rt = emu.ppu.get_framebuffer();
+                        vsync_canvas(rt, &mut texture, canvas, &mut last_frame);
+                    }
+
+                    if cycles_run >= M_CYCLES_PER_FRAME {
+                        break;
+                    }
+                }
+
+                let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
+                let sleep_time = (16000 as u64).saturating_sub(elapsed);
+
+                if sleep_time > 0 {
+                    spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+                }
+            }
+        }
+        State::Exit => { return State::Exit; }
+    }
+}
+
+fn main() {
+    let (mut canvas, sdl_ctx) = sdl2_create_window();
+    
+    let mut event_pump = sdl_ctx.event_pump().unwrap();
+    let mut state = State::Idle;
+
+    'eventloop: loop {
+        let next_state = run(&mut state, &mut canvas, &mut event_pump);
+
+        match next_state {
+            State::Exit => {
+                if let State::Running(ref mut emu) = state {
+                    emu.close();
+                }
+                break 'eventloop;
+            }
+            _ => {
+                state = next_state;
+            }
+        }
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::{Path, PathBuf}};
+    use std::{fs, path::{Path, PathBuf}, sync::mpsc::{Receiver, SyncSender}};
     use colored::Colorize;
     use cpu::cpu::CPU;
     use rayon::prelude::*;
 
-    fn create_emulator(
-        rom_path: &str,
-        frame_chan: Option<SyncSender<FrameBuffer>>,
-        input_chan: Option<Receiver<InputEvent>>,
-    ) -> Option<Emu> {
+    fn create_test_emulator(rom_path: &str) -> Option<Emu> {
         let cart = Cartridge::new(rom_path);
-        let mut emu = Emu::new(cart, frame_chan, input_chan);
+        let mut emu = Emu::new(cart);
 
         if !emu.mmu.is_supported_cart_type() {
             println!("Skipping {rom_path} due to unsupported cart type");
@@ -208,7 +258,12 @@ mod tests {
         Some(emu)
     }
 
-    fn run_emulator<T>(emu: &mut Emu, break_chan: Receiver<T>) -> Option<T> {
+    fn run_test_emulator<T>(
+        emu: &mut Emu,
+        break_chan: Receiver<T>,
+        input_chan: Option<&Receiver<InputEvent>>,
+        frame_chan: Option<&SyncSender<FrameBuffer>>,
+    ) -> Option<T> {
         let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
         let max_cycles = mcycles_per_frame * 120 * 60; // 120 seconds, 60 fps
 
@@ -216,18 +271,28 @@ mod tests {
         let mut cycles_run = 0;
 
         while cycles_run < max_cycles {
-            let cycles_passed = emu.run(mcycles_per_frame);
+            let (cycles_passed, vsync) = emu.run(mcycles_per_frame);
 
-            if let Some(cycles) = cycles_passed {
-                cycles_run += cycles;
-            } else {
-                unreachable!("tests should never close framebuffer channel abruptly");
+            if vsync {
+                if let Some(fs) = frame_chan {
+                    if let Err(err) = fs.send(*emu.ppu.get_framebuffer()) {
+                        panic!("Frame sender error: {err}");
+                    }
+                }
+            }
+
+            if let Some(input) = input_chan {
+                if let Ok(next_input) = input.try_recv() {
+                    emu.input_update(&vec![next_input]);
+                }
             }
 
             if let Ok(val) = break_chan.try_recv() {
                 trigger = Some(val);
                 break;
             }
+
+            cycles_run += cycles_passed;
         }
 
         return trigger;
@@ -247,14 +312,14 @@ mod tests {
     }
 
     fn mts_runner(rom_path: &str, _inputs: Option<Vec<GbButton>>) -> Option<bool> {
-        let mut emu_res = create_emulator(rom_path, None, None);
+        let mut emu_res = create_test_emulator(rom_path);
 
         if let Some(emu) = &mut emu_res {
             let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
 
             emu.cpu.set_breakpoint(Some(break_send));
 
-            let bp_triggered = run_emulator(emu, break_recv);
+            let bp_triggered = run_test_emulator(emu, break_recv, None, None);
             let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
             return Some(test_passed);
         } else {
@@ -288,11 +353,7 @@ mod tests {
             input_list.reverse();
         }
 
-        let emu_result = create_emulator(
-            rom_path,
-            Some(frame_send),
-            Some(input_recv),
-        );
+        let emu_result = create_test_emulator(rom_path);
 
         if emu_result.is_none() {
             return None;
@@ -404,7 +465,12 @@ mod tests {
             }
         });
 
-        let frame_check_passed = run_emulator(&mut emu, break_recv);
+        let frame_check_passed = run_test_emulator(
+            &mut emu,
+            break_recv,
+            Some(&input_recv),
+            Some(&frame_send),
+        );
         let test_passed = frame_check_passed.is_some();
         return Some(test_passed);
     }
