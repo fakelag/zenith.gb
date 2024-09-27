@@ -1,4 +1,4 @@
-use std::{fmt::{self, Display}, sync::mpsc::{Receiver, SyncSender, TryRecvError}, time};
+use std::fmt::{self, Display};
 
 use crate::{
     cartridge::cartridge::*,
@@ -7,8 +7,6 @@ use crate::{
     ppu::ppu,
     timer::timer
 };
-
-pub type FrameBuffer = [[u8; 160]; 144];
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum GbButton {
@@ -34,8 +32,6 @@ pub struct Emu {
     pub ppu: ppu::PPU,
     pub mmu: mmu::MMU,
     pub timer: timer::Timer,
-
-    pub frame_chan: Option<SyncSender<FrameBuffer>>,
 }
 
 impl Display for Emu {
@@ -47,30 +43,25 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(
-        cartridge: Cartridge,
-        frame_chan: Option<SyncSender<FrameBuffer>>,
-    ) -> Emu {
+    pub fn new(cartridge: Cartridge) -> Emu {
         Self {
             mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
             timer: timer::Timer::new(),
             cartridge,
-            frame_chan,
         }
     }
 
-    pub fn run(&mut self, num_cycles: u64, input_chan: Option<&Receiver<InputEvent>>) -> Option<u64> {
+    pub fn run(&mut self, num_cycles: u64) -> (u64, bool) {
         let mut cycles_run: u64 = 0;
-        while cycles_run < num_cycles {
-            self.input_update(input_chan);
 
+        while cycles_run < num_cycles {
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginCPU);
             let cycles = self.cpu.step(&mut self.mmu);
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginPPU);
-            let exit = self.ppu.step(&mut self.mmu, &mut self.frame_chan, cycles);
+            let vsync = self.ppu.step(&mut self.mmu, cycles);
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.timer.step(&mut self.mmu, cycles);
@@ -80,34 +71,21 @@ impl Emu {
 
             cycles_run += u64::from(cycles);
 
-            if exit {
-                return None;
+            if vsync {
+                return (cycles_run, true);
             }
        }
 
-       return Some(cycles_run);
+       return (cycles_run, false);
    }
 
     pub fn close(&mut self) {
         self.mmu.close();
     }
 
-    fn input_update(&mut self, input_chan: Option<&Receiver<InputEvent>>) {
-        if let Some(input_chan) = input_chan {
-            loop {
-                match input_chan.try_recv() {
-                    Ok(input_event) => {
-                        self.mmu.update_input(input_event);
-                        continue;
-                    }
-                    Err(TryRecvError::Disconnected) => {
-                        return;
-                    }
-                    Err(TryRecvError::Empty) => {
-                        return;
-                    }
-                }
-            }
+    pub fn input_update(&mut self, input_vec: &Vec<InputEvent>) {
+        for input_event in input_vec.iter() {
+            self.mmu.update_input(input_event);
         }
    }
 

@@ -1,6 +1,8 @@
-use std::{fmt::{self, Display}, sync::mpsc::SyncSender};
+use std::fmt::{self, Display};
 
-use crate::{cpu::*, emu::emu::FrameBuffer, mmu::mmu::{MMU, MemoryRegion}};
+use crate::{cpu::*, mmu::mmu::{MMU, MemoryRegion}};
+
+pub type FrameBuffer = [[u8; 160]; 144];
 
 const DOTS_PER_OAM_SCAN: u16 = 80;
 const DOTS_PER_VBLANK: u16 = 4560;
@@ -65,7 +67,7 @@ pub struct PPU {
 
     bg_scanline_mask: [u8; 160],
 
-    rt: [[u8; 160]; 144],
+    rt: FrameBuffer,
 }
 
 impl Display for PPU {
@@ -96,6 +98,10 @@ impl PPU {
         }
     }
 
+    pub fn get_framebuffer(&self) -> &FrameBuffer {
+        &self.rt
+    }
+
     fn get_mode(&mut self, mmu: &mut MMU) -> PpuMode {
         unsafe { std::mem::transmute::<u8, PpuMode>(mmu.stat().get() & 0x3) }
     }
@@ -122,7 +128,7 @@ impl PPU {
         self.set_mode(mmu, PpuMode::PpuHBlank);
     }
 
-    pub fn step(&mut self, mmu: &mut MMU, frame_chan: &mut Option<SyncSender<FrameBuffer>>, cycles_passed: u8) -> bool {
+    pub fn step(&mut self, mmu: &mut MMU, cycles_passed: u8) -> bool {
         let lcd_enable = mmu.lcdc().check_bit(7);
 
         if !lcd_enable {
@@ -139,7 +145,8 @@ impl PPU {
         debug_assert!(mmu.ly().get() <= 153);
         
         let mut dots_budget = u16::from(cycles_passed * 4) + self.dots_leftover;
-        let mut exit = false;
+        let mut vsync = false;
+
         self.dots_leftover = 0;
 
         while dots_budget > 0 {
@@ -187,11 +194,7 @@ impl PPU {
                             self.window_line_counter = 0;
                             self.draw_window = false;
 
-                            if let Some(channel) = frame_chan { 
-                                if let Err(_err) = channel.send(self.rt) {
-                                    exit = true;
-                                }
-                            }
+                            vsync = true;
 
                             // set vblank interrupt
                             let flags_if = mmu.r#if().get();
@@ -237,7 +240,7 @@ impl PPU {
 
         self.handle_stat_interrupt(mmu);
 
-        return exit;
+        return vsync;
     }
 
         
