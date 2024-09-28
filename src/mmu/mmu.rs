@@ -1,3 +1,6 @@
+use std::sync::mpsc::Sender;
+
+use crate::apu::apu;
 use crate::cartridge::cartridge::*;
 use crate::cpu::cpu;
 use crate::emu::emu::{self, GbButton::*};
@@ -55,10 +58,14 @@ pub struct MMU {
     active_dma: Option<DmaTransfer>,
 
     buttons: [bool; emu::GbButton::GbButtonMax as usize],
+
+    // @todo - This is for now here to trigger memory writes on the
+    // APU directly
+    apu: apu::APU,
 }
 
 impl MMU {
-    pub fn new(cartridge: &Cartridge) -> MMU {
+    pub fn new(cartridge: &Cartridge, sound_chan: Option<Sender<apu::ApuSample>>) -> MMU {
         let mut mmu = Self {
             memory: vec![0; 0x10000],
             access_flags: 0,
@@ -68,6 +75,7 @@ impl MMU {
             dma_request: None,
             buttons: [false; emu::GbButton::GbButtonMax as usize],
             supported_carttype: true,
+            apu: apu::APU::new(sound_chan),
         };
         mmu.load(cartridge);
         mmu
@@ -157,9 +165,7 @@ impl MMU {
         self.access_origin = origin;
     }
 
-    pub fn bus_read(&self, address: u16) -> u8 {
-        let cpu_access = self.access_origin == AccessOrigin::AccessOriginCPU;
-
+    pub fn bus_read(&mut self, address: u16) -> u8 {
         if !self.address_accessible(address) {
             return 0xFF;
         }
@@ -200,6 +206,8 @@ impl MMU {
                 return 0;
             }
             0xFF00..=0xFF7F => {
+                let cpu_access = self.access_origin == AccessOrigin::AccessOriginCPU;
+
                 if !cpu_access {
                     return self.memory[usize::from(address)];
                 }
@@ -216,8 +224,6 @@ impl MMU {
                     HWR_NR13 => { return 0xFF; }
                     0xFF15 => { return 0xFF; }
                     HWR_NR23 => { return 0xFF; }
-                    HWR_NR31 => { return 0xFF; }
-                    HWR_NR33 => { return 0xFF; }
                     0xFF1F => { return 0xFF; }
                     HWR_NR41 => { return 0xFF; }
                     0xFF27..=0xFF2F => { return 0xFF; }
@@ -226,13 +232,19 @@ impl MMU {
                         // Reads ignored for non-dmg registers
                         return 0xFF;
                     }
+                    0xFF30..=0xFF3F => { return self.apu.get_channel3().read_wave_ram(usize::from(address & 0xF)); }
+                    0xFF1A => { return self.apu.get_channel3().read_nr30(); }
+                    0xFF1B => { return self.apu.get_channel3().read_nr31(); }
+                    0xFF1C => { return self.apu.get_channel3().read_nr32(); }
+                    0xFF1D => { return self.apu.get_channel3().read_nr33(); }
+                    0xFF1E => { return self.apu.get_channel3().read_nr34(); }
                     _ => {
                         // IO ranges
                         return self.memory[usize::from(address)];
                     }
                 }
             }
-            // IO ranges & HRAM https://gbdev.io/pandocs/Hardware_Reg_List.html
+            // HRAM https://gbdev.io/pandocs/Hardware_Reg_List.html
             0xFF80..=0xFFFE => {
                 // HRAM
                 return self.memory[usize::from(address)];
@@ -346,6 +358,7 @@ impl MMU {
         }
 
         self.mbc.step(cycles_passed);
+        self.apu.step(cycles_passed);
     }
 
     pub fn is_supported_cart_type(&self) -> bool {
@@ -388,16 +401,6 @@ impl MMU {
                 let ro_bits = self.memory[usize::from(address)] & 0x80;
                 self.memory[usize::from(address)] = (data & 0x7F) | ro_bits;
             }
-            HWR_NR30 => {
-                // Lower 6 bits unused
-                let ro_bits = self.memory[usize::from(address)] & 0x7F;
-                self.memory[usize::from(address)] = (data & 0x80) | ro_bits;
-            }
-            HWR_NR32 => {
-                // Bits 7 & lower 5 bits unused
-                let ro_bits = self.memory[usize::from(address)] & 0x9F;
-                self.memory[usize::from(address)] = (data & 0x60) | ro_bits;
-            }
             HWR_NR44 => {
                 // Lower 5 bits unused
                 let ro_bits = self.memory[usize::from(address)] & 0x3F;
@@ -426,6 +429,12 @@ impl MMU {
             0xFF4D..=0xFF70 => {
                 // Writes ignored for non DMG registers
             }
+            0xFF30..=0xFF3F => { self.apu.get_channel3().write_wave_ram(usize::from(address & 0xF), data); }
+            0xFF1A => { self.apu.get_channel3().write_nr30(data); }
+            0xFF1B => { self.apu.get_channel3().write_nr31(data); }
+            0xFF1C => { self.apu.get_channel3().write_nr32(data); }
+            0xFF1D => { self.apu.get_channel3().write_nr33(data); }
+            0xFF1E => { self.apu.get_channel3().write_nr34(data); }
             _ => {
                 self.memory[usize::from(address)] = data;
             }
@@ -477,11 +486,11 @@ impl MMU {
     pub fn nr22<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR22, self) }
     pub fn nr23<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR23, self) }
     pub fn nr24<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR24, self) }
-    pub fn nr30<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR30, self) }
-    pub fn nr31<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR31, self) }
-    pub fn nr32<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR32, self) }
-    pub fn nr33<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR33, self) }
-    pub fn nr34<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR34, self) }
+    // pub fn nr30<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR30, self) }
+    // pub fn nr31<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR31, self) }
+    // pub fn nr32<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR32, self) }
+    // pub fn nr33<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR33, self) }
+    // pub fn nr34<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR34, self) }
     pub fn nr41<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR41, self) }
     pub fn nr42<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR42, self) }
     pub fn nr43<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR43, self) }

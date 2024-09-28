@@ -652,7 +652,7 @@ impl PPU {
     }
 
     fn handle_stat_interrupt(&mut self, mmu: &mut MMU) {
-        let stat = mmu.stat();
+        let mut stat = mmu.stat();
 
         self.stat_interrupt = 0;
 

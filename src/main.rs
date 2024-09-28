@@ -1,7 +1,8 @@
-use std::time;
+use std::{sync::mpsc::{self, Sender}, time};
 
 use cartridge::cartridge::Cartridge;
 
+mod apu;
 mod cartridge;
 mod cpu;
 mod emu;
@@ -12,7 +13,6 @@ mod util;
 
 use emu::emu::{Emu, GbButton, InputEvent};
 use ppu::ppu::FrameBuffer;
-use sdl2::keyboard::Scancode;
 
 const T_CYCLES_PER_FRAME: u64 = 4_194_304 / 60;
 const M_CYCLES_PER_FRAME: u64 = T_CYCLES_PER_FRAME / 4;
@@ -21,9 +21,7 @@ const GB_SCREEN_WIDTH: u32 = 160;
 const GB_SCREEN_HEIGHT: u32 = 144;
 const WINDOW_SIZE_MULT: u32 = 4;
 
-fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl) {
-    let sdl_ctx = sdl2::init().unwrap();
-
+fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::Window> {
     let video_subsystem = sdl_ctx.video().unwrap();
 
     let window = video_subsystem
@@ -43,7 +41,115 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
         .set_logical_size(GB_SCREEN_HEIGHT, GB_SCREEN_WIDTH)
         .expect("canvast must set device independent resolution");
 
-    return (canvas, sdl_ctx);
+    return canvas;
+}
+
+#[derive(Debug)]
+struct GbAudio {
+    // volume: f32,
+    // pos: usize,
+    // data: Vec<i16>,
+    sound_recv: mpsc::Receiver<apu::apu::ApuSample>,
+}
+
+// impl GbAudio {
+//     recv_thread(&mut self) {
+//         loop {
+//             match self.sound_recv.try_recv() {
+
+//             }
+//         }
+//     }
+// }
+
+impl sdl2::audio::AudioCallback for GbAudio {
+    type Channel = i16;
+
+    fn callback(&mut self, out: &mut [Self::Channel]) {
+        let mut out_iter = out.iter_mut();
+
+        loop {
+            match self.sound_recv.try_recv() {
+                Ok(sample) => {
+                    let left = i16::from(sample.0);
+                    let right = i16::from(sample.1);
+
+                    let left_cvt = (left-32) << 10;
+                    let right_cvt = (right-32) << 10;
+
+                    // println!("left_cvt={} right_cvt={}", left_cvt, right_cvt);
+
+                    if let Some(nxt) = out_iter.next() {
+                        *nxt = left_cvt;
+                    }
+
+                    if let Some(nxt) = out_iter.next() {
+                        *nxt = right_cvt;
+                    }
+                }
+                Err(err) => {
+                    // eprintln!("Callback recv error: {}", err);
+                    break;
+                }
+            }
+        }
+
+        for dst in out_iter {
+            *dst = 0;
+        }
+    }
+}
+
+fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
+    sdl2::audio::AudioDevice<GbAudio>,
+    Sender<apu::apu::ApuSample>,
+) {
+    let audio_subsystem = sdl_ctx.audio().unwrap();
+
+    let spec_desired = sdl2::audio::AudioSpecDesired{
+        channels: Some(2),
+        freq: Some(44_100),
+        samples: Some(4096),
+    };
+
+    let (sound_send, sound_recv) = mpsc::channel::<apu::apu::ApuSample>();
+
+    let device = audio_subsystem.open_playback(None, &spec_desired, |spec| {
+        println!("spec={:?}", spec);
+
+        // let wav = sdl2::audio::AudioSpecWAV::load_wav("dev/sine.wav")
+        //     .expect("WAV file should exist");
+
+        // let cvt = sdl2::audio::AudioCVT::new(
+        //     wav.format,
+        //     wav.channels,
+        //     wav.freq,
+        //     spec.format,
+        //     spec.channels,
+        //     spec.freq,
+        // ).expect("WAV file should be convertable");
+
+        // let data: Vec<i16> = cvt.convert(wav.buffer().to_vec())
+        //     .chunks_exact(2)
+        //     .into_iter()
+        //     .map(|b| i16::from_ne_bytes([b[0], b[1]]))
+        //     .collect();
+
+        // println!("spec={:?} wavformat={:?}", spec, wav.format);
+
+        GbAudio {
+            // data,
+            // pos: 0,
+            // volume: 1.0,
+            sound_recv,
+        }
+    }).unwrap();
+
+    println!("status={:?}", device.status());
+    device.resume();
+    println!("status={:?}", device.status());
+
+    (device, sound_send)
 }
 
 const PALETTE: [sdl2::pixels::Color; 4] = [
@@ -53,23 +159,23 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
 ];
 
-fn create_emulator(rom_path: &str) -> Emu {
+fn create_emulator(rom_path: &str, sound_chan: Option<Sender<apu::apu::ApuSample>>) -> Emu {
     let cart = Cartridge::new(rom_path);
-    let mut emu = Emu::new(cart);
+    let mut emu = Emu::new(cart, sound_chan);
     emu.dmg_boot();
     emu
 }
 
-fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {
+fn scancode_to_gb_button(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
     match scancode {
-        Some(Scancode::W) => { Some(GbButton::GbButtonUp) }
-        Some(Scancode::A) => { Some(GbButton::GbButtonLeft) }
-        Some(Scancode::S) => { Some(GbButton::GbButtonDown) }
-        Some(Scancode::D) => { Some(GbButton::GbButtonRight) }
-        Some(Scancode::E) | Some(Scancode::O) => { Some(GbButton::GbButtonA) }
-        Some(Scancode::R) | Some(Scancode::P) => { Some(GbButton::GbButtonB) }
-        Some(Scancode::N) => { Some(GbButton::GbButtonSelect) }
-        Some(Scancode::M) => { Some(GbButton::GbButtonStart) }
+        Some(sdl2::keyboard::Scancode::W) => { Some(GbButton::GbButtonUp) }
+        Some(sdl2::keyboard::Scancode::A) => { Some(GbButton::GbButtonLeft) }
+        Some(sdl2::keyboard::Scancode::S) => { Some(GbButton::GbButtonDown) }
+        Some(sdl2::keyboard::Scancode::D) => { Some(GbButton::GbButtonRight) }
+        Some(sdl2::keyboard::Scancode::E) | Some(sdl2::keyboard::Scancode::O) => { Some(GbButton::GbButtonA) }
+        Some(sdl2::keyboard::Scancode::R) | Some(sdl2::keyboard::Scancode::P) => { Some(GbButton::GbButtonB) }
+        Some(sdl2::keyboard::Scancode::N) => { Some(GbButton::GbButtonSelect) }
+        Some(sdl2::keyboard::Scancode::M) => { Some(GbButton::GbButtonStart) }
         _ => { None }
     }
 }
@@ -83,11 +189,12 @@ enum State {
 fn poll_events(
     input_vec: &mut Vec<InputEvent>,
     event_pump: &mut sdl2::EventPump,
+    sound_chan: &Sender<apu::apu::ApuSample>,
 ) -> Option<State> {
     for event in event_pump.poll_iter() {
         match event {
             sdl2::event::Event::DropFile { filename, .. } => {
-                return Some(State::Running(create_emulator(&filename)));
+                return Some(State::Running(create_emulator(&filename, Some(sound_chan.clone()))));
             }
             sdl2::event::Event::Quit {..} => {
                 return Some(State::Exit);
@@ -150,6 +257,7 @@ fn run(
     state: &mut State,
     canvas: &mut sdl2::render::WindowCanvas,
     event_pump: &mut sdl2::EventPump,
+    sound_chan: Sender<apu::apu::ApuSample>,
 ) -> State {
     match state {
         State::Idle => {
@@ -157,7 +265,8 @@ fn run(
                 for event in event_pump.wait_timeout_iter(100) {
                     match event {
                         sdl2::event::Event::DropFile { filename, .. } => {
-                            return State::Running(create_emulator(&filename));
+                            // @todo - Handle sound channel better
+                            return State::Running(create_emulator(&filename, Some(sound_chan.clone())));
                         }
                         sdl2::event::Event::Quit {..} => {
                             return State::Exit;
@@ -179,7 +288,7 @@ fn run(
             loop {
                 let start_time = time::Instant::now();
 
-                if let Some(next_state) = poll_events(&mut input_vec, event_pump) {
+                if let Some(next_state) = poll_events(&mut input_vec, event_pump, &sound_chan) {
                     return next_state;
                 }
 
@@ -214,13 +323,16 @@ fn run(
 }
 
 fn main() {
-    let (mut canvas, sdl_ctx) = sdl2_create_window();
+    let sdl_ctx = sdl2::init().unwrap();
+    let mut canvas = sdl2_create_window(&sdl_ctx);
+
+    let (_audiodevice, sound_chan) = sdl2_create_audio(&sdl_ctx);
     
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     let mut state = State::Idle;
 
     'eventloop: loop {
-        let next_state = run(&mut state, &mut canvas, &mut event_pump);
+        let next_state = run(&mut state, &mut canvas, &mut event_pump, sound_chan.clone());
 
         match next_state {
             State::Exit => {
@@ -247,7 +359,7 @@ mod tests {
 
     fn create_test_emulator(rom_path: &str) -> Option<Emu> {
         let cart = Cartridge::new(rom_path);
-        let mut emu = Emu::new(cart);
+        let mut emu = Emu::new(cart, None);
 
         if !emu.mmu.is_supported_cart_type() {
             println!("Skipping {rom_path} due to unsupported cart type");

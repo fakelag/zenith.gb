@@ -1,11 +1,7 @@
-use std::fmt::{self, Display};
+use std::{fmt::{self, Display}, sync::mpsc::Sender};
 
 use crate::{
-    cartridge::cartridge::*,
-    cpu::cpu,
-    mmu::mmu,
-    ppu::ppu,
-    timer::timer
+    apu::apu, cartridge::cartridge::*, cpu::cpu, mmu::mmu, ppu::ppu, timer::timer
 };
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -43,9 +39,9 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge: Cartridge) -> Emu {
+    pub fn new(cartridge: Cartridge, sound_chan: Option<Sender<apu::ApuSample>>) -> Emu {
         Self {
-            mmu: mmu::MMU::new(&cartridge),
+            mmu: mmu::MMU::new(&cartridge, sound_chan),
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
             timer: timer::Timer::new(),
@@ -65,8 +61,6 @@ impl Emu {
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.timer.step(&mut self.mmu, cycles);
-
-            self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.mmu.step(cycles);
 
             cycles_run += u64::from(cycles);
@@ -113,11 +107,11 @@ impl Emu {
         self.mmu.nr22().set(0x00);
         self.mmu.nr23().set(0xFF);
         self.mmu.nr24().set(0xBF);
-        self.mmu.nr30().set(0x7F);
-        self.mmu.nr31().set(0xFF);
-        self.mmu.nr32().set(0x9F);
-        self.mmu.nr33().set(0xFF);
-        self.mmu.nr34().set(0xBF);
+        // self.mmu.nr30().set(0x7F);
+        // self.mmu.nr31().set(0xFF);
+        // self.mmu.nr32().set(0x9F);
+        // self.mmu.nr33().set(0xFF);
+        // self.mmu.nr34().set(0xBF);
         self.mmu.nr41().set(0xFF);
         self.mmu.nr42().set(0x00);
         self.mmu.nr43().set(0x00);

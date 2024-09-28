@@ -21,8 +21,8 @@ pub const HWR_NR24: u16 = 0xFF19;
 pub const HWR_NR30: u16 = 0xFF1A;
 pub const HWR_NR31: u16 = 0xFF1B;
 pub const HWR_NR32: u16 = 0xFF1C;
-pub const HWR_NR33: u16 = 0xFF1D;
-pub const HWR_NR34: u16 = 0xFF1E;
+pub const HWR_NR33: u16 = 0xFF1D; // Channel3 period low
+pub const HWR_NR34: u16 = 0xFF1E; // Channel3 period high & control
 pub const HWR_NR41: u16 = 0xFF20;
 pub const HWR_NR42: u16 = 0xFF21;
 pub const HWR_NR43: u16 = 0xFF22;
@@ -58,7 +58,7 @@ impl<'a> HwReg<'a> {
         self.mmu.bus_write(self.addr, val);
     }
 
-    pub fn get(&self) -> u8 {
+    pub fn get(&mut self) -> u8 {
         self.mmu.bus_read(self.addr)
     }
 
@@ -74,7 +74,7 @@ impl<'a> HwReg<'a> {
         prev
     }
 
-    pub fn check_bit(&self, bit: u8) -> bool {
+    pub fn check_bit(&mut self, bit: u8) -> bool {
         debug_assert!(bit < 8);
         (self.get() & (1 << bit)) != 0
     }
