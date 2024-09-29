@@ -53,7 +53,7 @@ impl Channel3 {
         self.freq_timer = (2048 - frequency) * 2;
 
         // Trigger event: Wave channel's position is set to 0 but sample buffer is NOT refilled.
-        self.sample_index = 1;
+        self.sample_index = 0;
     }
 
     pub fn write_nr30(&mut self, data: u8) {
@@ -72,7 +72,6 @@ impl Channel3 {
     }
 
     pub fn write_nr32(&mut self, data: u8) {
-        // @todo - Volume control
         let ro_bits = self.nr32 & 0x9F;
         self.nr32 = (data & 0x60) | ro_bits;
     }
@@ -93,13 +92,13 @@ impl Channel3 {
 
         self.length_counter.set_enabled(length_enable_next);
 
+        self.nr34 = data & 0xC7;
+
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;
         } else if data & 0x80 != 0 {
             self.trigger();
         }
-
-        self.nr34 = data & 0xC7;
     }
 
     pub fn write_wave_ram(&mut self, addr: usize, data: u8) {
