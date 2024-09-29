@@ -12,11 +12,9 @@ pub struct Channel3 {
     is_enabled: bool,
     sample_index: usize,
 
-    nr30: u8,
-    nr31: u8,
-    nr32: u8,
-    nr33: u8,
-    nr34: u8,
+    reg_dac_enable: bool,
+    reg_volume: u8,
+    reg_frequency: u16,
 
     wave_ram: [u8; 16],
     sample: u8,
@@ -29,60 +27,51 @@ impl Channel3 {
             length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
             sample_index: 1,
             is_enabled: false,
-            nr30: 0x7F,
-            nr31: 0xFF,
-            nr32: 0x9F,
-            nr33: 0xFF,
-            nr34: 0xBF,
+            reg_dac_enable: false,
+            reg_volume: 0,
+            reg_frequency: 0,
             wave_ram: [0; 16],
             sample: 0,
         }
     }
 
-    fn dac_enabled(&self) -> bool {
-        self.nr30 & 0x80 != 0
-    }
-
     fn trigger(&mut self) {
         // @todo - Triggering while reading sample from wave ram corrupts the data
-        self.is_enabled = self.dac_enabled();
+        self.is_enabled = self.reg_dac_enable;
 
-        // self.freq_timer = 6; // @todo - Check blargg test 09 wave read while on
         // Trigger event: Frequency timer is reloaded with period.
-        let frequency = util::value(self.nr34 & 0x7, self.nr33);
-        self.freq_timer = (2048 - frequency) * 2;
+        // self.freq_timer = 6; // @todo - Check blargg test 09 wave read while on
+        self.freq_timer = (2048 - self.reg_frequency) * 2;
 
         // Trigger event: Wave channel's position is set to 0 but sample buffer is NOT refilled.
         self.sample_index = 0;
     }
 
     pub fn write_nr30(&mut self, data: u8) {
-        let dac_enable = data & 0x80;
-        let ro_bits = self.nr30 & 0x7F;
-        self.nr30 = dac_enable | ro_bits;
+        self.reg_dac_enable = data & 0x80 != 0;
 
-        if dac_enable == 0 {
+        if !self.reg_dac_enable {
             self.is_enabled = false;
         }
     }
 
     pub fn write_nr31(&mut self, data: u8) {
         self.length_counter.set_count(LENGTH_COUNTER_INIT - u16::from(data));
-        self.nr31 = data;
     }
 
     pub fn write_nr32(&mut self, data: u8) {
-        let ro_bits = self.nr32 & 0x9F;
-        self.nr32 = (data & 0x60) | ro_bits;
+        self.reg_volume = (data & 0x60) >> 5;
     }
 
     pub fn write_nr33(&mut self, data: u8) {
         // @todo Period changes (written to NR33 or NR34) only take effect after the following time wave RAM is read.
         // https://gbdev.io/pandocs/Audio_Registers.html#ff1d--nr33-channel-3-period-low-write-only
-        self.nr33 = data;
+        self.reg_frequency = (self.reg_frequency & 0x700) | u16::from(data);
     }
 
     pub fn write_nr34(&mut self, data: u8) {
+        self.reg_frequency = ((u16::from(data) & 0x7) << 8) | (self.reg_frequency & 0xFF);
+
         let length_enable_current = self.length_counter.is_enabled();
         let length_enable_next = data & 0x40 != 0;
 
@@ -91,8 +80,6 @@ impl Channel3 {
         }
 
         self.length_counter.set_enabled(length_enable_next);
-
-        self.nr34 = data & 0xC7;
 
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;
@@ -110,7 +97,11 @@ impl Channel3 {
     }
 
     pub fn read_nr30(&mut self) -> u8 {
-        self.nr30
+        if self.reg_dac_enable {
+            0x80
+        } else {
+            0x0
+        }
     }
 
     pub fn read_nr31(&mut self) -> u8 {
@@ -118,7 +109,7 @@ impl Channel3 {
     }
 
     pub fn read_nr32(&mut self) -> u8 {
-        self.nr32
+        self.reg_volume << 5
     }
 
     pub fn read_nr33(&mut self) -> u8 {
@@ -127,7 +118,12 @@ impl Channel3 {
 
     pub fn read_nr34(&mut self) -> u8 {
         // All other bits RO & set to 1 than length enable (bit 6)
-        self.nr34 | 0xBF
+        let length_bit = if self.get_length_counter().is_enabled() {
+            0x40
+        } else {
+            0
+        };
+        0xBF | length_bit
     }
 
     pub fn read_wave_ram(&mut self, addr: usize) -> u8 {
@@ -153,8 +149,7 @@ impl Channel for Channel3 {
             return;
         }
 
-        let frequency = util::value(self.nr34 & 0x7, self.nr33);
-        self.freq_timer = (2048 - frequency) * 2;
+        self.freq_timer = (2048 - self.reg_frequency) * 2;
 
         if !self.is_enabled() {
             self.sample = 0;
@@ -169,10 +164,9 @@ impl Channel for Channel3 {
             wave_sample & 0xF
         };
 
-        let volume = (self.nr32 & 0x60) >> 5;
-        wave_sample = match volume {
+        wave_sample = match self.reg_volume {
             0 => wave_sample >> 4,
-            _ => wave_sample >> (volume - 1),
+            vol_shift => wave_sample >> (vol_shift - 1),
         };
 
         self.sample = wave_sample;
@@ -188,6 +182,6 @@ impl Channel for Channel3 {
     }
 
     fn is_enabled(&self) -> bool {
-        self.is_enabled && self.dac_enabled()
+        self.is_enabled && self.reg_dac_enable
     }
 }
