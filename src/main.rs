@@ -46,66 +46,42 @@ fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::
 
 #[derive(Debug)]
 struct GbAudio {
-    // volume: f32,
-    // pos: usize,
-    // data: Vec<i16>,
-    last: i16,
-    sound_recv: mpsc::Receiver<apu::apu::ApuSample>,
+    silence: i16,
+    sound_recv: mpsc::Receiver<apu::apu::ApuSampleBuffer>,
 }
-
-// impl GbAudio {
-//     recv_thread(&mut self) {
-//         loop {
-//             match self.sound_recv.try_recv() {
-
-//             }
-//         }
-//     }
-// }
 
 impl sdl2::audio::AudioCallback for GbAudio {
     type Channel = i16;
 
     fn callback(&mut self, out: &mut [Self::Channel]) {
-        let mut out_iter = out.iter_mut();
-
-        loop {
-            match self.sound_recv.try_recv() {
-                Ok(sample) => {
-                    let left = i16::from(sample.0);
-                    let right = i16::from(sample.1);
+        match self.sound_recv.try_recv() {
+            Ok(samples) => {
+                for i in 0..4096 {
+                    let (l, r) = samples[i];
+                    let left = i16::from(l);
+                    let right = i16::from(r);
 
                     let left_cvt = (left-32) << 10;
                     let right_cvt = (right-32) << 10;
 
-                    // println!("left_cvt={} right_cvt={}", left_cvt, right_cvt);
-
-                    if let Some(nxt) = out_iter.next() {
-                        *nxt = left_cvt;
-                        self.last = left_cvt;
-                    }
-
-                    if let Some(nxt) = out_iter.next() {
-                        *nxt = right_cvt;
-                        self.last = right_cvt;
-                    }
-                }
-                Err(err) => {
-                    // eprintln!("Callback recv error: {}", err);
-                    break;
+                    out[i * 2] = left_cvt;
+                    out[i * 2 + 1] = right_cvt;
+                    self.silence = right_cvt;
                 }
             }
-        }
-
-        for dst in out_iter {
-            *dst = self.last;
+            Err(_err) => {
+                for dst in out.iter_mut() {
+                    *dst = self.silence;
+                }
+                // eprintln!("Recv error: {} - {:?}", err, std::time::Instant::now());
+            }
         }
     }
 }
 
 fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
     sdl2::audio::AudioDevice<GbAudio>,
-    Sender<apu::apu::ApuSample>,
+    apu::apu::ApuSoundSender,
 ) {
     let audio_subsystem = sdl_ctx.audio().unwrap();
 
@@ -115,43 +91,16 @@ fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
         samples: Some(4096),
     };
 
-    let (sound_send, sound_recv) = mpsc::channel::<apu::apu::ApuSample>();
+    let (sound_send, sound_recv) = mpsc::sync_channel::<apu::apu::ApuSampleBuffer>(1);
 
     let device = audio_subsystem.open_playback(None, &spec_desired, |spec| {
-        println!("spec={:?}", spec);
-
-        // let wav = sdl2::audio::AudioSpecWAV::load_wav("dev/sine.wav")
-        //     .expect("WAV file should exist");
-
-        // let cvt = sdl2::audio::AudioCVT::new(
-        //     wav.format,
-        //     wav.channels,
-        //     wav.freq,
-        //     spec.format,
-        //     spec.channels,
-        //     spec.freq,
-        // ).expect("WAV file should be convertable");
-
-        // let data: Vec<i16> = cvt.convert(wav.buffer().to_vec())
-        //     .chunks_exact(2)
-        //     .into_iter()
-        //     .map(|b| i16::from_ne_bytes([b[0], b[1]]))
-        //     .collect();
-
-        // println!("spec={:?} wavformat={:?}", spec, wav.format);
-
         GbAudio {
-            // data,
-            // pos: 0,
-            // volume: 1.0,
-            last: 0,
+            silence: 0,
             sound_recv,
         }
     }).unwrap();
 
-    println!("status={:?}", device.status());
     device.resume();
-    println!("status={:?}", device.status());
 
     (device, sound_send)
 }
@@ -163,7 +112,7 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
 ];
 
-fn create_emulator(rom_path: &str, sound_chan: Option<Sender<apu::apu::ApuSample>>) -> Emu {
+fn create_emulator(rom_path: &str, sound_chan: Option<apu::apu::ApuSoundSender>) -> Emu {
     let cart = Cartridge::new(rom_path);
     let mut emu = Emu::new(cart, sound_chan);
     emu.dmg_boot();
@@ -193,7 +142,7 @@ enum State {
 fn poll_events(
     input_vec: &mut Vec<InputEvent>,
     event_pump: &mut sdl2::EventPump,
-    sound_chan: &Sender<apu::apu::ApuSample>,
+    sound_chan: &apu::apu::ApuSoundSender,
 ) -> Option<State> {
     for event in event_pump.poll_iter() {
         match event {
@@ -261,7 +210,7 @@ fn run(
     state: &mut State,
     canvas: &mut sdl2::render::WindowCanvas,
     event_pump: &mut sdl2::EventPump,
-    sound_chan: Sender<apu::apu::ApuSample>,
+    sound_chan: apu::apu::ApuSoundSender,
 ) -> State {
     match state {
         State::Idle => {
@@ -318,7 +267,7 @@ fn run(
                 let sleep_time = (16000 as u64).saturating_sub(elapsed);
 
                 if sleep_time > 0 {
-                    spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+                   spin_sleep::sleep(time::Duration::from_micros(sleep_time));
                 }
             }
         }

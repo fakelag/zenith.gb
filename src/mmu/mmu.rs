@@ -1,5 +1,3 @@
-use std::sync::mpsc::Sender;
-
 use crate::apu::apu;
 use crate::cartridge::cartridge::*;
 use crate::cpu::cpu;
@@ -65,7 +63,7 @@ pub struct MMU {
 }
 
 impl MMU {
-    pub fn new(cartridge: &Cartridge, sound_chan: Option<Sender<apu::ApuSample>>) -> MMU {
+    pub fn new(cartridge: &Cartridge, sound_chan: Option<apu::ApuSoundSender>) -> MMU {
         let mut mmu = Self {
             memory: vec![0; 0x10000],
             access_flags: 0,
@@ -83,11 +81,6 @@ impl MMU {
 
     pub fn load(&mut self, cartridge: &Cartridge) {
         self.memory = vec![0; 0x10000];
-
-        // println!("Cart type={}", cartridge.header.cart_type);
-
-        // @todo - If cartridge header has +BATTERY, MBCs should store
-        // state of their RAM to a file and load it on boot
 
         self.mbc = match cartridge.header.cart_type {
             0x1..=0x3 => {

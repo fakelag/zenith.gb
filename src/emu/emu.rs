@@ -1,4 +1,4 @@
-use std::{fmt::{self, Display}, sync::mpsc::Sender};
+use std::fmt::{self, Display};
 
 use crate::{
     apu::apu, cartridge::cartridge::*, cpu::cpu, mmu::mmu, ppu::ppu, timer::timer
@@ -39,7 +39,7 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge: Cartridge, sound_chan: Option<Sender<apu::ApuSample>>) -> Emu {
+    pub fn new(cartridge: Cartridge, sound_chan: Option<apu::ApuSoundSender>) -> Emu {
         Self {
             mmu: mmu::MMU::new(&cartridge, sound_chan),
             cpu: cpu::CPU::new(),

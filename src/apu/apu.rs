@@ -1,18 +1,21 @@
-use std::{fs, io::Write, sync::mpsc::Sender};
+use std::{io::Write, sync::mpsc::SyncSender};
 
 use super::{channel3::Channel3, Channel};
 
-pub type ApuSample = (u8, u8);
+pub type ApuSampleBuffer = [(u8, u8); 4096];
+pub type ApuSoundSender = SyncSender<ApuSampleBuffer>;
 
 const FRAME_SEQUENCER_START: u16 = (4_194_304 / 512 as u32) as u16;
-const SAMPLE_COUNTER_START: u8 = 95;
+const SAMPLE_COUNTER_START: u16 = (4_194_304 / 44_100 as u32) as u16;
 
 pub struct APU {
     channel3: Channel3,
-    sample_counter: u8,
-    sound_chan: Option<Sender<ApuSample>>,
+    sample_counter: u16,
+    sound_chan: Option<ApuSoundSender>,
 
     tmp: Vec<i16>,
+    sample_buffer: ApuSampleBuffer,
+    sample_count: usize,
     frame_sequencer: u16,
 
     audio_enabled: bool,
@@ -23,12 +26,14 @@ pub struct APU {
 }
 
 impl APU {
-    pub fn new(sound_chan: Option<Sender<ApuSample>>) -> Self {
+    pub fn new(sound_chan: Option<ApuSoundSender>) -> Self {
         Self {
             channel3: Channel3::new(),
             sample_counter: SAMPLE_COUNTER_START,
             frame_sequencer: FRAME_SEQUENCER_START,
             sound_chan,
+            sample_buffer: [(0, 0); 4096],
+            sample_count: 0,
             tmp: Vec::new(),
             audio_enabled: true,
             right_pan: [false, false, true, true],
@@ -73,8 +78,6 @@ impl APU {
         wav_file.write(&[0]).unwrap();
 
         // rate=44100
-        let y = 44100;
-        let x = 176400;
         wav_file.write(&[0x44]).unwrap();
         wav_file.write(&[0xAC]).unwrap();
         wav_file.write(&[0]).unwrap();
@@ -191,10 +194,16 @@ impl APU {
         let left: u8 = left_scaled as u8;
         let right: u8 = right_scaled as u8;
 
-        // Send to SDL land
-        // println!("chan3: {}", chan3_sample);
-        if let Some(sound_chan) = &self.sound_chan {
-            sound_chan.send((left, right)).unwrap();
+        if self.sample_count < 4096 {
+            self.sample_buffer[self.sample_count] = (left, right);
+            self.sample_count += 1;
+        } else {
+            if let Some(sound_chan) = &self.sound_chan {
+                // try_send for non-synced audio with the compromise of audio glitches due to
+                // missing sample buffers in-between
+                sound_chan.send(self.sample_buffer).unwrap();
+                self.sample_count = 0;
+            }
         }
 
         // let mut left_i: i16 = 0;
@@ -216,7 +225,6 @@ impl APU {
     pub fn write_nr50(&mut self, data: u8) {
         self.right_vol = data & 0x7;
         self.left_vol = (data >> 4) & 0x7;
-        // @todo VIN left/right
     }
 
     pub fn write_nr51(&mut self, data: u8) {
