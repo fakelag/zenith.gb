@@ -116,9 +116,6 @@ impl Emu {
         self.mmu.nr42().set(0x00);
         self.mmu.nr43().set(0x00);
         self.mmu.nr44().set(0xBF);
-        self.mmu.nr50().set(0x77);
-        self.mmu.nr51().set(0xF3);
-        self.mmu.nr52().set(0xF1);
         self.mmu.lcdc().set(0x91);
         self.mmu.stat().set(0x85);
         self.mmu.scy().set(0x0);

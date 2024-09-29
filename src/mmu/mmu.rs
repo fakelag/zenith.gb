@@ -234,11 +234,14 @@ impl MMU {
                         return 0xFF;
                     }
                     0xFF30..=0xFF3F => { return self.apu.get_channel3().read_wave_ram(usize::from(address)); }
-                    0xFF1A => { return self.apu.get_channel3().read_nr30(); }
-                    0xFF1B => { return self.apu.get_channel3().read_nr31(); }
-                    0xFF1C => { return self.apu.get_channel3().read_nr32(); }
-                    0xFF1D => { return self.apu.get_channel3().read_nr33(); }
-                    0xFF1E => { return self.apu.get_channel3().read_nr34(); }
+                    HWR_NR30 => { return self.apu.get_channel3().read_nr30(); }
+                    HWR_NR31 => { return self.apu.get_channel3().read_nr31(); }
+                    HWR_NR32 => { return self.apu.get_channel3().read_nr32(); }
+                    HWR_NR33 => { return self.apu.get_channel3().read_nr33(); }
+                    HWR_NR34 => { return self.apu.get_channel3().read_nr34(); }
+                    HWR_NR50 => { return self.apu.read_nr50(); }
+                    HWR_NR51 => { return self.apu.read_nr51(); }
+                    HWR_NR52 => { return self.apu.read_nr52(); }
                     _ => {
                         // IO ranges
                         return self.memory[usize::from(address)];
@@ -407,12 +410,6 @@ impl MMU {
                 let ro_bits = self.memory[usize::from(address)] & 0x3F;
                 self.memory[usize::from(address)] = (data & 0xC0) | ro_bits;
             }
-            HWR_NR52 => {
-                // Bits 6-4 unused, lower nibble RO
-                // https://gbdev.io/pandocs/Audio_Registers.html#ff26--nr52-audio-master-control
-                let ro_bits = self.memory[usize::from(address)] & 0x7F;
-                self.memory[usize::from(address)] = (data & 0x80) | ro_bits;
-            }
             HWR_STAT => {
                 // Bit 7 unused, lower 3 bits RO
                 let ro_bits = self.memory[usize::from(address)] & 0x87;
@@ -431,11 +428,14 @@ impl MMU {
                 // Writes ignored for non DMG registers
             }
             0xFF30..=0xFF3F => { self.apu.get_channel3().write_wave_ram(usize::from(address), data); }
-            0xFF1A => { self.apu.get_channel3().write_nr30(data); }
-            0xFF1B => { self.apu.get_channel3().write_nr31(data); }
-            0xFF1C => { self.apu.get_channel3().write_nr32(data); }
-            0xFF1D => { self.apu.get_channel3().write_nr33(data); }
-            0xFF1E => { self.apu.get_channel3().write_nr34(data); }
+            HWR_NR30 => { self.apu.get_channel3().write_nr30(data); }
+            HWR_NR31 => { self.apu.get_channel3().write_nr31(data); }
+            HWR_NR32 => { self.apu.get_channel3().write_nr32(data); }
+            HWR_NR33 => { self.apu.get_channel3().write_nr33(data); }
+            HWR_NR34 => { self.apu.get_channel3().write_nr34(data); }
+            HWR_NR50 => { self.apu.write_nr50(data); }
+            HWR_NR51 => { self.apu.write_nr51(data); }
+            HWR_NR52 => { self.apu.write_nr52(data); }
             _ => {
                 self.memory[usize::from(address)] = data;
             }
@@ -496,9 +496,9 @@ impl MMU {
     pub fn nr42<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR42, self) }
     pub fn nr43<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR43, self) }
     pub fn nr44<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR44, self) }
-    pub fn nr50<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR50, self) }
-    pub fn nr51<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR51, self) }
-    pub fn nr52<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR52, self) }
+    // pub fn nr50<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR50, self) }
+    // pub fn nr51<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR51, self) }
+    // pub fn nr52<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR52, self) }
     pub fn lcdc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LCDC, self) }
     pub fn stat<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_STAT, self) }
     pub fn ly<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LY, self) }

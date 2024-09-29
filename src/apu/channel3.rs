@@ -1,5 +1,3 @@
-use crate::util::util;
-
 use super::{lengthcounter::LengthCounter, Channel};
 
 const LENGTH_COUNTER_INIT: u16 = 256;
@@ -97,11 +95,11 @@ impl Channel3 {
     }
 
     pub fn read_nr30(&mut self) -> u8 {
-        if self.reg_dac_enable {
+        return if self.reg_dac_enable {
             0x80
         } else {
             0x0
-        }
+        };
     }
 
     pub fn read_nr31(&mut self) -> u8 {

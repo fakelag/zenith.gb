@@ -14,6 +14,12 @@ pub struct APU {
 
     tmp: Vec<i16>,
     frame_sequencer: u16,
+
+    audio_enabled: bool,
+    right_pan: [bool; 4],
+    right_vol: u8,
+    left_pan: [bool; 4],
+    left_vol: u8,
 }
 
 impl APU {
@@ -24,6 +30,11 @@ impl APU {
             frame_sequencer: FRAME_SEQUENCER_START,
             sound_chan,
             tmp: Vec::new(),
+            audio_enabled: true,
+            right_pan: [false, false, true, true],
+            right_vol: 7,
+            left_pan: [true; 4],
+            left_vol: 7,
         }
     }
 
@@ -159,12 +170,26 @@ impl APU {
 
         let chan3_sample = self.channel3.get_sample();
 
-        let left = chan3_sample;
-        let right = chan3_sample;
+        let mut left_scaled = 0.0;
+        let mut right_scaled = 0.0;
 
-        let mut left_i: i16 = 0;
+        for i in 0..4 {
+            let channel_sample = if i == 2 {
+                f32::from(chan3_sample)
+            } else {
+                0.0
+            };
+            
+            if self.left_pan[i] {
+                left_scaled += channel_sample * APU::get_volume_scale(self.left_vol);
+            }
+            if self.right_pan[i] {
+                right_scaled += channel_sample * APU::get_volume_scale(self.right_vol);
+            }
+        }
 
-        left_i += left as i8 as i16;
+        let left: u8 = left_scaled as u8;
+        let right: u8 = right_scaled as u8;
 
         // Send to SDL land
         // println!("chan3: {}", chan3_sample);
@@ -172,13 +197,65 @@ impl APU {
             sound_chan.send((left, right)).unwrap();
         }
 
+        // let mut left_i: i16 = 0;
+        // let mut right_i: i16 = 0;
+
+        // left_i += left as i8 as i16;
+        // right_i += right as i8 as i16;
+
         // let left_cvt = (left_i-32) << 10;
-        // let right_cvt = (left_i-32) << 10;
+        // let right_cvt = (right_i-32) << 10;
         // self.tmp.push(left_cvt);
         // self.tmp.push(right_cvt);
     }
 
     pub fn get_channel3(&mut self) -> &mut Channel3 {
         &mut self.channel3
+    }
+
+    pub fn write_nr50(&mut self, data: u8) {
+        self.right_vol = data & 0x7;
+        self.left_vol = (data >> 4) & 0x7;
+        // @todo VIN left/right
+    }
+
+    pub fn write_nr51(&mut self, data: u8) {
+        for i in 0..4 {
+            self.right_pan[i] = (data >> i) & 0x1 != 0;
+            self.left_pan[i] = (data >> (i+4)) & 0x1 != 0;
+        }
+    }
+
+    pub fn write_nr52(&mut self, data: u8) {
+        // @todo Audio on/off: Turns all APU registers RO, except NR52 and length timers (NRx1)
+        self.audio_enabled = data & 0x80 != 0;
+        // @todo Turning audio off should reset all APU registers
+        // @todo Reset frame sequencer when switching off->on
+    }
+
+    pub fn read_nr50(&mut self) -> u8 {
+        self.right_vol | (self.left_vol << 4)
+    }
+
+    pub fn read_nr51(&mut self) -> u8 {
+        return (0..4)
+            .into_iter()
+            .map(|i| {
+                let bottom_bit = if self.right_pan[i] { 1 << i } else { 0 };
+                let top_bit = if self.left_pan[i] { 1 << (i + 4) } else { 0 };
+                bottom_bit | top_bit
+            })
+            .fold(0, |acc, curr| acc | curr);
+    }
+
+    pub fn read_nr52(&mut self) -> u8 {
+        let enable_bit = if self.audio_enabled { 0x80 } else { 0x0 };
+
+        enable_bit |
+            (if self.channel3.is_enabled() { 1 << 3 } else { 0 })
+    }
+
+    fn get_volume_scale(vol: u8) -> f32 {
+        f32::from(vol + 1) / 8.0
     }
 }
