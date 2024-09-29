@@ -49,6 +49,7 @@ struct GbAudio {
     // volume: f32,
     // pos: usize,
     // data: Vec<i16>,
+    last: i16,
     sound_recv: mpsc::Receiver<apu::apu::ApuSample>,
 }
 
@@ -81,10 +82,12 @@ impl sdl2::audio::AudioCallback for GbAudio {
 
                     if let Some(nxt) = out_iter.next() {
                         *nxt = left_cvt;
+                        self.last = left_cvt;
                     }
 
                     if let Some(nxt) = out_iter.next() {
                         *nxt = right_cvt;
+                        self.last = right_cvt;
                     }
                 }
                 Err(err) => {
@@ -95,7 +98,7 @@ impl sdl2::audio::AudioCallback for GbAudio {
         }
 
         for dst in out_iter {
-            *dst = 0;
+            *dst = self.last;
         }
     }
 }
@@ -141,6 +144,7 @@ fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
             // data,
             // pos: 0,
             // volume: 1.0,
+            last: 0,
             sound_recv,
         }
     }).unwrap();

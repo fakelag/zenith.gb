@@ -33,14 +33,14 @@ pub struct Channel3 {
     nr34: u8,
 
     wave_ram: [u8; 16],
-    last_sample: u8,
+    sample: u8,
 }
 
 impl Channel3 {
     pub fn new() -> Self {
         Self {
             freq_timer: 0,
-            length_counter: 0,
+            length_counter: 1,
             frame_sequencer: 16384,
             index: 1,
             is_enabled: false,
@@ -50,43 +50,11 @@ impl Channel3 {
             nr33: 0xFF,
             nr34: 0xBF,
             wave_ram: [0; 16],
-            last_sample: 0,
+            sample: 0,
         }
     }
 
     pub fn step(&mut self) {
-        // A timer generates an output clock every N input clocks, where N is the timer's period.
-        // If a timer's rate is given as a frequency, its period is 4194304/frequency in Hz.
-        // Each timer has an internal counter that is decremented on each input clock.
-        // When the counter becomes zero, it is reloaded with the period and an output clock is generated.
-
-        self.freq_timer = self.freq_timer.saturating_sub(1);
-
-        if self.freq_timer == 0 {
-            // The wave channel's frequency timer period is set to (2048-frequency)*2
-            let frequency = util::value(self.nr34 & 0x7, self.nr33);
-            self.freq_timer = (2048 - frequency) * 2;
-
-            if !self.is_enabled() {
-                self.last_sample = 0;
-                return;
-            }
-
-            // @todo Position in wave ram
-            let wave_sample_tuple: u8 = self.wave_ram[self.index / 2];
-            let wave_sample = if self.index % 2 == 0 {
-                wave_sample_tuple >> 4
-            } else {
-                wave_sample_tuple & 0xF
-            };
-
-            self.index = (self.index + 1) % 32;
-
-            // @todo Volume
-
-            self.last_sample = wave_sample;
-        }
-
         self.frame_sequencer -= 1;
 
         if self.frame_sequencer == 0 {
@@ -103,10 +71,45 @@ impl Channel3 {
                 }
             }
         }
+
+        // A timer generates an output clock every N input clocks, where N is the timer's period.
+        // If a timer's rate is given as a frequency, its period is 4194304/frequency in Hz.
+        // Each timer has an internal counter that is decremented on each input clock.
+        // When the counter becomes zero, it is reloaded with the period and an output clock is generated.
+
+        self.freq_timer = self.freq_timer.saturating_sub(1);
+
+        if self.freq_timer == 0 {
+            let frequency = util::value(self.nr34 & 0x7, self.nr33);
+            self.freq_timer = (2048 - frequency) * 2;
+
+            if !self.is_enabled() {
+                self.sample = 0;
+                return;
+            }
+
+            let mut wave_sample: u8 = self.wave_ram[self.index / 2];
+
+            wave_sample = if self.index % 2 == 0 {
+                wave_sample >> 4
+            } else {
+                wave_sample & 0xF
+            };
+
+            let volume = (self.nr32 & 0x60) >> 5;
+            wave_sample = match volume {
+                0 => wave_sample >> 4,
+                _ => wave_sample >> (volume - 1),
+            };
+
+            self.sample = wave_sample;
+            self.index = (self.index + 1) % 32;
+        }
+
     }
 
-    pub fn get_last_sample(&self) -> u8 {
-        self.last_sample
+    pub fn get_sample(&self) -> u8 {
+        self.sample
     }
 
     fn dac_enabled(&self) -> bool {
@@ -131,7 +134,8 @@ impl Channel3 {
         self.freq_timer = (2048 - frequency) * 2;
 
         // Trigger event: Wave channel's position is set to 0 but sample buffer is NOT refilled.
-        self.index = 1;
+        // self.index = 1;
+        self.index = 0;
 
         // Trigger event: If length counter is zero, it is set to 64 (256 for wave channel).
         if self.length_counter == 0 {
@@ -152,8 +156,13 @@ impl Channel3 {
     }
 
     pub fn write_nr31(&mut self, data: u8) {
-        // Writing a byte to NRx1 loads the counter with 64-data (256-data for wave channel). 
-        self.length_counter = 256;
+        // Writing a byte to NRx1 loads the counter with 64-data (256-data for wave channel).
+        self.length_counter = if data == 0 {
+            0
+        } else {
+            256 - u16::from(data)
+        };
+
         self.nr31 = data;
     }
 
@@ -183,6 +192,10 @@ impl Channel3 {
     }
 
     pub fn write_wave_ram(&mut self, addr: usize, data: u8) {
+        if self.is_enabled() {
+            // @todo timing behaviors
+            return;
+        }
         self.wave_ram[addr & 0xF] = data;
     }
 

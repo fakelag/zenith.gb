@@ -116,6 +116,7 @@ impl MMU {
 
     pub fn close(&mut self) {
         self.mbc.save();
+        self.apu.close();
     }
 
     pub fn update_input(&mut self, input_event: &emu::InputEvent) {
@@ -232,7 +233,7 @@ impl MMU {
                         // Reads ignored for non-dmg registers
                         return 0xFF;
                     }
-                    0xFF30..=0xFF3F => { return self.apu.get_channel3().read_wave_ram(usize::from(address & 0xF)); }
+                    0xFF30..=0xFF3F => { return self.apu.get_channel3().read_wave_ram(usize::from(address)); }
                     0xFF1A => { return self.apu.get_channel3().read_nr30(); }
                     0xFF1B => { return self.apu.get_channel3().read_nr31(); }
                     0xFF1C => { return self.apu.get_channel3().read_nr32(); }
@@ -429,7 +430,7 @@ impl MMU {
             0xFF4D..=0xFF70 => {
                 // Writes ignored for non DMG registers
             }
-            0xFF30..=0xFF3F => { self.apu.get_channel3().write_wave_ram(usize::from(address & 0xF), data); }
+            0xFF30..=0xFF3F => { self.apu.get_channel3().write_wave_ram(usize::from(address), data); }
             0xFF1A => { self.apu.get_channel3().write_nr30(data); }
             0xFF1B => { self.apu.get_channel3().write_nr31(data); }
             0xFF1C => { self.apu.get_channel3().write_nr32(data); }

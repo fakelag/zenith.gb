@@ -1,4 +1,4 @@
-use std::sync::mpsc::Sender;
+use std::{fs, io::Write, sync::mpsc::Sender};
 
 use super::channel3::Channel3;
 
@@ -8,6 +8,8 @@ pub struct APU {
     channel3: Channel3,
     sample_counter: u16,
     sound_chan: Option<Sender<ApuSample>>,
+
+    tmp: Vec<i16>,
 }
 
 impl APU {
@@ -16,11 +18,85 @@ impl APU {
             channel3: Channel3::new(),
             sample_counter: 95,
             sound_chan,
+            tmp: Vec::new(),
         }
     }
 
+    pub fn close(&mut self) {
+        if self.tmp.len() == 0 {
+            return;
+        }
+
+        let mut wav_file = Vec::new();
+
+        let num_samples = self.tmp.len() / 2;
+        let file_size = (num_samples * 4 + 36) as u32;
+
+        wav_file.write("RIFF".as_bytes()).unwrap();
+        wav_file.write(&[((file_size >> 0) & 0xFF) as u8]).unwrap();
+        wav_file.write(&[((file_size >> 8) & 0xFF) as u8]).unwrap();
+        wav_file.write(&[((file_size >> 16) & 0xFF) as u8]).unwrap();
+        wav_file.write(&[((file_size >> 24) & 0xFF) as u8]).unwrap();
+
+
+        wav_file.write("WAVE".as_bytes()).unwrap();
+        wav_file.write("fmt ".as_bytes()).unwrap();
+
+        // format size
+        wav_file.write(&[0x10]).unwrap();
+        wav_file.write(&[0]).unwrap();
+        wav_file.write(&[0]).unwrap();
+        wav_file.write(&[0]).unwrap();
+
+        // format PCM
+        wav_file.write(&[1]).unwrap();
+        wav_file.write(&[0]).unwrap();
+
+        // Num Channels
+        wav_file.write(&[2]).unwrap();
+        wav_file.write(&[0]).unwrap();
+
+        // rate=44100
+        let y = 44100;
+        let x = 176400;
+        wav_file.write(&[0x44]).unwrap();
+        wav_file.write(&[0xAC]).unwrap();
+        wav_file.write(&[0]).unwrap();
+        wav_file.write(&[0]).unwrap();
+
+        // rate*2*2
+        wav_file.write(&[0x10]).unwrap();
+        wav_file.write(&[0xB1]).unwrap();
+        wav_file.write(&[0x2]).unwrap();
+        wav_file.write(&[0]).unwrap();
+
+        // bytes per sample
+        wav_file.write(&[4]).unwrap();
+        wav_file.write(&[0]).unwrap();
+
+        // bits per sample
+        wav_file.write(&[0x10]).unwrap();
+        wav_file.write(&[0]).unwrap();
+
+        wav_file.write("data".as_bytes()).unwrap();
+        let data_size = num_samples * 4;
+        wav_file.write(&[((data_size >> 0) & 0xFF) as u8]).unwrap();
+        wav_file.write(&[((data_size >> 8) & 0xFF) as u8]).unwrap();
+        wav_file.write(&[((data_size >> 16) & 0xFF) as u8]).unwrap();
+        wav_file.write(&[((data_size >> 24) & 0xFF) as u8]).unwrap();
+
+        for s in &self.tmp {
+            wav_file.write(&[(*s & 0xFF) as u8]).unwrap();
+            wav_file.write(&[(*s >> 8) as u8]).unwrap();
+        }
+
+        println!("l={} s={}", wav_file.len(), self.tmp.len());
+        // fs::write("dev/test.wav", wav_file).unwrap();
+
+    }
+
     pub fn step(&mut self, cycles: u8) {
-        for _c in 0..=cycles {
+        for _c in 0..(cycles * 4) {
             self.channel3.step();
 
             self.sample_counter -= 1;
@@ -30,16 +106,25 @@ impl APU {
             }
             self.sample_counter = 95;
 
-            let chan3_sample = self.channel3.get_last_sample();
+            let chan3_sample = self.channel3.get_sample();
 
             let left = chan3_sample;
             let right = chan3_sample;
+
+            let mut left_i: i16 = 0;
+
+            left_i += left as i8 as i16;
 
             // Send to SDL land
             // println!("chan3: {}", chan3_sample);
             if let Some(sound_chan) = &self.sound_chan {
                 sound_chan.send((left, right)).unwrap();
             }
+
+            // let left_cvt = (left_i-32) << 10;
+            // let right_cvt = (left_i-32) << 10;
+            // self.tmp.push(left_cvt);
+            // self.tmp.push(right_cvt);
         }
     }
 
