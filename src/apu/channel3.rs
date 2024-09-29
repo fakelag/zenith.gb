@@ -1,30 +1,16 @@
 use crate::util::util;
 
+use super::{lengthcounter::LengthCounter, Channel};
+
+const LENGTH_COUNTER_INIT: u16 = 256;
+
 pub struct Channel3 {
     freq_timer: u16,
 
-    length_counter: u16,
-
-    // @todo - Clock frame sequencer globally from APU @ 512 Hz
-    // right now it clocks channel3 length counter @ 256 Hz instead
-    /*
-        Step   Length Ctr  Vol Env     Sweep
-        ---------------------------------------
-        0      Clock       -           -
-        1      -           -           -
-        2      Clock       -           Clock
-        3      -           -           -
-        4      Clock       -           -
-        5      -           -           -
-        6      Clock       -           Clock
-        7      -           Clock       -
-        ---------------------------------------
-        Rate   256 Hz      64 Hz       128 Hz
-    */
-    frame_sequencer: u16,
+    length_counter: LengthCounter,
 
     is_enabled: bool,
-    index: usize,
+    sample_index: usize,
 
     nr30: u8,
     nr31: u8,
@@ -40,9 +26,8 @@ impl Channel3 {
     pub fn new() -> Self {
         Self {
             freq_timer: 0,
-            length_counter: 1,
-            frame_sequencer: 16384,
-            index: 1,
+            length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
+            sample_index: 1,
             is_enabled: false,
             nr30: 0x7F,
             nr31: 0xFF,
@@ -54,74 +39,8 @@ impl Channel3 {
         }
     }
 
-    pub fn step(&mut self) {
-        self.frame_sequencer -= 1;
-
-        if self.frame_sequencer == 0 {
-            // Clocks at 256 Hz
-            // (4_194_304 / 16384 = 256)
-            self.frame_sequencer = 16384;
-
-            if self.length_enabled() {
-                self.length_counter -= 1;
-
-                if self.length_counter == 0 {
-                    self.length_counter = 256;
-                    self.is_enabled = false;
-                }
-            }
-        }
-
-        // A timer generates an output clock every N input clocks, where N is the timer's period.
-        // If a timer's rate is given as a frequency, its period is 4194304/frequency in Hz.
-        // Each timer has an internal counter that is decremented on each input clock.
-        // When the counter becomes zero, it is reloaded with the period and an output clock is generated.
-
-        self.freq_timer = self.freq_timer.saturating_sub(1);
-
-        if self.freq_timer == 0 {
-            let frequency = util::value(self.nr34 & 0x7, self.nr33);
-            self.freq_timer = (2048 - frequency) * 2;
-
-            if !self.is_enabled() {
-                self.sample = 0;
-                return;
-            }
-
-            let mut wave_sample: u8 = self.wave_ram[self.index / 2];
-
-            wave_sample = if self.index % 2 == 0 {
-                wave_sample >> 4
-            } else {
-                wave_sample & 0xF
-            };
-
-            let volume = (self.nr32 & 0x60) >> 5;
-            wave_sample = match volume {
-                0 => wave_sample >> 4,
-                _ => wave_sample >> (volume - 1),
-            };
-
-            self.sample = wave_sample;
-            self.index = (self.index + 1) % 32;
-        }
-
-    }
-
-    pub fn get_sample(&self) -> u8 {
-        self.sample
-    }
-
     fn dac_enabled(&self) -> bool {
         self.nr30 & 0x80 != 0
-    }
-
-    fn length_enabled(&self) -> bool {
-        self.nr34 & 0x40 != 0
-    }
-
-    fn is_enabled(&self) -> bool {
-        self.is_enabled && self.dac_enabled()
     }
 
     fn trigger(&mut self) {
@@ -134,15 +53,7 @@ impl Channel3 {
         self.freq_timer = (2048 - frequency) * 2;
 
         // Trigger event: Wave channel's position is set to 0 but sample buffer is NOT refilled.
-        // self.index = 1;
-        self.index = 0;
-
-        // Trigger event: If length counter is zero, it is set to 64 (256 for wave channel).
-        if self.length_counter == 0 {
-            self.length_counter = 256;
-        }
-
-        // @todo Trigger event: Channel volume is reloaded from NRx2.
+        self.sample_index = 1;
     }
 
     pub fn write_nr30(&mut self, data: u8) {
@@ -156,13 +67,7 @@ impl Channel3 {
     }
 
     pub fn write_nr31(&mut self, data: u8) {
-        // Writing a byte to NRx1 loads the counter with 64-data (256-data for wave channel).
-        self.length_counter = if data == 0 {
-            0
-        } else {
-            256 - u16::from(data)
-        };
-
+        self.length_counter.set_count(LENGTH_COUNTER_INIT - u16::from(data));
         self.nr31 = data;
     }
 
@@ -179,14 +84,20 @@ impl Channel3 {
     }
 
     pub fn write_nr34(&mut self, data: u8) {
-        // @todo - Check length timer, update rest of nr34
-        if data & 0x80 != 0 {
-            self.trigger();
+        let length_enable_current = self.length_counter.is_enabled();
+        let length_enable_next = data & 0x40 != 0;
+
+        if !length_enable_current && length_enable_next {
+            self.length_counter.reset();
         }
 
-        // @todo - Check length counter behavior with nr34 write
-        // for now just reset it to 256 and keep everything as is
-        self.length_counter = 256;
+        self.length_counter.set_enabled(length_enable_next);
+
+        if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
+            self.is_enabled = false;
+        } else if data & 0x80 != 0 {
+            self.trigger();
+        }
 
         self.nr34 = data & 0xC7;
     }
@@ -223,18 +134,61 @@ impl Channel3 {
     pub fn read_wave_ram(&mut self, addr: usize) -> u8 {
         // @todo - Wave RAM can only be properly accessed when the channel is disabled (see obscure behavior).
         // https://gbdev.gg8.se/wiki/articles/Gameboy_sound_hardware
+        if self.is_enabled() {
+            // @todo timing behaviors
+            return 0xFF;
+        }
         self.wave_ram[addr & 0xF]
     }
+}
 
-    // pub fn length() {
+impl Channel for Channel3 {
+    fn step(&mut self) {
+        if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
+            self.is_enabled = false;
+        }
 
-    // }
+        self.freq_timer = self.freq_timer.saturating_sub(1);
 
-    // pub fn vol() {
+        if self.freq_timer != 0 {
+            return;
+        }
 
-    // }
+        let frequency = util::value(self.nr34 & 0x7, self.nr33);
+        self.freq_timer = (2048 - frequency) * 2;
 
-    // pub fn sweep() {
+        if !self.is_enabled() {
+            self.sample = 0;
+            return;
+        }
 
-    // }
+        let mut wave_sample: u8 = self.wave_ram[self.sample_index / 2];
+
+        wave_sample = if self.sample_index % 2 == 0 {
+            wave_sample >> 4
+        } else {
+            wave_sample & 0xF
+        };
+
+        let volume = (self.nr32 & 0x60) >> 5;
+        wave_sample = match volume {
+            0 => wave_sample >> 4,
+            _ => wave_sample >> (volume - 1),
+        };
+
+        self.sample = wave_sample;
+        self.sample_index = (self.sample_index + 1) % 32;
+    }
+
+    fn get_sample(&self) -> u8 {
+        self.sample
+    }
+
+    fn get_length_counter(&mut self) -> &mut LengthCounter {
+        &mut self.length_counter
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.is_enabled && self.dac_enabled()
+    }
 }
