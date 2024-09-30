@@ -15,11 +15,9 @@ impl LengthCounter {
     }
 
     pub fn step(&mut self) {
-        if !self.enabled && self.count != 0 {
-            return;
+        if self.enabled && self.count != 0 {
+            self.count = self.count.saturating_sub(1);
         }
-
-        self.count = self.count.saturating_sub(1);
     }
 
     pub fn update_enabled(&mut self, _trigger_bit: bool, enable_bit: bool) {
