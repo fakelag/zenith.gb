@@ -2,7 +2,14 @@ use std::sync::mpsc::SyncSender;
 
 use crate::util::util;
 
-use super::{channel3::Channel3, wav_file::write_wav, Channel};
+use super::{
+    channel1::Channel1,
+    channel2::Channel2,
+    channel3::Channel3,
+    channel4::Channel4,
+    wav_file::write_wav,
+    Channel
+};
 
 pub type ApuSampleBuffer = [(u8, u8); 4096];
 pub type ApuSoundSender = SyncSender<ApuSampleBuffer>;
@@ -13,7 +20,11 @@ const SAMPLE_COUNTER_START: u16 = (4_194_304 / 44_100 as u32) as u16;
 const RECORD_WAV_FILE: bool = false;
 
 pub struct APU {
+    channel1: Channel1,
+    channel2: Channel2,
     channel3: Channel3,
+    channel4: Channel4,
+
     sample_counter: u16,
     sound_chan: Option<ApuSoundSender>,
 
@@ -21,6 +32,7 @@ pub struct APU {
     sample_buffer: ApuSampleBuffer,
     sample_count: usize,
     frame_sequencer: u16,
+    frame_sequencer_step: u8,
 
     audio_enabled: bool,
     right_pan: [bool; 4],
@@ -32,9 +44,13 @@ pub struct APU {
 impl APU {
     pub fn new(sound_chan: Option<ApuSoundSender>) -> Self {
         Self {
+            channel1: Channel1::new(),
+            channel2: Channel2::new(),
             channel3: Channel3::new(),
+            channel4: Channel4::new(),
             sample_counter: SAMPLE_COUNTER_START,
             frame_sequencer: FRAME_SEQUENCER_START,
+            frame_sequencer_step: 0,
             sound_chan,
             sample_buffer: [(0, 0); 4096],
             sample_count: 0,
@@ -61,7 +77,9 @@ impl APU {
         for _c in 0..(cycles * 4) {
             self.frame_sequencer();
 
-            self.channel3.step();
+            for channel in self.get_channels() {
+                channel.step();
+            }
 
             self.sample_audio();
         }
@@ -89,22 +107,28 @@ impl APU {
 
         self.frame_sequencer = FRAME_SEQUENCER_START;
 
-        let sequencer_step = (self.frame_sequencer & 0x7) as u8;
+        match self.frame_sequencer_step {
+            0 | 2 | 4 | 6 => {
+                for counter in self.get_channels() {
+                    counter.get_length_counter().step();
+                }
 
-        match sequencer_step {
-            2 | 6 => {
-                self.channel3.get_length_counter().step();
-                // @todo Sweep
-            }
-            0 | 4 => {
-                self.channel3.get_length_counter().step();
+                if self.frame_sequencer_step == 2 || self.frame_sequencer_step == 6 {
+                    self.channel1.sweep_step();
+                }
             }
             7 => {
-                // @todo Volume envelopes
+                for channel in self.get_channels() {
+                    if let Some(envelope) = channel.get_envelope() {
+                        envelope.step();
+                    }
+                }
             }
             1 | 3 | 5 => {}
             _ => unreachable!(),
         }
+
+        self.frame_sequencer_step = (self.frame_sequencer_step + 1) & 0x7;
     }
 
     pub fn sample_audio(&mut self) {
@@ -116,23 +140,19 @@ impl APU {
 
         self.sample_counter = SAMPLE_COUNTER_START;
 
-        let chan3_sample = self.channel3.get_sample();
-
         let mut left_scaled = 0.0;
         let mut right_scaled = 0.0;
 
         for i in 0..4 {
-            let channel_sample = if i == 2 {
-                f32::from(chan3_sample)
-            } else {
-                0.0
-            };
+            let channel = &*self.get_channels()[i];
+
+            let sample = f32::from(channel.get_sample());
             
             if self.left_pan[i] {
-                left_scaled += channel_sample * APU::get_volume_scale(self.left_vol);
+                left_scaled += sample * APU::get_volume_scale(self.left_vol);
             }
             if self.right_pan[i] {
-                right_scaled += channel_sample * APU::get_volume_scale(self.right_vol);
+                right_scaled += sample * APU::get_volume_scale(self.right_vol);
             }
         }
 
@@ -155,6 +175,10 @@ impl APU {
             self.tmp.push(util::audio_sample_u8_to_i16(left));
             self.tmp.push(util::audio_sample_u8_to_i16(right));
         }
+    }
+
+    pub fn get_channel1(&mut self) -> &mut Channel1 {
+        &mut self.channel1
     }
 
     pub fn get_channel3(&mut self) -> &mut Channel3 {
@@ -204,5 +228,14 @@ impl APU {
 
     fn get_volume_scale(vol: u8) -> f32 {
         f32::from(vol + 1) / 8.0
+    }
+
+    fn get_channels(&mut self) -> [&mut dyn Channel; 4] {
+        [
+            &mut self.channel1,
+            &mut self.channel2,
+            &mut self.channel3,
+            &mut self.channel4
+        ]
     }
 }

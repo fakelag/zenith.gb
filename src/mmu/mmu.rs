@@ -215,7 +215,6 @@ impl MMU {
                     }
                     HWR_DIV_LSB => { return 0xFF; }
                     0xFF08..=0xFF0E => { return 0xFF; }
-                    HWR_NR13 => { return 0xFF; }
                     0xFF15 => { return 0xFF; }
                     HWR_NR23 => { return 0xFF; }
                     0xFF1F => { return 0xFF; }
@@ -226,6 +225,11 @@ impl MMU {
                         // Reads ignored for non-dmg registers
                         return 0xFF;
                     }
+                    HWR_NR10 => { return self.apu.get_channel1().read_nr10(); }
+                    HWR_NR11 => { return self.apu.get_channel1().read_nr11(); }
+                    HWR_NR12 => { return self.apu.get_channel1().read_nr12(); }
+                    HWR_NR13 => { return self.apu.get_channel1().read_nr13(); }
+                    HWR_NR14 => { return self.apu.get_channel1().read_nr14(); }
                     0xFF30..=0xFF3F => { return self.apu.get_channel3().read_wave_ram(usize::from(address)); }
                     HWR_NR30 => { return self.apu.get_channel3().read_nr30(); }
                     HWR_NR31 => { return self.apu.get_channel3().read_nr31(); }
@@ -393,11 +397,6 @@ impl MMU {
                 let ro_bits = self.memory[usize::from(address)] & 0xE0;
                 self.memory[usize::from(address)] = (data & 0x1F) | ro_bits;
             }
-            HWR_NR10 => {
-                // bit 7 unused
-                let ro_bits = self.memory[usize::from(address)] & 0x80;
-                self.memory[usize::from(address)] = (data & 0x7F) | ro_bits;
-            }
             HWR_NR44 => {
                 // Lower 5 bits unused
                 let ro_bits = self.memory[usize::from(address)] & 0x3F;
@@ -420,6 +419,11 @@ impl MMU {
             0xFF4D..=0xFF70 => {
                 // Writes ignored for non DMG registers
             }
+            HWR_NR10 => { self.apu.get_channel1().write_nr10(data); }
+            HWR_NR11 => { self.apu.get_channel1().write_nr11(data); }
+            HWR_NR12 => { self.apu.get_channel1().write_nr12(data); }
+            HWR_NR13 => { self.apu.get_channel1().write_nr13(data); }
+            HWR_NR14 => { self.apu.get_channel1().write_nr14(data); }
             0xFF30..=0xFF3F => { self.apu.get_channel3().write_wave_ram(usize::from(address), data); }
             HWR_NR30 => { self.apu.get_channel3().write_nr30(data); }
             HWR_NR31 => { self.apu.get_channel3().write_nr31(data); }

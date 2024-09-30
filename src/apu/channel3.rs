@@ -111,7 +111,6 @@ impl Channel3 {
     }
 
     pub fn read_nr34(&mut self) -> u8 {
-        // All other bits RO & set to 1 than length enable (bit 6)
         let length_bit = if self.get_length_counter().is_enabled() {
             0x40
         } else {
@@ -173,6 +172,10 @@ impl Channel for Channel3 {
 
     fn get_length_counter(&mut self) -> &mut LengthCounter {
         &mut self.length_counter
+    }
+
+    fn get_envelope(&mut self) -> Option<&mut super::envelope::Envelope> {
+        None
     }
 
     fn is_enabled(&self) -> bool {
