@@ -1,6 +1,7 @@
 pub mod apu;
 mod channel3;
 mod lengthcounter;
+mod wav_file;
 
 pub trait Channel {
     fn step(&mut self);
