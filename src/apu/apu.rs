@@ -140,7 +140,13 @@ impl APU {
         // Rate   256 Hz      64 Hz       128 Hz
         self.frame_sequencer -= 1;
 
-        let sequencer_step = self.frame_sequencer & 0x7;
+        if self.frame_sequencer != 0 {
+            return;
+        }
+
+        self.frame_sequencer = FRAME_SEQUENCER_START;
+
+        let sequencer_step = (self.frame_sequencer & 0x7) as u8;
 
         match sequencer_step {
             2 | 6 => {
@@ -155,10 +161,6 @@ impl APU {
             }
             1 | 3 | 5 => {}
             _ => unreachable!(),
-        }
-
-        if self.frame_sequencer == 0 {
-            self.frame_sequencer = FRAME_SEQUENCER_START;
         }
     }
 

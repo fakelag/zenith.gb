@@ -68,20 +68,16 @@ impl Channel3 {
     }
 
     pub fn write_nr34(&mut self, data: u8) {
+        let length_enable_bit = data & 0x40 != 0;
+        let trigger_bit = data & 0x80 != 0;
+    
         self.reg_frequency = ((u16::from(data) & 0x7) << 8) | (self.reg_frequency & 0xFF);
 
-        let length_enable_current = self.length_counter.is_enabled();
-        let length_enable_next = data & 0x40 != 0;
-
-        if !length_enable_current && length_enable_next {
-            self.length_counter.reset();
-        }
-
-        self.length_counter.set_enabled(length_enable_next);
+        self.length_counter.update_enabled(trigger_bit, length_enable_bit);
 
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;
-        } else if data & 0x80 != 0 {
+        } else if trigger_bit {
             self.trigger();
         }
     }

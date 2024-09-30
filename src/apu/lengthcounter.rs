@@ -22,8 +22,12 @@ impl LengthCounter {
         self.count = self.count.saturating_sub(1);
     }
 
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
+    pub fn update_enabled(&mut self, _trigger_bit: bool, enable_bit: bool) {
+        // @todo - Check clocking rules for length timer when writing to NRx4
+        if !self.enabled && enable_bit {
+            self.reset();
+        }
+        self.enabled = enable_bit;
     }
 
     pub fn is_enabled(&self) -> bool {
