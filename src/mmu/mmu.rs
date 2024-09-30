@@ -216,7 +216,6 @@ impl MMU {
                     HWR_DIV_LSB => { return 0xFF; }
                     0xFF08..=0xFF0E => { return 0xFF; }
                     0xFF15 => { return 0xFF; }
-                    HWR_NR23 => { return 0xFF; }
                     0xFF1F => { return 0xFF; }
                     HWR_NR41 => { return 0xFF; }
                     0xFF27..=0xFF2F => { return 0xFF; }
@@ -230,6 +229,10 @@ impl MMU {
                     HWR_NR12 => { return self.apu.get_channel1().read_nr12(); }
                     HWR_NR13 => { return self.apu.get_channel1().read_nr13(); }
                     HWR_NR14 => { return self.apu.get_channel1().read_nr14(); }
+                    HWR_NR21 => { return self.apu.get_channel2().read_nr21(); }
+                    HWR_NR22 => { return self.apu.get_channel2().read_nr22(); }
+                    HWR_NR23 => { return self.apu.get_channel2().read_nr23(); }
+                    HWR_NR24 => { return self.apu.get_channel2().read_nr24(); }
                     0xFF30..=0xFF3F => { return self.apu.get_channel3().read_wave_ram(usize::from(address)); }
                     HWR_NR30 => { return self.apu.get_channel3().read_nr30(); }
                     HWR_NR31 => { return self.apu.get_channel3().read_nr31(); }
@@ -424,6 +427,10 @@ impl MMU {
             HWR_NR12 => { self.apu.get_channel1().write_nr12(data); }
             HWR_NR13 => { self.apu.get_channel1().write_nr13(data); }
             HWR_NR14 => { self.apu.get_channel1().write_nr14(data); }
+            HWR_NR21 => { self.apu.get_channel2().write_nr21(data); }
+            HWR_NR22 => { self.apu.get_channel2().write_nr22(data); }
+            HWR_NR23 => { self.apu.get_channel2().write_nr23(data); }
+            HWR_NR24 => { self.apu.get_channel2().write_nr24(data); }
             0xFF30..=0xFF3F => { self.apu.get_channel3().write_wave_ram(usize::from(address), data); }
             HWR_NR30 => { self.apu.get_channel3().write_nr30(data); }
             HWR_NR31 => { self.apu.get_channel3().write_nr31(data); }

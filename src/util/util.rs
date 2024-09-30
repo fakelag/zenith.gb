@@ -21,5 +21,5 @@ pub fn value(high: u8, low: u8) -> u16 {
 }
 
 pub fn audio_sample_u8_to_i16(sample: u8) -> i16 {
-    (i16::from(sample) - 0) << 10
+    (i16::from(sample) - 32) << 10
 }

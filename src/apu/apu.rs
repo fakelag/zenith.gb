@@ -181,6 +181,10 @@ impl APU {
         &mut self.channel1
     }
 
+    pub fn get_channel2(&mut self) -> &mut Channel2 {
+        &mut self.channel2
+    }
+
     pub fn get_channel3(&mut self) -> &mut Channel3 {
         &mut self.channel3
     }

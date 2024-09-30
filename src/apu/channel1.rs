@@ -18,11 +18,11 @@ pub struct Channel1 {
     freq_timer: u16,
 
     sweep: Sweep,
+    envelope: Envelope,
     length_counter: LengthCounter,
 
     is_enabled: bool,
     duty_cycle: u8,
-    envelope: Envelope,
 
     // nr11
     reg_waveduty: u8,

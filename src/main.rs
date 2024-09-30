@@ -1,4 +1,4 @@
-use std::{sync::mpsc::{self, Sender}, time};
+use std::{sync::mpsc::{self}, time};
 
 use cartridge::cartridge::Cartridge;
 
