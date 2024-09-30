@@ -17,6 +17,9 @@ use ppu::ppu::FrameBuffer;
 const T_CYCLES_PER_FRAME: u64 = 4_194_304 / 60;
 const M_CYCLES_PER_FRAME: u64 = T_CYCLES_PER_FRAME / 4;
 
+const FPS: f64 = 59.73;
+const FRAME_TIME: u64 = ((1.0 / FPS) * 1000_000.0) as u64;
+
 const GB_SCREEN_WIDTH: u32 = 160;
 const GB_SCREEN_HEIGHT: u32 = 144;
 const WINDOW_SIZE_MULT: u32 = 4;
@@ -46,7 +49,8 @@ fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::
 
 #[derive(Debug)]
 struct GbAudio {
-    silence: i16,
+    left_silence: i16,
+    right_silence: i16,
     sound_recv: mpsc::Receiver<apu::apu::ApuSampleBuffer>,
 }
 
@@ -57,23 +61,23 @@ impl sdl2::audio::AudioCallback for GbAudio {
         match self.sound_recv.try_recv() {
             Ok(samples) => {
                 for i in 0..4096 {
-                    let (l, r) = samples[i];
-                    let left = i16::from(l);
-                    let right = i16::from(r);
+                    let (left, right) = samples[i];
 
-                    let left_cvt = (left-32) << 10;
-                    let right_cvt = (right-32) << 10;
+                    let left_cvt = util::util::audio_sample_u8_to_i16(left);
+                    let right_cvt = util::util::audio_sample_u8_to_i16(right);
 
                     out[i * 2] = left_cvt;
                     out[i * 2 + 1] = right_cvt;
-                    self.silence = right_cvt;
                 }
+
+                self.left_silence = out[(4096 * 2) - 2];
+                self.right_silence = out[(4096 * 2) - 1];
             }
             Err(_err) => {
-                for dst in out.iter_mut() {
-                    *dst = self.silence;
+                for i in 0..4096 {
+                    out[i * 2] = self.left_silence;
+                    out[i * 2 + 1] = self.right_silence;
                 }
-                // eprintln!("Recv error: {} - {:?}", err, std::time::Instant::now());
             }
         }
     }
@@ -95,7 +99,8 @@ fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
 
     let device = audio_subsystem.open_playback(None, &spec_desired, |spec| {
         GbAudio {
-            silence: 0,
+            left_silence: util::util::audio_sample_u8_to_i16(spec.silence),
+            right_silence: util::util::audio_sample_u8_to_i16(spec.silence),
             sound_recv,
         }
     }).unwrap();
@@ -264,7 +269,7 @@ fn run(
                 }
 
                 let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
-                let sleep_time = (16000 as u64).saturating_sub(elapsed);
+                let sleep_time = FRAME_TIME.saturating_sub(elapsed);
 
                 if sleep_time > 0 {
                    spin_sleep::sleep(time::Duration::from_micros(sleep_time));
