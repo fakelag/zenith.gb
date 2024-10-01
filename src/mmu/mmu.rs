@@ -217,7 +217,6 @@ impl MMU {
                     0xFF08..=0xFF0E => { return 0xFF; }
                     0xFF15 => { return 0xFF; }
                     0xFF1F => { return 0xFF; }
-                    HWR_NR41 => { return 0xFF; }
                     0xFF27..=0xFF2F => { return 0xFF; }
                     0xFF4C => { return 0xFF; }
                     0xFF4D..=0xFF7F => {
@@ -239,6 +238,10 @@ impl MMU {
                     HWR_NR32 => { return self.apu.get_channel3().read_nr32(); }
                     HWR_NR33 => { return self.apu.get_channel3().read_nr33(); }
                     HWR_NR34 => { return self.apu.get_channel3().read_nr34(); }
+                    HWR_NR41 => { return self.apu.get_channel4().read_nr41(); }
+                    HWR_NR42 => { return self.apu.get_channel4().read_nr42(); }
+                    HWR_NR43 => { return self.apu.get_channel4().read_nr43(); }
+                    HWR_NR44 => { return self.apu.get_channel4().read_nr44(); }
                     HWR_NR50 => { return self.apu.read_nr50(); }
                     HWR_NR51 => { return self.apu.read_nr51(); }
                     HWR_NR52 => { return self.apu.read_nr52(); }
@@ -400,11 +403,6 @@ impl MMU {
                 let ro_bits = self.memory[usize::from(address)] & 0xE0;
                 self.memory[usize::from(address)] = (data & 0x1F) | ro_bits;
             }
-            HWR_NR44 => {
-                // Lower 5 bits unused
-                let ro_bits = self.memory[usize::from(address)] & 0x3F;
-                self.memory[usize::from(address)] = (data & 0xC0) | ro_bits;
-            }
             HWR_STAT => {
                 // Bit 7 unused, lower 3 bits RO
                 let ro_bits = self.memory[usize::from(address)] & 0x87;
@@ -437,6 +435,10 @@ impl MMU {
             HWR_NR32 => { self.apu.get_channel3().write_nr32(data); }
             HWR_NR33 => { self.apu.get_channel3().write_nr33(data); }
             HWR_NR34 => { self.apu.get_channel3().write_nr34(data); }
+            HWR_NR41 => { self.apu.get_channel4().write_nr41(data); }
+            HWR_NR42 => { self.apu.get_channel4().write_nr42(data); }
+            HWR_NR43 => { self.apu.get_channel4().write_nr43(data); }
+            HWR_NR44 => { self.apu.get_channel4().write_nr44(data); }
             HWR_NR50 => { self.apu.write_nr50(data); }
             HWR_NR51 => { self.apu.write_nr51(data); }
             HWR_NR52 => { self.apu.write_nr52(data); }
@@ -482,24 +484,24 @@ impl MMU {
     pub fn tma<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TMA, self) }
     pub fn tac<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TAC, self) }
     pub fn r#if<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_IF, self) }
-    pub fn nr10<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR10, self) }
-    pub fn nr11<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR11, self) }
-    pub fn nr12<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR12, self) }
-    pub fn nr13<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR13, self) }
-    pub fn nr14<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR14, self) }
-    pub fn nr21<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR21, self) }
-    pub fn nr22<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR22, self) }
-    pub fn nr23<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR23, self) }
-    pub fn nr24<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR24, self) }
+    // pub fn nr10<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR10, self) }
+    // pub fn nr11<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR11, self) }
+    // pub fn nr12<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR12, self) }
+    // pub fn nr13<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR13, self) }
+    // pub fn nr14<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR14, self) }
+    // pub fn nr21<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR21, self) }
+    // pub fn nr22<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR22, self) }
+    // pub fn nr23<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR23, self) }
+    // pub fn nr24<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR24, self) }
     // pub fn nr30<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR30, self) }
     // pub fn nr31<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR31, self) }
     // pub fn nr32<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR32, self) }
     // pub fn nr33<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR33, self) }
     // pub fn nr34<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR34, self) }
-    pub fn nr41<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR41, self) }
-    pub fn nr42<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR42, self) }
-    pub fn nr43<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR43, self) }
-    pub fn nr44<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR44, self) }
+    // pub fn nr41<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR41, self) }
+    // pub fn nr42<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR42, self) }
+    // pub fn nr43<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR43, self) }
+    // pub fn nr44<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR44, self) }
     // pub fn nr50<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR50, self) }
     // pub fn nr51<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR51, self) }
     // pub fn nr52<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR52, self) }

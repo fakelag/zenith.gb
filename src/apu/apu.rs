@@ -136,7 +136,12 @@ impl APU {
             _ => unreachable!(),
         }
 
-        self.frame_sequencer_step = (self.frame_sequencer_step + 1) & 0x7;
+        let next_step = (self.frame_sequencer_step + 1) & 0x7;
+        self.frame_sequencer_step = next_step;
+
+        for counter in self.get_channels() {
+            counter.get_length_counter().update_frame_sequencer_step(next_step);
+        }
     }
 
     pub fn sample_audio(&mut self) {
@@ -200,6 +205,10 @@ impl APU {
 
     pub fn get_channel3(&mut self) -> &mut Channel3 {
         &mut self.channel3
+    }
+
+    pub fn get_channel4(&mut self) -> &mut Channel4 {
+        &mut self.channel4
     }
 
     pub fn write_nr50(&mut self, data: u8) {

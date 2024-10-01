@@ -1,5 +1,6 @@
 
 pub struct LengthCounter {
+    frame_seq_step: u8,
     initial_count: u16,
     count: u16,
     enabled: bool,
@@ -8,6 +9,7 @@ pub struct LengthCounter {
 impl LengthCounter {
     pub fn new(initial_count: u16) -> Self {
         Self {
+            frame_seq_step: 0,
             initial_count,
             count: 1,
             enabled: false,
@@ -20,11 +22,27 @@ impl LengthCounter {
         }
     }
 
-    pub fn update_enabled(&mut self, _trigger_bit: bool, enable_bit: bool) {
-        // @todo - Check clocking rules for length timer when writing to NRx4
-        if !self.enabled && enable_bit {
-            self.reset();
+    pub fn update_enabled(&mut self, trigger_bit: bool, enable_bit: bool) {
+        let reset_length = self.initial_count - (if self.enabled {
+            (self.frame_seq_step & 1) as u16
+        } else {
+            0
+        });
+
+        let reset: bool = trigger_bit && self.count == 0;
+
+        if !self.enabled && !enable_bit && reset {
+            self.count = reset_length;
+        } else if self.enabled && self.frame_seq_step & 1 != 0 {
+            self.count = self.count.saturating_sub(1);
+
+            if trigger_bit && self.count == 0 {
+                self.count = self.initial_count - 1;
+            }
+        } else if reset {
+            self.count = reset_length;
         }
+
         self.enabled = enable_bit;
     }
 
@@ -40,7 +58,7 @@ impl LengthCounter {
         self.count = count;
     }
 
-    pub fn reset(&mut self) {
-        self.count = self.initial_count;
+    pub fn update_frame_sequencer_step(&mut self, step: u8) {
+        self.frame_seq_step = step;
     }
 }
