@@ -1,6 +1,12 @@
 use std::{sync::mpsc::{self}, time};
 
 use cartridge::cartridge::Cartridge;
+use apu::apu::{
+    APU_FREQ,
+    APU_NUM_CHANNELS,
+    APU_SAMPLES,
+    APU_SAMPLES_PER_CHANNEL,
+};
 
 mod apu;
 mod cartridge;
@@ -13,12 +19,14 @@ mod util;
 
 use emu::emu::{Emu, GbButton, InputEvent};
 use ppu::ppu::FrameBuffer;
+use sdl2::audio::AudioFormatNum;
 
-const T_CYCLES_PER_FRAME: u64 = 4_194_304 / 60;
+pub const GB_DEFAULT_FPS: f64 = 59.73;
+pub const TARGET_FPS: f64 = GB_DEFAULT_FPS;
+
+const T_CYCLES_PER_FRAME: u64 = (4_194_304.0 / GB_DEFAULT_FPS) as u64;
 const M_CYCLES_PER_FRAME: u64 = T_CYCLES_PER_FRAME / 4;
-
-const FPS: f64 = 59.73;
-const FRAME_TIME: u64 = ((1.0 / FPS) * 1000_000.0) as u64;
+const FRAME_TIME: u64 = ((1.0 / TARGET_FPS) * 1000_000.0) as u64;
 
 const GB_SCREEN_WIDTH: u32 = 160;
 const GB_SCREEN_HEIGHT: u32 = 144;
@@ -47,36 +55,24 @@ fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::
     return canvas;
 }
 
-#[derive(Debug)]
 struct GbAudio {
-    left_silence: i16,
-    right_silence: i16,
-    sound_recv: mpsc::Receiver<apu::apu::ApuSampleBuffer>,
+    sound_recv: mpsc::Receiver<Vec<i16>>,
 }
 
 impl sdl2::audio::AudioCallback for GbAudio {
     type Channel = i16;
 
     fn callback(&mut self, out: &mut [Self::Channel]) {
-        match self.sound_recv.try_recv() {
+        match self.sound_recv.recv_timeout(time::Duration::from_millis(15)) {
             Ok(samples) => {
-                for i in 0..4096 {
-                    let (left, right) = samples[i];
+                debug_assert!(samples.len() == out.len());
 
-                    let left_cvt = util::util::audio_sample_u8_to_i16(left);
-                    let right_cvt = util::util::audio_sample_u8_to_i16(right);
-
-                    out[i * 2] = left_cvt;
-                    out[i * 2 + 1] = right_cvt;
-                }
-
-                self.left_silence = out[(4096 * 2) - 2];
-                self.right_silence = out[(4096 * 2) - 1];
+                out.copy_from_slice(&samples);
             }
             Err(_err) => {
-                for i in 0..4096 {
-                    out[i * 2] = self.left_silence;
-                    out[i * 2 + 1] = self.right_silence;
+                // println!("recv err {:?}", std::time::Instant::now());
+                for i in 0..APU_SAMPLES {
+                    out[i] = Self::Channel::SILENCE;
                 }
             }
         }
@@ -90,17 +86,15 @@ fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
     let audio_subsystem = sdl_ctx.audio().unwrap();
 
     let spec_desired = sdl2::audio::AudioSpecDesired{
-        channels: Some(2),
-        freq: Some(44_100),
-        samples: Some(4096),
+        channels: Some(APU_NUM_CHANNELS),
+        samples: Some(APU_SAMPLES_PER_CHANNEL),
+        freq: Some(APU_FREQ as i32),
     };
 
-    let (sound_send, sound_recv) = mpsc::sync_channel::<apu::apu::ApuSampleBuffer>(1);
+    let (sound_send, sound_recv) = mpsc::sync_channel::<Vec<i16>>(1);
 
-    let device = audio_subsystem.open_playback(None, &spec_desired, |spec| {
+    let device = audio_subsystem.open_playback(None, &spec_desired, |_spec| {
         GbAudio {
-            left_silence: util::util::audio_sample_u8_to_i16(spec.silence),
-            right_silence: util::util::audio_sample_u8_to_i16(spec.silence),
             sound_recv,
         }
     }).unwrap();

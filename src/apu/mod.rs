@@ -7,6 +7,7 @@ mod lengthcounter;
 mod envelope;
 mod sweep;
 mod wav_file;
+mod audiocvt;
 
 pub trait Channel {
     fn step(&mut self);

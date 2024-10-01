@@ -6,6 +6,7 @@ pub fn write_wav(file_name: &str, wav_data: &Vec<i16>) {
     let num_samples = wav_data.len() / 2;
     let file_size = (num_samples * 4 + 36) as u32;
 
+    // [Master RIFF chunk]
     wav_file.write("RIFF".as_bytes()).unwrap();
     wav_file.write(&[((file_size >> 0) & 0xFF) as u8]).unwrap();
     wav_file.write(&[((file_size >> 8) & 0xFF) as u8]).unwrap();
@@ -14,6 +15,8 @@ pub fn write_wav(file_name: &str, wav_data: &Vec<i16>) {
 
 
     wav_file.write("WAVE".as_bytes()).unwrap();
+
+    // [Chunk describing the data format]
     wav_file.write("fmt ".as_bytes()).unwrap();
 
     // format size
@@ -50,6 +53,7 @@ pub fn write_wav(file_name: &str, wav_data: &Vec<i16>) {
     wav_file.write(&[0x10]).unwrap();
     wav_file.write(&[0]).unwrap();
 
+    // [Chunk containing the sampled data]
     wav_file.write("data".as_bytes()).unwrap();
     let data_size = num_samples * 4;
     wav_file.write(&[((data_size >> 0) & 0xFF) as u8]).unwrap();

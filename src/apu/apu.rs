@@ -1,21 +1,29 @@
 use std::sync::mpsc::SyncSender;
 
-use crate::util::util;
+use crate::{GB_DEFAULT_FPS, TARGET_FPS};
 
 use super::{
+    audiocvt::AudioCVT,
     channel1::Channel1,
     channel2::Channel2,
     channel3::Channel3,
     channel4::Channel4,
     wav_file::write_wav,
-    Channel
+    Channel,
 };
 
-pub type ApuSampleBuffer = [(u8, u8); 4096];
-pub type ApuSoundSender = SyncSender<ApuSampleBuffer>;
+pub const APU_FREQ: u32 = 44_100;
+pub const APU_SAMPLES_PER_CHANNEL: u16 = 4096;
+pub const APU_NUM_CHANNELS: u8 = 2;
+pub const APU_SAMPLES: usize = APU_SAMPLES_PER_CHANNEL as usize * APU_NUM_CHANNELS as usize;
 
-const FRAME_SEQUENCER_START: u16 = (4_194_304 / 512 as u32) as u16;
-const SAMPLE_COUNTER_START: u16 = (4_194_304 / 44_100 as u32) as u16;
+pub type ApuSoundSender = SyncSender<Vec<i16>>;
+
+pub type AudioBuffer = Vec<u8>;
+
+const T_CYCLES_PER_FRAME: u64 = (4_194_304.0 * (TARGET_FPS / GB_DEFAULT_FPS)) as u64;
+const FRAME_SEQUENCER_START: u16 = (T_CYCLES_PER_FRAME / 512.0 as u64) as u16;
+const SAMPLE_COUNTER_START: u16 = (T_CYCLES_PER_FRAME / APU_FREQ as f64 as u64) as u16;
 
 const RECORD_WAV_FILE: bool = false;
 
@@ -29,8 +37,8 @@ pub struct APU {
     sound_chan: Option<ApuSoundSender>,
 
     tmp: Vec<i16>,
-    sample_buffer: ApuSampleBuffer,
-    sample_count: usize,
+    audio_cvt: AudioCVT,
+    sample_buffer: AudioBuffer,
     frame_sequencer: u16,
     frame_sequencer_step: u8,
 
@@ -52,8 +60,8 @@ impl APU {
             frame_sequencer: FRAME_SEQUENCER_START,
             frame_sequencer_step: 0,
             sound_chan,
-            sample_buffer: [(0, 0); 4096],
-            sample_count: 0,
+            audio_cvt: AudioCVT::new(),
+            sample_buffer: Vec::with_capacity(APU_SAMPLES),
             tmp: Vec::new(),
             audio_enabled: true,
             right_pan: [false, false, true, true],
@@ -159,21 +167,26 @@ impl APU {
         let left: u8 = left_scaled as u8;
         let right: u8 = right_scaled as u8;
 
-        if self.sample_count < 4096 {
-            self.sample_buffer[self.sample_count] = (left, right);
-            self.sample_count += 1;
-        } else {
-            if let Some(sound_chan) = &self.sound_chan {
-                // try_send for non-synced audio with the compromise of audio glitches due to
-                // missing sample buffers in-between
-                sound_chan.send(self.sample_buffer).unwrap();
-                self.sample_count = 0;
-            }
+        if self.sample_buffer.len() < APU_SAMPLES {
+            self.sample_buffer.push(left);
+            self.sample_buffer.push(right);
+            return;
         }
 
-        if RECORD_WAV_FILE {
-            self.tmp.push(util::audio_sample_u8_to_i16(left));
-            self.tmp.push(util::audio_sample_u8_to_i16(right));
+        if let Some(sound_chan) = &self.sound_chan {
+            let cvt_audio = self.audio_cvt.convert_u8_i16(&self.sample_buffer);
+
+            if RECORD_WAV_FILE {
+                for c in cvt_audio.iter() {
+                    self.tmp.push(*c);
+                }
+            }
+
+            // try_send for non-synced audio with the compromise of audio glitches due to
+            // missing sample buffers in-between
+            // println!("{:?}", self.sample_buffer);
+            sound_chan.send(cvt_audio).unwrap();
+            self.sample_buffer.clear();
         }
     }
 
