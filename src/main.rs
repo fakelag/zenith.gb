@@ -249,17 +249,16 @@ fn run(
                     input_vec.clear();
                 }
 
-                loop {
-                    let (cycles_run, vsync) = emu.run(M_CYCLES_PER_FRAME);
+                let mut cycles_left = M_CYCLES_PER_FRAME;
+                while cycles_left > 0 {
+                    let (cycles_run, vsync) = emu.run(cycles_left);
 
                     if vsync {
                         let rt = emu.ppu.get_framebuffer();
                         vsync_canvas(rt, &mut texture, canvas, &mut last_frame);
                     }
 
-                    if cycles_run >= M_CYCLES_PER_FRAME {
-                        break;
-                    }
+                    cycles_left = cycles_left.saturating_sub(cycles_run);
                 }
 
                 let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
