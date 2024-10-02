@@ -61,6 +61,11 @@ impl Channel4 {
 
     pub fn write_nr42(&mut self, data: u8) {
         self.reg_dac_enable = data & 0xF8 != 0;
+
+        if !self.reg_dac_enable {
+            self.is_enabled = false;
+        }
+
         self.envelope.write_nrx2(data);
     }
 
