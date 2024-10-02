@@ -351,7 +351,7 @@ impl cpu::CPU {
         println!("{}", self);
         todo!("0x10");
 
-        // Note: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
+        // @todo CGB: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
     }
 
     pub fn opcode_jr(&mut self, mmu: &mut MMU, _instr: &Instruction, opcode: u8) {

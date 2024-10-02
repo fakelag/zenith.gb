@@ -92,6 +92,16 @@ impl Sweep {
         self.reg_frequency
     }
 
+    pub fn shutdown(&mut self) {
+        self.enabled = false;
+        self.period_timer = 0;
+        self.period = 0;
+        self.negate = false;
+        self.shift = 0;
+        self.shadow_frequency = 0;
+        self.reg_frequency = 0;
+    }
+
     fn calc_frequency(&self) -> u16 {
         let mut frequency_offset: i16 = (self.shadow_frequency >> self.shift) as i16;
 

@@ -34,10 +34,9 @@ pub struct APU {
     channel4: Channel4,
 
     sample_counter: u16,
-    sound_chan: Option<ApuSoundSender>,
+    sample_output: Option<(ApuSoundSender, AudioCVT)>,
 
     tmp: Vec<i16>,
-    audio_cvt: AudioCVT,
     sample_buffer: AudioBuffer,
     frame_sequencer: u16,
     frame_sequencer_step: u8,
@@ -47,11 +46,19 @@ pub struct APU {
     right_vol: u8,
     left_pan: [bool; 4],
     left_vol: u8,
+    left_vin: bool,
+    right_vin: bool,
 }
 
 impl APU {
     pub fn new(sound_chan: Option<ApuSoundSender>) -> Self {
+        let sample_output = if let Some(channel) = sound_chan {
+            Some((channel, AudioCVT::new()))
+        } else {
+            None
+        };
         Self {
+            sample_output,
             channel1: Channel1::new(),
             channel2: Channel2::new(),
             channel3: Channel3::new(),
@@ -59,8 +66,6 @@ impl APU {
             sample_counter: SAMPLE_COUNTER_START,
             frame_sequencer: FRAME_SEQUENCER_START,
             frame_sequencer_step: 0,
-            sound_chan,
-            audio_cvt: AudioCVT::new(),
             sample_buffer: Vec::with_capacity(APU_SAMPLES),
             tmp: Vec::new(),
             audio_enabled: true,
@@ -68,6 +73,8 @@ impl APU {
             right_vol: 7,
             left_pan: [true; 4],
             left_vol: 7,
+            left_vin: false,
+            right_vin: false,
         }
     }
 
@@ -178,8 +185,8 @@ impl APU {
             return;
         }
 
-        if let Some(sound_chan) = &self.sound_chan {
-            let cvt_audio = self.audio_cvt.convert_u8_i16(&self.sample_buffer);
+        if let Some((chan, cvt)) = &self.sample_output {
+            let cvt_audio = cvt.convert_u8_i16(&self.sample_buffer);
 
             if RECORD_WAV_FILE {
                 for c in cvt_audio.iter() {
@@ -187,7 +194,7 @@ impl APU {
                 }
             }
 
-            sound_chan.send(cvt_audio).unwrap();
+            chan.send(cvt_audio).unwrap();
             self.sample_buffer.clear();
 
             self.sample_buffer.push(left);
@@ -195,28 +202,22 @@ impl APU {
         }
     }
 
-    pub fn get_channel1(&mut self) -> &mut Channel1 {
-        &mut self.channel1
-    }
-
-    pub fn get_channel2(&mut self) -> &mut Channel2 {
-        &mut self.channel2
-    }
-
-    pub fn get_channel3(&mut self) -> &mut Channel3 {
-        &mut self.channel3
-    }
-
-    pub fn get_channel4(&mut self) -> &mut Channel4 {
-        &mut self.channel4
-    }
-
     pub fn write_nr50(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+
         self.right_vol = data & 0x7;
+        self.right_vin = data & 0x8 != 0;
         self.left_vol = (data >> 4) & 0x7;
+        self.left_vin = data & 0x80 != 0;
     }
 
     pub fn write_nr51(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+
         for i in 0..4 {
             self.right_pan[i] = (data >> i) & 0x1 != 0;
             self.left_pan[i] = (data >> (i+4)) & 0x1 != 0;
@@ -224,14 +225,35 @@ impl APU {
     }
 
     pub fn write_nr52(&mut self, data: u8) {
-        // @todo Audio on/off: Turns all APU registers RO, except NR52 and length timers (NRx1)
-        self.audio_enabled = data & 0x80 != 0;
-        // @todo Turning audio off should reset all APU registers
-        // @todo Reset frame sequencer when switching off->on
+        let enable_bit = data & 0x80 != 0;
+
+        match (self.audio_enabled, enable_bit) {
+            (true, false) => {
+                self.left_vin = false;
+                self.right_vin = false;
+                self.left_vol = 0;
+                self.right_vol = 0;
+    
+                (0..4).into_iter().for_each(|i| {
+                    self.left_pan[i] = false;
+                    self.right_pan[i] = false;
+                    self.get_channels()[i].shutdown();
+                });
+            }
+            (false, true) => {
+                self.frame_sequencer_step = 0;
+            }
+            _ => {}
+        }
+
+        self.audio_enabled = enable_bit;
     }
 
     pub fn read_nr50(&mut self) -> u8 {
-        self.right_vol | (self.left_vol << 4)
+        self.right_vol
+            | (self.left_vol << 4)
+            | ((self.left_vin as u8) << 7)
+            | ((self.right_vin as u8) << 3)
     }
 
     pub fn read_nr51(&mut self) -> u8 {
@@ -246,17 +268,223 @@ impl APU {
     }
 
     pub fn read_nr52(&mut self) -> u8 {
-        let enable_bit = if self.audio_enabled { 0x80 } else { 0x0 };
+        let enable_bit = (self.audio_enabled as u8) << 7;
 
         let channel_enable_bits = (0..4)
             .into_iter()
             .map(|i| {
-                let channel_enable_bit = if self.get_channels()[i].is_enabled() { 1 << i } else { 0 };
+                let channel_enable_bit = (self.get_channels()[i].is_enabled() as u8) * (1 << i);
                 channel_enable_bit
             })
             .fold(0, |acc, curr| acc | curr);
 
         enable_bit | channel_enable_bits | 0x70
+    }
+
+    pub fn write_nr10(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel1.write_nr10(data);
+    }
+
+    pub fn write_nr11(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel1.write_nr11(data);
+    }
+
+    pub fn write_nr12(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel1.write_nr12(data);
+    }
+
+    pub fn write_nr13(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel1.write_nr13(data);
+    }
+
+    pub fn write_nr14(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel1.write_nr14(data);
+    }
+
+    pub fn write_nr21(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel2.write_nr21(data);
+    }
+
+    pub fn write_nr22(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel2.write_nr22(data);
+    }
+
+    pub fn write_nr23(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel2.write_nr23(data);
+    }
+
+    pub fn write_nr24(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        } 
+        self.channel2.write_nr24(data);
+    }
+
+    pub fn write_wave_ram(&mut self, address: u16, data: u8) {
+        self.channel3.write_wave_ram(usize::from(address), data);
+    }
+
+    pub fn write_nr30(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel3.write_nr30(data);
+    }
+
+    pub fn write_nr31(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel3.write_nr31(data);
+    }
+
+    pub fn write_nr32(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel3.write_nr32(data);
+    }
+
+    pub fn write_nr33(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel3.write_nr33(data);
+    }
+
+    pub fn write_nr34(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel3.write_nr34(data);
+    }
+
+    pub fn write_nr41(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel4.write_nr41(data);
+    }
+
+    pub fn write_nr42(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel4.write_nr42(data);
+    }
+
+    pub fn write_nr43(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel4.write_nr43(data);
+    }
+
+    pub fn write_nr44(&mut self, data: u8) {
+        if !self.audio_enabled {
+            return;
+        }
+        self.channel4.write_nr44(data);
+    }
+
+    pub fn read_nr10(&mut self) -> u8 {
+        self.channel1.read_nr10()
+    }
+
+    pub fn read_nr11(&mut self) -> u8 {
+        self.channel1.read_nr11()
+    }
+
+    pub fn read_nr12(&mut self) -> u8 {
+        self.channel1.read_nr12()
+    }
+
+    pub fn read_nr13(&mut self) -> u8 {
+        self.channel1.read_nr13()
+    }
+
+    pub fn read_nr14(&mut self) -> u8 {
+        self.channel1.read_nr14()
+    }
+
+    pub fn read_nr21(&mut self) -> u8 {
+        self.channel2.read_nr21()
+    }
+
+    pub fn read_nr22(&mut self) -> u8 {
+        self.channel2.read_nr22()
+    }
+
+    pub fn read_nr23(&mut self) -> u8 {
+        self.channel2.read_nr23()
+    }
+
+    pub fn read_nr24(&mut self) -> u8 {
+        self.channel2.read_nr24()
+    }
+
+    pub fn read_nr30(&mut self) -> u8 {
+        self.channel3.read_nr30()
+    }
+
+    pub fn read_nr31(&mut self) -> u8 {
+        self.channel3.read_nr31()
+    }
+
+    pub fn read_nr32(&mut self) -> u8 {
+        self.channel3.read_nr32()
+    }
+
+    pub fn read_nr33(&mut self) -> u8 {
+        self.channel3.read_nr33()
+    }
+
+    pub fn read_nr34(&mut self) -> u8 {
+        self.channel3.read_nr34()
+    }
+
+    pub fn read_nr41(&mut self) -> u8 {
+        self.channel4.read_nr41()
+    }
+
+    pub fn read_nr42(&mut self) -> u8 {
+        self.channel4.read_nr42()
+    }
+
+    pub fn read_nr43(&mut self) -> u8 {
+        self.channel4.read_nr43()
+    }
+
+    pub fn read_nr44(&mut self) -> u8 {
+        self.channel4.read_nr44()
+    }
+
+    pub fn read_wave_ram(&mut self, address: u16) -> u8 {
+        self.channel3.read_wave_ram(usize::from(address))
     }
 
     fn get_volume_scale(vol: u8) -> f32 {

@@ -23,7 +23,7 @@ impl Channel3 {
         Self {
             freq_timer: 0,
             length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
-            sample_index: 1,
+            sample_index: 0,
             is_enabled: false,
             reg_dac_enable: false,
             reg_volume: 0,
@@ -180,5 +180,14 @@ impl Channel for Channel3 {
 
     fn is_enabled(&self) -> bool {
         self.is_enabled && self.reg_dac_enable
+    }
+
+    fn shutdown(&mut self) {
+        self.is_enabled = false;
+        self.reg_dac_enable = false;
+        self.reg_frequency = 0;
+        self.reg_volume = 0;
+        self.sample_index = 0;
+        self.length_counter.shutdown();
     }
 }

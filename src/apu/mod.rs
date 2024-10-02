@@ -15,4 +15,5 @@ pub trait Channel {
     fn get_length_counter(&mut self) -> &mut lengthcounter::LengthCounter;
     fn get_envelope(&mut self) -> Option<&mut envelope::Envelope>;
     fn is_enabled(&self) -> bool;
+    fn shutdown(&mut self);
 }

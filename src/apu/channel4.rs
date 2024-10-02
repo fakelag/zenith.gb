@@ -158,4 +158,15 @@ impl Channel for Channel4 {
     fn is_enabled(&self) -> bool {
         self.is_enabled && self.reg_dac_enable
     }
+
+    
+    fn shutdown(&mut self) {
+        self.is_enabled = false;
+        self.reg_dac_enable = false;
+        self.reg_clock_shift = 0;
+        self.reg_divisor = 0;
+        self.reg_lfsr_7bit = false;
+        self.length_counter.shutdown();
+        self.envelope.shutdown();
+    }
 }

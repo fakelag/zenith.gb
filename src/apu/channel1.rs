@@ -173,4 +173,14 @@ impl Channel for Channel1 {
     fn is_enabled(&self) -> bool {
         self.is_enabled && self.reg_dac_enable
     }
+
+    fn shutdown(&mut self) {
+        self.is_enabled = false;
+        self.reg_dac_enable = false;
+        self.duty_cycle = 0;
+        self.reg_waveduty = 0;
+        self.sweep.shutdown();
+        self.envelope.shutdown();
+        self.length_counter.shutdown();
+    }
 }

@@ -74,6 +74,15 @@ impl Envelope {
         };
     }
 
+    pub fn shutdown(&mut self) {
+        self.period_timer = 0;
+        self.enabled = false;
+        self.volume = 0;
+        self.initial_volume = 0;
+        self.add_mode = false;
+        self.period = 0;
+    }
+
     fn reload_timer(&mut self) {
         self.period_timer = if self.period == 0 { 8 } else { self.period };
     }

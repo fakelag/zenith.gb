@@ -181,6 +181,7 @@ impl MMU {
                 return self.memory[usize::from(address)];
             }
             0xD000..=0xDFFF => {
+                // @todo CGB: Work ram banking
                 // 4 KiB Work RAM (WRAM) - In CGB mode, switchable bank 1–7
                 return self.memory[usize::from(address)];
             }
@@ -206,6 +207,10 @@ impl MMU {
                     return self.memory[usize::from(address)];
                 }
 
+                // if address > HWR_NR10 && address < HWR_NR52 {
+                //     println!("read {address}");
+                // }
+
                 match address {
                     HWR_P1 => {
                         let p1 = self.memory[address as usize];
@@ -223,25 +228,25 @@ impl MMU {
                         // Reads ignored for non-dmg registers
                         return 0xFF;
                     }
-                    HWR_NR10 => { return self.apu.get_channel1().read_nr10(); }
-                    HWR_NR11 => { return self.apu.get_channel1().read_nr11(); }
-                    HWR_NR12 => { return self.apu.get_channel1().read_nr12(); }
-                    HWR_NR13 => { return self.apu.get_channel1().read_nr13(); }
-                    HWR_NR14 => { return self.apu.get_channel1().read_nr14(); }
-                    HWR_NR21 => { return self.apu.get_channel2().read_nr21(); }
-                    HWR_NR22 => { return self.apu.get_channel2().read_nr22(); }
-                    HWR_NR23 => { return self.apu.get_channel2().read_nr23(); }
-                    HWR_NR24 => { return self.apu.get_channel2().read_nr24(); }
-                    0xFF30..=0xFF3F => { return self.apu.get_channel3().read_wave_ram(usize::from(address)); }
-                    HWR_NR30 => { return self.apu.get_channel3().read_nr30(); }
-                    HWR_NR31 => { return self.apu.get_channel3().read_nr31(); }
-                    HWR_NR32 => { return self.apu.get_channel3().read_nr32(); }
-                    HWR_NR33 => { return self.apu.get_channel3().read_nr33(); }
-                    HWR_NR34 => { return self.apu.get_channel3().read_nr34(); }
-                    HWR_NR41 => { return self.apu.get_channel4().read_nr41(); }
-                    HWR_NR42 => { return self.apu.get_channel4().read_nr42(); }
-                    HWR_NR43 => { return self.apu.get_channel4().read_nr43(); }
-                    HWR_NR44 => { return self.apu.get_channel4().read_nr44(); }
+                    HWR_NR10 => { return self.apu.read_nr10(); }
+                    HWR_NR11 => { return self.apu.read_nr11(); }
+                    HWR_NR12 => { return self.apu.read_nr12(); }
+                    HWR_NR13 => { return self.apu.read_nr13(); }
+                    HWR_NR14 => { return self.apu.read_nr14(); }
+                    HWR_NR21 => { return self.apu.read_nr21(); }
+                    HWR_NR22 => { return self.apu.read_nr22(); }
+                    HWR_NR23 => { return self.apu.read_nr23(); }
+                    HWR_NR24 => { return self.apu.read_nr24(); }
+                    0xFF30..=0xFF3F => { return self.apu.read_wave_ram(address); }
+                    HWR_NR30 => { return self.apu.read_nr30(); }
+                    HWR_NR31 => { return self.apu.read_nr31(); }
+                    HWR_NR32 => { return self.apu.read_nr32(); }
+                    HWR_NR33 => { return self.apu.read_nr33(); }
+                    HWR_NR34 => { return self.apu.read_nr34(); }
+                    HWR_NR41 => { return self.apu.read_nr41(); }
+                    HWR_NR42 => { return self.apu.read_nr42(); }
+                    HWR_NR43 => { return self.apu.read_nr43(); }
+                    HWR_NR44 => { return self.apu.read_nr44(); }
                     HWR_NR50 => { return self.apu.read_nr50(); }
                     HWR_NR51 => { return self.apu.read_nr51(); }
                     HWR_NR52 => { return self.apu.read_nr52(); }
@@ -416,29 +421,29 @@ impl MMU {
                 self.dma_request = Some(data);
                 self.memory[usize::from(address)] = data;
             }
-            // 0xFF4F => { todo!("select vram bank cgb"); }
+            // 0xFF4F => { todo!("select vram bank cgb"); } // @todo CGB: vram bank
             0xFF4D..=0xFF70 => {
                 // Writes ignored for non DMG registers
             }
-            HWR_NR10 => { self.apu.get_channel1().write_nr10(data); }
-            HWR_NR11 => { self.apu.get_channel1().write_nr11(data); }
-            HWR_NR12 => { self.apu.get_channel1().write_nr12(data); }
-            HWR_NR13 => { self.apu.get_channel1().write_nr13(data); }
-            HWR_NR14 => { self.apu.get_channel1().write_nr14(data); }
-            HWR_NR21 => { self.apu.get_channel2().write_nr21(data); }
-            HWR_NR22 => { self.apu.get_channel2().write_nr22(data); }
-            HWR_NR23 => { self.apu.get_channel2().write_nr23(data); }
-            HWR_NR24 => { self.apu.get_channel2().write_nr24(data); }
-            0xFF30..=0xFF3F => { self.apu.get_channel3().write_wave_ram(usize::from(address), data); }
-            HWR_NR30 => { self.apu.get_channel3().write_nr30(data); }
-            HWR_NR31 => { self.apu.get_channel3().write_nr31(data); }
-            HWR_NR32 => { self.apu.get_channel3().write_nr32(data); }
-            HWR_NR33 => { self.apu.get_channel3().write_nr33(data); }
-            HWR_NR34 => { self.apu.get_channel3().write_nr34(data); }
-            HWR_NR41 => { self.apu.get_channel4().write_nr41(data); }
-            HWR_NR42 => { self.apu.get_channel4().write_nr42(data); }
-            HWR_NR43 => { self.apu.get_channel4().write_nr43(data); }
-            HWR_NR44 => { self.apu.get_channel4().write_nr44(data); }
+            HWR_NR10 => { self.apu.write_nr10(data); }
+            HWR_NR11 => { self.apu.write_nr11(data); }
+            HWR_NR12 => { self.apu.write_nr12(data); }
+            HWR_NR13 => { self.apu.write_nr13(data); }
+            HWR_NR14 => { self.apu.write_nr14(data); }
+            HWR_NR21 => { self.apu.write_nr21(data); }
+            HWR_NR22 => { self.apu.write_nr22(data); }
+            HWR_NR23 => { self.apu.write_nr23(data); }
+            HWR_NR24 => { self.apu.write_nr24(data); }
+            0xFF30..=0xFF3F => { self.apu.write_wave_ram(address, data); }
+            HWR_NR30 => { self.apu.write_nr30(data); }
+            HWR_NR31 => { self.apu.write_nr31(data); }
+            HWR_NR32 => { self.apu.write_nr32(data); }
+            HWR_NR33 => { self.apu.write_nr33(data); }
+            HWR_NR34 => { self.apu.write_nr34(data); }
+            HWR_NR41 => { self.apu.write_nr41(data); }
+            HWR_NR42 => { self.apu.write_nr42(data); }
+            HWR_NR43 => { self.apu.write_nr43(data); }
+            HWR_NR44 => { self.apu.write_nr44(data); }
             HWR_NR50 => { self.apu.write_nr50(data); }
             HWR_NR51 => { self.apu.write_nr51(data); }
             HWR_NR52 => { self.apu.write_nr52(data); }

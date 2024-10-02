@@ -61,4 +61,12 @@ impl LengthCounter {
     pub fn update_frame_sequencer_step(&mut self, step: u8) {
         self.frame_seq_step = step;
     }
+
+    pub fn shutdown(&mut self) {
+        self.enabled = false;
+        self.frame_seq_step = 0;
+
+        // @todo CGB: resets count to initial
+        // self.count = 0;
+    }
 }
