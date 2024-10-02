@@ -95,7 +95,7 @@ impl Channel3 {
             0x80
         } else {
             0x0
-        };
+        } | 0x7F;
     }
 
     pub fn read_nr31(&mut self) -> u8 {
@@ -103,7 +103,7 @@ impl Channel3 {
     }
 
     pub fn read_nr32(&mut self) -> u8 {
-        self.reg_volume << 5
+        (self.reg_volume << 5) | 0x9F
     }
 
     pub fn read_nr33(&mut self) -> u8 {

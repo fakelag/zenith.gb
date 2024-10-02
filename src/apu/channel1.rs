@@ -38,12 +38,12 @@ impl Channel1 {
         Self {
             freq_timer: 0,
             duty_cycle: 0,
-            envelope: Envelope::new(),
+            envelope: Envelope::new(0xF, false, 3),
             sweep: Sweep::new(),
             length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
-            is_enabled: false,
-            reg_waveduty: 0,
-            reg_dac_enable: false,
+            is_enabled: true,
+            reg_waveduty: 2,
+            reg_dac_enable: true,
             sample: 0,
         }
     }

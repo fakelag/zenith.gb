@@ -34,7 +34,7 @@ impl Channel4 {
     pub fn new() -> Self {
         Self {
             length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
-            envelope: Envelope::new(),
+            envelope: Envelope::new(0, false, 0),
             freq_timer: 0,
             lfsr: 0,
             reg_clock_shift: 0,

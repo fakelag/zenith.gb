@@ -38,7 +38,7 @@ impl Channel2 {
             freq_timer: 0,
             duty_cycle: 0,
             reg_frequency: 0,
-            envelope: Envelope::new(),
+            envelope: Envelope::new(0, false, 0),
             length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
             is_enabled: false,
             reg_waveduty: 0,

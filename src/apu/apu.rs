@@ -64,7 +64,7 @@ impl APU {
             sample_buffer: Vec::with_capacity(APU_SAMPLES),
             tmp: Vec::new(),
             audio_enabled: true,
-            right_pan: [false, false, true, true],
+            right_pan: [true, true, false, false],
             right_vol: 7,
             left_pan: [true; 4],
             left_vol: 7,
@@ -248,8 +248,15 @@ impl APU {
     pub fn read_nr52(&mut self) -> u8 {
         let enable_bit = if self.audio_enabled { 0x80 } else { 0x0 };
 
-        enable_bit |
-            (if self.channel3.is_enabled() { 1 << 3 } else { 0 })
+        let channel_enable_bits = (0..4)
+            .into_iter()
+            .map(|i| {
+                let channel_enable_bit = if self.get_channels()[i].is_enabled() { 1 << i } else { 0 };
+                channel_enable_bit
+            })
+            .fold(0, |acc, curr| acc | curr);
+
+        enable_bit | channel_enable_bits | 0x70
     }
 
     fn get_volume_scale(vol: u8) -> f32 {

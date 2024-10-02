@@ -9,14 +9,14 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    pub fn new() -> Self {
+    pub fn new(initial_volume: u8, add_mode: bool, period: u8) -> Self {
         Self {
             enabled: false,
             period_timer: 0,
-            add_mode: false,
-            period: 0,
+            add_mode,
+            period,
+            initial_volume,
             volume: 0,
-            initial_volume: 0,
         }
     }
 
