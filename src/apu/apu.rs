@@ -289,10 +289,8 @@ impl APU {
     }
 
     pub fn write_nr11(&mut self, data: u8) {
-        if !self.audio_enabled {
-            return;
-        } 
-        self.channel1.write_nr11(data);
+        // @todo CGB: Audio disabled prevents writing to length counters
+        self.channel1.write_nr11(if self.audio_enabled { data } else { data & 0x3F });
     }
 
     pub fn write_nr12(&mut self, data: u8) {
@@ -317,10 +315,8 @@ impl APU {
     }
 
     pub fn write_nr21(&mut self, data: u8) {
-        if !self.audio_enabled {
-            return;
-        } 
-        self.channel2.write_nr21(data);
+        // @todo CGB: Audio disabled prevents writing to length counters
+        self.channel2.write_nr21(if self.audio_enabled { data } else { data & 0x3F });
     }
 
     pub fn write_nr22(&mut self, data: u8) {
@@ -356,9 +352,7 @@ impl APU {
     }
 
     pub fn write_nr31(&mut self, data: u8) {
-        if !self.audio_enabled {
-            return;
-        }
+        // @todo CGB: Audio disabled prevents writing to length counters
         self.channel3.write_nr31(data);
     }
 
@@ -384,9 +378,7 @@ impl APU {
     }
 
     pub fn write_nr41(&mut self, data: u8) {
-        if !self.audio_enabled {
-            return;
-        }
+        // @todo CGB: Audio disabled prevents writing to length counters
         self.channel4.write_nr41(data);
     }
 

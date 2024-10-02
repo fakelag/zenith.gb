@@ -18,7 +18,7 @@ impl LengthCounter {
 
     pub fn step(&mut self) {
         if self.enabled && self.count != 0 {
-            self.count = self.count.saturating_sub(1);
+            self.count -= 1;
         }
     }
 
@@ -55,7 +55,6 @@ impl LengthCounter {
     }
 
     pub fn write_nrx4(&mut self, trigger_bit: bool, enable_bit: bool) {
-
         if self.enabled {
             self.write_nrx4_enabled(trigger_bit, enable_bit);
         } else if enable_bit {
@@ -88,6 +87,6 @@ impl LengthCounter {
         self.frame_seq_step = 0;
 
         // @todo CGB: resets count to initial
-        // self.count = 0;
+        // self.count = self.initial_count;
     }
 }
