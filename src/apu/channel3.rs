@@ -73,7 +73,7 @@ impl Channel3 {
     
         self.reg_frequency = ((u16::from(data) & 0x7) << 8) | (self.reg_frequency & 0xFF);
 
-        self.length_counter.update_enabled(trigger_bit, length_enable_bit);
+        self.length_counter.write_nrx4(trigger_bit, length_enable_bit);
 
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;

@@ -22,25 +22,46 @@ impl LengthCounter {
         }
     }
 
-    pub fn update_enabled(&mut self, trigger_bit: bool, enable_bit: bool) {
-        let reset_length = self.initial_count - (if self.enabled {
-            (self.frame_seq_step & 1) as u16
+    fn write_nrx4_enabled(&mut self, trigger_bit: bool, enable_bit: bool) {
+        if !trigger_bit || self.count != 0 {
+            return;
+        }
+
+        self.count = self.initial_count;
+
+        if enable_bit {
+            self.count -= (self.frame_seq_step & 1) as u16;
+        }
+    }
+
+    fn write_nrx4_disabled_to_enabled(&mut self, trigger_bit: bool) {
+        if self.frame_seq_step & 1 == 0 {
+            return;
+        }
+
+        self.count = self.count.saturating_sub(1);
+
+        if self.count == 0 && trigger_bit {
+            self.count = self.initial_count - 1;
+        }
+    }
+
+    fn write_nrx4_disabled(&mut self, trigger_bit: bool) {
+        if !trigger_bit || self.count != 0 {
+            return;
+        }
+
+        self.count = self.initial_count;
+    }
+
+    pub fn write_nrx4(&mut self, trigger_bit: bool, enable_bit: bool) {
+
+        if self.enabled {
+            self.write_nrx4_enabled(trigger_bit, enable_bit);
+        } else if enable_bit {
+            self.write_nrx4_disabled_to_enabled(trigger_bit);
         } else {
-            0
-        });
-
-        let reset: bool = trigger_bit && self.count == 0;
-
-        if !self.enabled && !enable_bit && reset {
-            self.count = reset_length;
-        } else if self.enabled && self.frame_seq_step & 1 != 0 {
-            self.count = self.count.saturating_sub(1);
-
-            if trigger_bit && self.count == 0 {
-                self.count = self.initial_count - 1;
-            }
-        } else if reset {
-            self.count = reset_length;
+            self.write_nrx4_disabled(trigger_bit);
         }
 
         self.enabled = enable_bit;
