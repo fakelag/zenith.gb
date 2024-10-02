@@ -4,6 +4,7 @@ const LENGTH_COUNTER_INIT: u16 = 256;
 
 pub struct Channel3 {
     freq_timer: u16,
+    last_sample_step: u16,
 
     length_counter: LengthCounter,
 
@@ -22,6 +23,7 @@ impl Channel3 {
     pub fn new() -> Self {
         Self {
             freq_timer: 0,
+            last_sample_step: 0,
             length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
             sample_index: 0,
             is_enabled: false,
@@ -34,12 +36,32 @@ impl Channel3 {
     }
 
     fn trigger(&mut self) {
-        // @todo - Triggering while reading sample from wave ram corrupts the data
+        // Triggering the wave channel on the DMG while it reads a sample byte will alter the first four bytes of wave RAM.
+        // If the channel was reading one of the first four bytes, the only first byte will be rewritten with the byte being read.
+        // If the channel was reading one of the later 12 bytes, the first FOUR bytes of wave RAM will be rewritten with the four
+        // aligned bytes that the read was from (bytes 4-7, 8-11, or 12-15); for example if it were reading byte 9 when it was retriggered,
+        // the first four bytes would be rewritten with the contents of bytes 8-11.
+        // To avoid this corruption you should stop the wave by writing 0 then $80 to NR30 before triggering it again.
+        // The game Duck Tales encounters this issue part way through most songs.
+
+        // @todo CGB: corruption occurs on DMG only
+        if self.freq_timer == 2 && self.is_enabled() {
+            let next_byte_index = (self.sample_index / 2) as u8;
+
+            if next_byte_index < 4 {
+                self.wave_ram[0] = self.wave_ram[next_byte_index as usize];
+            } else {
+                let aligned_index = (next_byte_index & 0xFC) as usize;
+                for i in 0..4 {
+                    self.wave_ram[i] = self.wave_ram[aligned_index + i];
+                }
+            }
+        }
+
         self.is_enabled = self.reg_dac_enable;
 
         // Trigger event: Frequency timer is reloaded with period.
-        // self.freq_timer = 6; // @todo - Check blargg test 09 wave read while on
-        self.freq_timer = (2048 - self.reg_frequency) * 2;
+        self.freq_timer = 6;
 
         // Trigger event: Wave channel's position is set to 0 but sample buffer is NOT refilled.
         self.sample_index = 0;
@@ -84,7 +106,11 @@ impl Channel3 {
 
     pub fn write_wave_ram(&mut self, addr: usize, data: u8) {
         if self.is_enabled() {
-            // @todo timing behaviors
+               // @todo CGB: self.last_sample_step is irrelevant on CGB. Write to last_sample_index occurs always
+            if self.last_sample_step < 2 {
+                let last_sample_index = if self.sample_index == 0 { 31 } else { self.sample_index - 1 };
+                self.wave_ram[last_sample_index / 2] = data;
+            }
             return;
         }
         self.wave_ram[addr & 0xF] = data;
@@ -120,10 +146,12 @@ impl Channel3 {
     }
 
     pub fn read_wave_ram(&mut self, addr: usize) -> u8 {
-        // @todo - Wave RAM can only be properly accessed when the channel is disabled (see obscure behavior).
-        // https://gbdev.gg8.se/wiki/articles/Gameboy_sound_hardware
         if self.is_enabled() {
-            // @todo timing behaviors
+            // @todo CGB: self.last_sample_step is irrelevant on CGB. Read from last_sample_index occurs always
+            if self.last_sample_step < 2 {
+                let last_sample_index = if self.sample_index == 0 { 31 } else { self.sample_index - 1 };
+                return self.wave_ram[last_sample_index / 2];
+            }
             return 0xFF;
         }
         self.wave_ram[addr & 0xF]
@@ -132,6 +160,8 @@ impl Channel3 {
 
 impl Channel for Channel3 {
     fn step(&mut self) {
+        self.last_sample_step = self.last_sample_step.saturating_add(1);
+
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;
         }
@@ -164,6 +194,7 @@ impl Channel for Channel3 {
 
         self.sample = wave_sample;
         self.sample_index = (self.sample_index + 1) % 32;
+        self.last_sample_step = 0;
     }
 
     fn get_sample(&self) -> u8 {
