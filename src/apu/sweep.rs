@@ -1,6 +1,7 @@
 pub struct Sweep {
     period_timer: u8,
     enabled: bool,
+    negated_since_trigger: bool,
 
     period: u8,
     negate: bool,
@@ -20,6 +21,7 @@ impl Sweep {
             shift: 0,
             shadow_frequency: 0,
             reg_frequency: 0,
+            negated_since_trigger: false,
         }
     }
 
@@ -53,13 +55,16 @@ impl Sweep {
         self.shadow_frequency = next_freq;
         self.reg_frequency = next_freq;
 
-        return self.overflow_check(self.calc_frequency());
+        let check_freq = self.calc_frequency();
+        return self.overflow_check(check_freq);
     }
 
-    pub fn write_nr10(&mut self, data: u8) {
+    pub fn write_nr10(&mut self, data: u8) -> bool {
         self.period = (data >> 4) & 0x7;
         self.negate = (data >> 3) & 0x1 != 0;
         self.shift = data & 0x7;
+
+        return !self.negate && self.negated_since_trigger;
     }
 
     pub fn read_nr10(&mut self) -> u8 {
@@ -70,12 +75,14 @@ impl Sweep {
     }
 
     pub fn trigger(&mut self) -> bool {
+        self.negated_since_trigger = false;
         self.shadow_frequency = self.reg_frequency;
         self.enabled = self.period != 0 || self.shift != 0;
         self.reload_timer();
         
         if self.shift != 0 {
-            return self.overflow_check(self.calc_frequency());
+            let freq = self.calc_frequency();
+            return self.overflow_check(freq);
         }
         return false;
     }
@@ -95,6 +102,7 @@ impl Sweep {
     pub fn shutdown(&mut self) {
         self.enabled = false;
         self.period_timer = 0;
+        self.negated_since_trigger = false;
         self.period = 0;
         self.negate = false;
         self.shift = 0;
@@ -102,11 +110,12 @@ impl Sweep {
         self.reg_frequency = 0;
     }
 
-    fn calc_frequency(&self) -> u16 {
+    fn calc_frequency(&mut self) -> u16 {
         let mut frequency_offset: i16 = (self.shadow_frequency >> self.shift) as i16;
 
         if self.negate {
             frequency_offset = -frequency_offset;
+            self.negated_since_trigger = true;
         }
 
         ((self.shadow_frequency as i16) + frequency_offset) as u16

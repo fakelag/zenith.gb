@@ -71,7 +71,12 @@ impl Channel1 {
     }
 
     pub fn write_nr10(&mut self, data: u8) {
-        self.sweep.write_nr10(data);
+        let disable_channel = self.sweep.write_nr10(data);
+
+        if disable_channel {
+            self.is_enabled = false;
+        }
+
         // @todo - Check if writing to nr10 can overflow sweep in some cases
     }
 
