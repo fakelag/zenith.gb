@@ -187,11 +187,11 @@ impl APU {
                 }
             }
 
-            // try_send for non-synced audio with the compromise of audio glitches due to
-            // missing sample buffers in-between
-            // println!("{:?}", self.sample_buffer);
             sound_chan.send(cvt_audio).unwrap();
             self.sample_buffer.clear();
+
+            self.sample_buffer.push(left);
+            self.sample_buffer.push(right);
         }
     }
 
