@@ -58,7 +58,7 @@ impl<'a> HwReg<'a> {
         self.mmu.bus_write(self.addr, val);
     }
 
-    pub fn get(&self) -> u8 {
+    pub fn get(&mut self) -> u8 {
         self.mmu.bus_read(self.addr)
     }
 
@@ -74,7 +74,7 @@ impl<'a> HwReg<'a> {
         prev
     }
 
-    pub fn check_bit(&self, bit: u8) -> bool {
+    pub fn check_bit(&mut self, bit: u8) -> bool {
         debug_assert!(bit < 8);
         (self.get() & (1 << bit)) != 0
     }

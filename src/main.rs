@@ -1,7 +1,14 @@
-use std::time;
+use std::{sync::mpsc::{self}, time};
 
 use cartridge::cartridge::Cartridge;
+use apu::apu::{
+    APU_FREQ,
+    APU_NUM_CHANNELS,
+    APU_SAMPLES,
+    APU_SAMPLES_PER_CHANNEL,
+};
 
+mod apu;
 mod cartridge;
 mod cpu;
 mod emu;
@@ -12,18 +19,20 @@ mod util;
 
 use emu::emu::{Emu, GbButton, InputEvent};
 use ppu::ppu::FrameBuffer;
-use sdl2::keyboard::Scancode;
+use sdl2::audio::AudioFormatNum;
 
-const T_CYCLES_PER_FRAME: u64 = 4_194_304 / 60;
+pub const GB_DEFAULT_FPS: f64 = 59.73;
+pub const TARGET_FPS: f64 = GB_DEFAULT_FPS;
+
+const T_CYCLES_PER_FRAME: u64 = (4_194_304.0 / GB_DEFAULT_FPS) as u64;
 const M_CYCLES_PER_FRAME: u64 = T_CYCLES_PER_FRAME / 4;
+const FRAME_TIME: u64 = ((1.0 / TARGET_FPS) * 1000_000.0) as u64;
 
 const GB_SCREEN_WIDTH: u32 = 160;
 const GB_SCREEN_HEIGHT: u32 = 144;
 const WINDOW_SIZE_MULT: u32 = 4;
 
-fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl) {
-    let sdl_ctx = sdl2::init().unwrap();
-
+fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::Window> {
     let video_subsystem = sdl_ctx.video().unwrap();
 
     let window = video_subsystem
@@ -43,7 +52,56 @@ fn sdl2_create_window() -> (sdl2::render::Canvas<sdl2::video::Window>, sdl2::Sdl
         .set_logical_size(GB_SCREEN_HEIGHT, GB_SCREEN_WIDTH)
         .expect("canvast must set device independent resolution");
 
-    return (canvas, sdl_ctx);
+    return canvas;
+}
+
+struct GbAudio {
+    sound_recv: mpsc::Receiver<Vec<i16>>,
+}
+
+impl sdl2::audio::AudioCallback for GbAudio {
+    type Channel = i16;
+
+    fn callback(&mut self, out: &mut [Self::Channel]) {
+        match self.sound_recv.recv_timeout(time::Duration::from_millis(15)) {
+            Ok(samples) => {
+                debug_assert!(samples.len() == out.len());
+
+                out.copy_from_slice(&samples);
+            }
+            Err(_err) => {
+                // println!("recv err {:?}", std::time::Instant::now());
+                for i in 0..APU_SAMPLES {
+                    out[i] = Self::Channel::SILENCE;
+                }
+            }
+        }
+    }
+}
+
+fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
+    sdl2::audio::AudioDevice<GbAudio>,
+    apu::apu::ApuSoundSender,
+) {
+    let audio_subsystem = sdl_ctx.audio().unwrap();
+
+    let spec_desired = sdl2::audio::AudioSpecDesired{
+        channels: Some(APU_NUM_CHANNELS),
+        samples: Some(APU_SAMPLES_PER_CHANNEL),
+        freq: Some(APU_FREQ as i32),
+    };
+
+    let (sound_send, sound_recv) = mpsc::sync_channel::<Vec<i16>>(1);
+
+    let device = audio_subsystem.open_playback(None, &spec_desired, |_spec| {
+        GbAudio {
+            sound_recv,
+        }
+    }).unwrap();
+
+    device.resume();
+
+    (device, sound_send)
 }
 
 const PALETTE: [sdl2::pixels::Color; 4] = [
@@ -60,16 +118,16 @@ fn create_emulator(rom_path: &str) -> Emu {
     emu
 }
 
-fn scancode_to_gb_button(scancode: Option<Scancode>) -> Option<GbButton> {
+fn scancode_to_gb_button(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
     match scancode {
-        Some(Scancode::W) => { Some(GbButton::GbButtonUp) }
-        Some(Scancode::A) => { Some(GbButton::GbButtonLeft) }
-        Some(Scancode::S) => { Some(GbButton::GbButtonDown) }
-        Some(Scancode::D) => { Some(GbButton::GbButtonRight) }
-        Some(Scancode::E) | Some(Scancode::O) => { Some(GbButton::GbButtonA) }
-        Some(Scancode::R) | Some(Scancode::P) => { Some(GbButton::GbButtonB) }
-        Some(Scancode::N) => { Some(GbButton::GbButtonSelect) }
-        Some(Scancode::M) => { Some(GbButton::GbButtonStart) }
+        Some(sdl2::keyboard::Scancode::W) => { Some(GbButton::GbButtonUp) }
+        Some(sdl2::keyboard::Scancode::A) => { Some(GbButton::GbButtonLeft) }
+        Some(sdl2::keyboard::Scancode::S) => { Some(GbButton::GbButtonDown) }
+        Some(sdl2::keyboard::Scancode::D) => { Some(GbButton::GbButtonRight) }
+        Some(sdl2::keyboard::Scancode::E) | Some(sdl2::keyboard::Scancode::O) => { Some(GbButton::GbButtonA) }
+        Some(sdl2::keyboard::Scancode::R) | Some(sdl2::keyboard::Scancode::P) => { Some(GbButton::GbButtonB) }
+        Some(sdl2::keyboard::Scancode::N) => { Some(GbButton::GbButtonSelect) }
+        Some(sdl2::keyboard::Scancode::M) => { Some(GbButton::GbButtonStart) }
         _ => { None }
     }
 }
@@ -146,7 +204,7 @@ fn vsync_canvas(
     canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
 }
 
-fn run(
+fn run_state(
     state: &mut State,
     canvas: &mut sdl2::render::WindowCanvas,
     event_pump: &mut sdl2::EventPump,
@@ -188,24 +246,23 @@ fn run(
                     input_vec.clear();
                 }
 
-                loop {
-                    let (cycles_run, vsync) = emu.run(M_CYCLES_PER_FRAME);
+                let mut cycles_left = M_CYCLES_PER_FRAME;
+                while cycles_left > 0 {
+                    let (cycles_run, vsync) = emu.run(cycles_left);
 
                     if vsync {
                         let rt = emu.ppu.get_framebuffer();
                         vsync_canvas(rt, &mut texture, canvas, &mut last_frame);
                     }
 
-                    if cycles_run >= M_CYCLES_PER_FRAME {
-                        break;
-                    }
+                    cycles_left = cycles_left.saturating_sub(cycles_run);
                 }
 
                 let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
-                let sleep_time = (16000 as u64).saturating_sub(elapsed);
+                let sleep_time = FRAME_TIME.saturating_sub(elapsed);
 
                 if sleep_time > 0 {
-                    spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+                   spin_sleep::sleep(time::Duration::from_micros(sleep_time));
                 }
             }
         }
@@ -214,13 +271,16 @@ fn run(
 }
 
 fn main() {
-    let (mut canvas, sdl_ctx) = sdl2_create_window();
+    let sdl_ctx = sdl2::init().unwrap();
+    let mut canvas = sdl2_create_window(&sdl_ctx);
+
+    let (_ad, sound_chan) = sdl2_create_audio(&sdl_ctx);
     
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     let mut state = State::Idle;
 
     'eventloop: loop {
-        let next_state = run(&mut state, &mut canvas, &mut event_pump);
+        let mut next_state = run_state(&mut state, &mut canvas, &mut event_pump);
 
         match next_state {
             State::Exit => {
@@ -229,10 +289,13 @@ fn main() {
                 }
                 break 'eventloop;
             }
-            _ => {
-                state = next_state;
+            State::Running(ref mut emu) => {
+                emu.enable_external_audio(sound_chan.clone());
             }
+            _ => {}
         }
+
+        state = next_state;
     }
 }
 
@@ -516,6 +579,7 @@ mod tests {
             (snapshot_runner, "tests/roms/rtc3test/rtc3test.1.gb", Some(vec![GbButton::GbButtonDown, GbButton::GbButtonA])),
             (snapshot_runner, "tests/roms/rtc3test/rtc3test.2.gb", Some(vec![GbButton::GbButtonDown, GbButton::GbButtonDown, GbButton::GbButtonA])),
             (snapshot_runner, "tests/roms/blargg/instr_timing/", None),
+            (snapshot_runner, "tests/roms/blargg/dmg_sound/", None),
             (snapshot_runner, "tests/roms/mts/manual-only/sprite_priority.gb", None),
             (mts_runner, "tests/roms/mts/acceptance/bits/", None),
             (mts_runner, "tests/roms/mts/acceptance/instr/", None),
@@ -530,6 +594,7 @@ mod tests {
             (mts_runner, "tests/roms/mts/misc/bits/", None),
             (mts_runner, "tests/roms/mts/misc/ppu/", None),
             (mts_runner, "tests/roms/mts/misc/", None),
+
             // (mts_runner, "tests/roms/mts/acceptance/serial/", None),
         );
 

@@ -1,6 +1,7 @@
 use std::fmt::{self, Display};
 
 use crate::{
+    apu::apu,
     cartridge::cartridge::*,
     cpu::cpu,
     mmu::mmu,
@@ -65,8 +66,6 @@ impl Emu {
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.timer.step(&mut self.mmu, cycles);
-
-            self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
             self.mmu.step(cycles);
 
             cycles_run += u64::from(cycles);
@@ -77,6 +76,10 @@ impl Emu {
        }
 
        return (cycles_run, false);
+   }
+
+   pub fn enable_external_audio(&mut self, sound_chan: apu::ApuSoundSender) {
+        self.mmu.get_apu().enable_external_audio(sound_chan);
    }
 
     pub fn close(&mut self) {
@@ -104,27 +107,6 @@ impl Emu {
         self.mmu.tma().set(0x00);
         self.mmu.tac().set(0xF8);
         self.mmu.r#if().set(0xE1);
-        self.mmu.nr10().set(0x80);
-        self.mmu.nr11().set(0xBF);
-        self.mmu.nr12().set(0xF3);
-        self.mmu.nr13().set(0xFF);
-        self.mmu.nr14().set(0xBF);
-        self.mmu.nr21().set(0x3F);
-        self.mmu.nr22().set(0x00);
-        self.mmu.nr23().set(0xFF);
-        self.mmu.nr24().set(0xBF);
-        self.mmu.nr30().set(0x7F);
-        self.mmu.nr31().set(0xFF);
-        self.mmu.nr32().set(0x9F);
-        self.mmu.nr33().set(0xFF);
-        self.mmu.nr34().set(0xBF);
-        self.mmu.nr41().set(0xFF);
-        self.mmu.nr42().set(0x00);
-        self.mmu.nr43().set(0x00);
-        self.mmu.nr44().set(0xBF);
-        self.mmu.nr50().set(0x77);
-        self.mmu.nr51().set(0xF3);
-        self.mmu.nr52().set(0xF1);
         self.mmu.lcdc().set(0x91);
         self.mmu.stat().set(0x85);
         self.mmu.scy().set(0x0);
