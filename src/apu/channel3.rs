@@ -84,8 +84,6 @@ impl Channel3 {
     }
 
     pub fn write_nr33(&mut self, data: u8) {
-        // @todo Period changes (written to NR33 or NR34) only take effect after the following time wave RAM is read.
-        // https://gbdev.io/pandocs/Audio_Registers.html#ff1d--nr33-channel-3-period-low-write-only
         self.reg_frequency = (self.reg_frequency & 0x700) | u16::from(data);
     }
 
@@ -117,11 +115,8 @@ impl Channel3 {
     }
 
     pub fn read_nr30(&mut self) -> u8 {
-        return if self.reg_dac_enable {
-            0x80
-        } else {
-            0x0
-        } | 0x7F;
+        let dac_bit = (self.reg_dac_enable as u8) << 7;
+        dac_bit| 0x7F
     }
 
     pub fn read_nr31(&mut self) -> u8 {
@@ -137,11 +132,7 @@ impl Channel3 {
     }
 
     pub fn read_nr34(&mut self) -> u8 {
-        let length_bit = if self.get_length_counter().is_enabled() {
-            0x40
-        } else {
-            0
-        };
+        let length_bit = (self.length_counter.is_enabled() as u8) << 6;
         0xBF | length_bit
     }
 
@@ -161,10 +152,6 @@ impl Channel3 {
 impl Channel for Channel3 {
     fn step(&mut self) {
         self.last_sample_step = self.last_sample_step.saturating_add(1);
-
-        if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
-            self.is_enabled = false;
-        }
 
         self.freq_timer = self.freq_timer.saturating_sub(1);
 
@@ -195,6 +182,12 @@ impl Channel for Channel3 {
         self.sample = wave_sample;
         self.sample_index = (self.sample_index + 1) % 32;
         self.last_sample_step = 0;
+    }
+
+    fn length_step(&mut self) {
+        if self.length_counter.step() {
+            self.is_enabled = false;
+        }
     }
 
     fn get_sample(&self) -> u8 {

@@ -13,7 +13,6 @@ pub fn write_wav(file_name: &str, wav_data: &Vec<i16>) {
     wav_file.write(&[((file_size >> 16) & 0xFF) as u8]).unwrap();
     wav_file.write(&[((file_size >> 24) & 0xFF) as u8]).unwrap();
 
-
     wav_file.write("WAVE".as_bytes()).unwrap();
 
     // [Chunk describing the data format]

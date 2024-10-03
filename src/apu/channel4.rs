@@ -103,11 +103,7 @@ impl Channel4 {
     }
 
     pub fn read_nr44(&mut self) -> u8 {
-        let length_bit = if self.get_length_counter().is_enabled() {
-            0x40
-        } else {
-            0
-        };
+        let length_bit = (self.length_counter.is_enabled() as u8) << 6;
         0xBF | length_bit
     }
 
@@ -119,10 +115,6 @@ impl Channel4 {
 
 impl Channel for Channel4 {
     fn step(&mut self) {
-        if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
-            self.is_enabled = false;
-        }
-
         self.freq_timer = self.freq_timer.saturating_sub(1);
 
         if self.freq_timer != 0 {
@@ -146,6 +138,12 @@ impl Channel for Channel4 {
 
         self.lfsr >>= 1;
         self.sample = self.envelope.get_volume() * (self.lfsr & 0x1) as u8;
+    }
+
+    fn length_step(&mut self) {
+        if self.length_counter.step() {
+            self.is_enabled = false;
+        }
     }
 
     fn get_sample(&self) -> u8 {

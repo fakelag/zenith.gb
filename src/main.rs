@@ -111,9 +111,9 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
 ];
 
-fn create_emulator(rom_path: &str, sound_chan: Option<apu::apu::ApuSoundSender>) -> Emu {
+fn create_emulator(rom_path: &str) -> Emu {
     let cart = Cartridge::new(rom_path);
-    let mut emu = Emu::new(cart, sound_chan);
+    let mut emu = Emu::new(cart);
     emu.dmg_boot();
     emu
 }
@@ -141,12 +141,11 @@ enum State {
 fn poll_events(
     input_vec: &mut Vec<InputEvent>,
     event_pump: &mut sdl2::EventPump,
-    sound_chan: &apu::apu::ApuSoundSender,
 ) -> Option<State> {
     for event in event_pump.poll_iter() {
         match event {
             sdl2::event::Event::DropFile { filename, .. } => {
-                return Some(State::Running(create_emulator(&filename, Some(sound_chan.clone()))));
+                return Some(State::Running(create_emulator(&filename)));
             }
             sdl2::event::Event::Quit {..} => {
                 return Some(State::Exit);
@@ -205,11 +204,10 @@ fn vsync_canvas(
     canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
 }
 
-fn run(
+fn run_state(
     state: &mut State,
     canvas: &mut sdl2::render::WindowCanvas,
     event_pump: &mut sdl2::EventPump,
-    sound_chan: apu::apu::ApuSoundSender,
 ) -> State {
     match state {
         State::Idle => {
@@ -217,8 +215,7 @@ fn run(
                 for event in event_pump.wait_timeout_iter(100) {
                     match event {
                         sdl2::event::Event::DropFile { filename, .. } => {
-                            // @todo - Handle sound channel better
-                            return State::Running(create_emulator(&filename, Some(sound_chan.clone())));
+                            return State::Running(create_emulator(&filename));
                         }
                         sdl2::event::Event::Quit {..} => {
                             return State::Exit;
@@ -240,7 +237,7 @@ fn run(
             loop {
                 let start_time = time::Instant::now();
 
-                if let Some(next_state) = poll_events(&mut input_vec, event_pump, &sound_chan) {
+                if let Some(next_state) = poll_events(&mut input_vec, event_pump) {
                     return next_state;
                 }
 
@@ -277,13 +274,13 @@ fn main() {
     let sdl_ctx = sdl2::init().unwrap();
     let mut canvas = sdl2_create_window(&sdl_ctx);
 
-    let (_audiodevice, sound_chan) = sdl2_create_audio(&sdl_ctx);
+    let (_ad, sound_chan) = sdl2_create_audio(&sdl_ctx);
     
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     let mut state = State::Idle;
 
     'eventloop: loop {
-        let next_state = run(&mut state, &mut canvas, &mut event_pump, sound_chan.clone());
+        let mut next_state = run_state(&mut state, &mut canvas, &mut event_pump);
 
         match next_state {
             State::Exit => {
@@ -292,10 +289,13 @@ fn main() {
                 }
                 break 'eventloop;
             }
-            _ => {
-                state = next_state;
+            State::Running(ref mut emu) => {
+                emu.enable_external_audio(sound_chan.clone());
             }
+            _ => {}
         }
+
+        state = next_state;
     }
 }
 
@@ -310,7 +310,7 @@ mod tests {
 
     fn create_test_emulator(rom_path: &str) -> Option<Emu> {
         let cart = Cartridge::new(rom_path);
-        let mut emu = Emu::new(cart, None);
+        let mut emu = Emu::new(cart);
 
         if !emu.mmu.is_supported_cart_type() {
             println!("Skipping {rom_path} due to unsupported cart type");

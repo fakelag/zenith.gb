@@ -19,6 +19,10 @@ impl AudioCVT {
     }
 
     pub fn convert_u8_i16(&self, src: &Vec<u8>) -> Vec<i16> {
+        // We could roll out our own converter, which might be faster and remove sdl dependency
+        // from APU code. @todo - Benchmark and test. Something similar to (i16::from(sample) - 32) << 10 but
+        // with 0 value as silence
+
         let converted_audio: Vec<_> = self.cvt
             .convert(src.to_vec())
             .chunks_exact(2)

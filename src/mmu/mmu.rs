@@ -63,7 +63,7 @@ pub struct MMU {
 }
 
 impl MMU {
-    pub fn new(cartridge: &Cartridge, sound_chan: Option<apu::ApuSoundSender>) -> MMU {
+    pub fn new(cartridge: &Cartridge) -> MMU {
         let mut mmu = Self {
             memory: vec![0; 0x10000],
             access_flags: 0,
@@ -73,7 +73,7 @@ impl MMU {
             dma_request: None,
             buttons: [false; emu::GbButton::GbButtonMax as usize],
             supported_carttype: true,
-            apu: apu::APU::new(sound_chan),
+            apu: apu::APU::new(),
         };
         mmu.load(cartridge);
         mmu
@@ -110,6 +110,10 @@ impl MMU {
     pub fn close(&mut self) {
         self.mbc.save();
         self.apu.close();
+    }
+
+    pub fn get_apu(&mut self) -> &mut apu::APU {
+        &mut self.apu
     }
 
     pub fn update_input(&mut self, input_event: &emu::InputEvent) {
@@ -204,12 +208,9 @@ impl MMU {
                 let cpu_access = self.access_origin == AccessOrigin::AccessOriginCPU;
 
                 if !cpu_access {
+                    // @todo - Better system for this. Not all addresses are mapped to self.memory
                     return self.memory[usize::from(address)];
                 }
-
-                // if address > HWR_NR10 && address < HWR_NR52 {
-                //     println!("read {address}");
-                // }
 
                 match address {
                     HWR_P1 => {
@@ -256,7 +257,6 @@ impl MMU {
                     }
                 }
             }
-            // HRAM https://gbdev.io/pandocs/Hardware_Reg_List.html
             0xFF80..=0xFFFE => {
                 // HRAM
                 return self.memory[usize::from(address)];

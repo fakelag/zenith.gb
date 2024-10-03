@@ -11,6 +11,7 @@ mod audiocvt;
 
 pub trait Channel {
     fn step(&mut self);
+    fn length_step(&mut self);
     fn get_sample(&self) -> u8;
     fn get_length_counter(&mut self) -> &mut lengthcounter::LengthCounter;
     fn get_envelope(&mut self) -> Option<&mut envelope::Envelope>;

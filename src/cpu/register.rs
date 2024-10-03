@@ -22,7 +22,7 @@ impl<'a> Reg8b<'a> {
         }
     }
 
-    pub fn get(&mut self) -> u8 {
+    pub fn get(&self) -> u8 {
         if self.high {
             (*self.addr >> 8) as u8
         } else {

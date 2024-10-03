@@ -76,8 +76,6 @@ impl Channel1 {
         if disable_channel {
             self.is_enabled = false;
         }
-
-        // @todo - Check if writing to nr10 can overflow sweep in some cases
     }
 
     pub fn write_nr11(&mut self, data: u8) {
@@ -96,8 +94,6 @@ impl Channel1 {
     }
 
     pub fn write_nr13(&mut self, data: u8) {
-        // @todo Period changes (written to NR13 or NR14) only take effect after the current “sample” ends; see description above.
-        // https://gbdev.io/pandocs/Audio_Registers.html#ff13--nr13-channel-1-period-low-write-only
         self.sweep.set_frequency_lsb(data);
     }
 
@@ -133,21 +129,13 @@ impl Channel1 {
     }
 
     pub fn read_nr14(&mut self) -> u8 {
-        let length_bit = if self.get_length_counter().is_enabled() {
-            0x40
-        } else {
-            0
-        };
+        let length_bit = (self.length_counter.is_enabled() as u8) << 6;
         0xBF | length_bit
     }
 }
 
 impl Channel for Channel1 {
     fn step(&mut self) {
-        if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
-            self.is_enabled = false;
-        }
-
         self.freq_timer = self.freq_timer.saturating_sub(1);
 
         if self.freq_timer != 0 {
@@ -166,6 +154,12 @@ impl Channel for Channel1 {
 
         self.sample = wave_sample;
         self.duty_cycle = (self.duty_cycle + 1) & 0x7;
+    }
+
+    fn length_step(&mut self) {
+        if self.length_counter.step() {
+            self.is_enabled = false;
+        }
     }
 
     fn get_sample(&self) -> u8 {

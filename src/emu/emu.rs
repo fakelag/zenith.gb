@@ -1,7 +1,12 @@
 use std::fmt::{self, Display};
 
 use crate::{
-    apu::apu, cartridge::cartridge::*, cpu::cpu, mmu::mmu, ppu::ppu, timer::timer
+    apu::apu,
+    cartridge::cartridge::*,
+    cpu::cpu,
+    mmu::mmu,
+    ppu::ppu,
+    timer::timer
 };
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -39,9 +44,9 @@ impl Display for Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge: Cartridge, sound_chan: Option<apu::ApuSoundSender>) -> Emu {
+    pub fn new(cartridge: Cartridge) -> Emu {
         Self {
-            mmu: mmu::MMU::new(&cartridge, sound_chan),
+            mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
             timer: timer::Timer::new(),
@@ -71,6 +76,10 @@ impl Emu {
        }
 
        return (cycles_run, false);
+   }
+
+   pub fn enable_external_audio(&mut self, sound_chan: apu::ApuSoundSender) {
+        self.mmu.get_apu().enable_external_audio(sound_chan);
    }
 
     pub fn close(&mut self) {

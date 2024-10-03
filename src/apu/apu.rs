@@ -36,7 +36,7 @@ pub struct APU {
     sample_counter: u16,
     sample_output: Option<(ApuSoundSender, AudioCVT)>,
 
-    tmp: Vec<i16>,
+    wav_data: Vec<i16>,
     sample_buffer: AudioBuffer,
     frame_sequencer: u16,
     frame_sequencer_step: u8,
@@ -51,14 +51,9 @@ pub struct APU {
 }
 
 impl APU {
-    pub fn new(sound_chan: Option<ApuSoundSender>) -> Self {
-        let sample_output = if let Some(channel) = sound_chan {
-            Some((channel, AudioCVT::new()))
-        } else {
-            None
-        };
+    pub fn new() -> Self {
         Self {
-            sample_output,
+            sample_output: None,
             channel1: Channel1::new(),
             channel2: Channel2::new(),
             channel3: Channel3::new(),
@@ -67,7 +62,7 @@ impl APU {
             frame_sequencer: FRAME_SEQUENCER_START,
             frame_sequencer_step: 0,
             sample_buffer: Vec::with_capacity(APU_SAMPLES),
-            tmp: Vec::new(),
+            wav_data: Vec::new(),
             audio_enabled: true,
             right_pan: [true, true, false, false],
             right_vol: 7,
@@ -78,13 +73,17 @@ impl APU {
         }
     }
 
+    pub fn enable_external_audio(&mut self, sound_chan: ApuSoundSender) {
+        self.sample_output = Some((sound_chan, AudioCVT::new()));
+    }
+
     pub fn close(&mut self) {
         if RECORD_WAV_FILE {
-            if self.tmp.len() == 0 {
+            if self.wav_data.len() == 0 {
                 return;
             }
 
-            write_wav("dev/test.wav", &self.tmp);
+            write_wav("dev/test.wav", &self.wav_data);
         }
     }
 
@@ -124,8 +123,8 @@ impl APU {
 
         match self.frame_sequencer_step {
             0 | 2 | 4 | 6 => {
-                for counter in self.get_channels() {
-                    counter.get_length_counter().step();
+                for channel in self.get_channels() {
+                    channel.length_step();
                 }
 
                 if self.frame_sequencer_step == 2 || self.frame_sequencer_step == 6 {
@@ -146,8 +145,8 @@ impl APU {
         let next_step = (self.frame_sequencer_step + 1) & 0x7;
         self.frame_sequencer_step = next_step;
 
-        for counter in self.get_channels() {
-            counter.get_length_counter().update_frame_sequencer_step(next_step);
+        for channel in self.get_channels() {
+            channel.get_length_counter().update_frame_sequencer_step(next_step);
         }
     }
 
@@ -176,29 +175,29 @@ impl APU {
             }
         }
 
-        let left: u8 = left_scaled as u8;
-        let right: u8 = right_scaled as u8;
+        if let Some((chan, cvt)) = &self.sample_output {
+            let left: u8 = left_scaled as u8;
+            let right: u8 = right_scaled as u8;
 
-        if self.sample_buffer.len() < APU_SAMPLES {
             self.sample_buffer.push(left);
             self.sample_buffer.push(right);
-            return;
-        }
 
-        if let Some((chan, cvt)) = &self.sample_output {
+            if self.sample_buffer.len() < APU_SAMPLES {
+                return;
+            }
+
+            debug_assert!(self.sample_buffer.len() == APU_SAMPLES);
+
             let cvt_audio = cvt.convert_u8_i16(&self.sample_buffer);
 
             if RECORD_WAV_FILE {
                 for c in cvt_audio.iter() {
-                    self.tmp.push(*c);
+                    self.wav_data.push(*c);
                 }
             }
 
             chan.send(cvt_audio).unwrap();
             self.sample_buffer.clear();
-
-            self.sample_buffer.push(left);
-            self.sample_buffer.push(right);
         }
     }
 
@@ -234,11 +233,11 @@ impl APU {
                 self.left_vol = 0;
                 self.right_vol = 0;
     
-                (0..4).into_iter().for_each(|i| {
+                for i in 0..4 {
                     self.left_pan[i] = false;
                     self.right_pan[i] = false;
                     self.get_channels()[i].shutdown();
-                });
+                }
             }
             (false, true) => {
                 self.frame_sequencer_step = 0;

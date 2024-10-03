@@ -16,10 +16,11 @@ impl LengthCounter {
         }
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self) -> bool {
         if self.enabled && self.count != 0 {
             self.count -= 1;
         }
+        return self.enabled && self.count == 0;
     }
 
     fn write_nrx4_enabled(&mut self, trigger_bit: bool, enable_bit: bool) {
