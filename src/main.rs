@@ -34,6 +34,13 @@ const GB_SCREEN_WIDTH: u32 = 160;
 const GB_SCREEN_HEIGHT: u32 = 144;
 const WINDOW_SIZE_MULT: u32 = 4;
 
+const PALETTE: [sdl2::pixels::Color; 4] = [
+    sdl2::pixels::Color::RGB(0x88, 0xa0, 0x48),
+    sdl2::pixels::Color::RGB(0x48, 0x68, 0x30),
+    sdl2::pixels::Color::RGB(0x28, 0x40, 0x20),
+    sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
+];
+
 fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::Window> {
     let video_subsystem = sdl_ctx.video().unwrap();
 
@@ -106,12 +113,34 @@ fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
     (device, sound_send)
 }
 
-const PALETTE: [sdl2::pixels::Color; 4] = [
-    sdl2::pixels::Color::RGB(0x88, 0xa0, 0x48),
-    sdl2::pixels::Color::RGB(0x48, 0x68, 0x30),
-    sdl2::pixels::Color::RGB(0x28, 0x40, 0x20),
-    sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
-];
+fn sdl2_enable_controller(sdl_ctx: &sdl2::Sdl) -> Result<sdl2::controller::GameController, String> {
+    let controller_subsystem = sdl_ctx.game_controller()?;
+
+    let available = controller_subsystem
+        .num_joysticks()
+        .map_err(|e| format!("can't enumerate joysticks: {}", e))?;
+
+    let mut controller = (0..available)
+        .find_map(|id| {
+            if !controller_subsystem.is_game_controller(id) {
+                return None;
+            }
+
+            match controller_subsystem.open(id) {
+                Ok(c) => {
+                    Some(c)
+                }
+                Err(e) => {
+                    None
+                }
+            }
+        }).ok_or_else(|| format!("Couldn't find any controllers"))?;
+
+    _ = controller.set_rumble(0, 20_000, 500);
+    _ = controller.set_led(PALETTE[0].r, PALETTE[0].g, PALETTE[0].b);
+
+    return Ok(controller);
+}
 
 fn create_emulator(rom_path: &str) -> Emu {
     let cart = Cartridge::new(rom_path);
@@ -120,16 +149,54 @@ fn create_emulator(rom_path: &str) -> Emu {
     emu
 }
 
-fn scancode_to_gb_button(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
+fn scancode_to_gb_btn(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
     match scancode {
-        Some(sdl2::keyboard::Scancode::Up | sdl2::keyboard::Scancode::W) => { Some(GbButton::GbButtonUp) }
-        Some(sdl2::keyboard::Scancode::Left | sdl2::keyboard::Scancode::A) => { Some(GbButton::GbButtonLeft) }
-        Some(sdl2::keyboard::Scancode::Down | sdl2::keyboard::Scancode::S) => { Some(GbButton::GbButtonDown) }
-        Some(sdl2::keyboard::Scancode::Right | sdl2::keyboard::Scancode::D) => { Some(GbButton::GbButtonRight) }
-        Some(sdl2::keyboard::Scancode::C) | Some(sdl2::keyboard::Scancode::O) => { Some(GbButton::GbButtonA) }
-        Some(sdl2::keyboard::Scancode::V) | Some(sdl2::keyboard::Scancode::P) => { Some(GbButton::GbButtonB) }
-        Some(sdl2::keyboard::Scancode::N) => { Some(GbButton::GbButtonSelect) }
-        Some(sdl2::keyboard::Scancode::M) => { Some(GbButton::GbButtonStart) }
+        Some(
+            sdl2::keyboard::Scancode::Up | sdl2::keyboard::Scancode::W
+        ) => { Some(GbButton::GbButtonUp) }
+        Some(
+            sdl2::keyboard::Scancode::Left | sdl2::keyboard::Scancode::A
+        ) => { Some(GbButton::GbButtonLeft) }
+        Some(
+            sdl2::keyboard::Scancode::Down | sdl2::keyboard::Scancode::S
+        ) => { Some(GbButton::GbButtonDown) }
+        Some(
+            sdl2::keyboard::Scancode::Right | sdl2::keyboard::Scancode::D
+        ) => { Some(GbButton::GbButtonRight) }
+        Some(
+            sdl2::keyboard::Scancode::C) | Some(sdl2::keyboard::Scancode::O
+        ) => { Some(GbButton::GbButtonA) }
+        Some(
+            sdl2::keyboard::Scancode::V) | Some(sdl2::keyboard::Scancode::P
+        ) => { Some(GbButton::GbButtonB) }
+        Some(
+            sdl2::keyboard::Scancode::N
+        ) => { Some(GbButton::GbButtonSelect) }
+        Some(
+            sdl2::keyboard::Scancode::M
+        ) => { Some(GbButton::GbButtonStart) }
+        _ => { None }
+    }
+}
+
+fn controller_btn_to_gb_btn(btn: sdl2::controller::Button, _which: u32) -> Option<GbButton> {
+    match btn {
+        sdl2::controller::Button::DPadUp => { Some(GbButton::GbButtonUp) }
+        sdl2::controller::Button::DPadLeft => { Some(GbButton::GbButtonLeft) }
+        sdl2::controller::Button::DPadDown =>{ Some(GbButton::GbButtonDown) }
+        sdl2::controller::Button::DPadRight =>{ Some(GbButton::GbButtonRight) }
+        sdl2::controller::Button::A => { Some(GbButton::GbButtonA) }
+        sdl2::controller::Button::B => { Some(GbButton::GbButtonB) }
+        sdl2::controller::Button::Guide => { Some(GbButton::GbButtonSelect) }
+        sdl2::controller::Button::Start => { Some(GbButton::GbButtonStart) }
+        _ => { None }
+    }
+}
+
+fn controller_axis_gb_btn(axis: sdl2::controller::Axis) -> Option<(GbButton, GbButton)> {
+    match axis {
+        sdl2::controller::Axis::LeftX => { Some((GbButton::GbButtonLeft, GbButton::GbButtonRight)) }
+        sdl2::controller::Axis::LeftY => { Some((GbButton::GbButtonUp, GbButton::GbButtonDown)) }
         _ => { None }
     }
 }
@@ -156,15 +223,33 @@ fn poll_events(
                 if repeat {
                     continue;
                 }
-                if let Some(gb_button) = scancode_to_gb_button(scancode) {
+                if let Some(gb_button) = scancode_to_gb_btn(scancode) {
                     input_vec.push(InputEvent { down: true, button: gb_button });
                 }
             }
             sdl2::event::Event::KeyUp { scancode, .. } => {
-                if let Some(gb_button) = scancode_to_gb_button(scancode) {
+                if let Some(gb_button) = scancode_to_gb_btn(scancode) {
                     input_vec.push(InputEvent { down: false, button: gb_button });
                 }
             },
+            sdl2::event::Event::ControllerButtonDown { which, button, .. } => {
+                if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
+                    input_vec.push(InputEvent { down: true, button: gb_button });
+                }
+            }
+            sdl2::event::Event::ControllerButtonUp { which, button, .. } => {
+                if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
+                    input_vec.push(InputEvent { down: false, button: gb_button });
+                }
+            }
+            sdl2::event::Event::ControllerAxisMotion { axis, value, ..} => {
+                let dead_zone = 10_000;
+
+                if let Some((btn_neg, btn_pos)) = controller_axis_gb_btn(axis) {
+                    input_vec.push(InputEvent { down: value < -dead_zone, button: btn_neg });
+                    input_vec.push(InputEvent { down: value > dead_zone, button: btn_pos });
+                }
+            }
             _ => {}
         }
     }
@@ -284,6 +369,8 @@ fn main() {
     let mut canvas = sdl2_create_window(&sdl_ctx);
 
     let (_ad, sound_chan) = sdl2_create_audio(&sdl_ctx);
+
+    let _controller = sdl2_enable_controller(&sdl_ctx);
     
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     let mut state = State::Idle;
