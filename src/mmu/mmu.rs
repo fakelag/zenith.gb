@@ -108,8 +108,11 @@ impl MMU {
     }
 
     pub fn close(&mut self) {
-        self.mbc.save();
         self.apu.close();
+    }
+
+    pub fn save(&mut self) {
+        self.mbc.save();
     }
 
     pub fn get_apu(&mut self) -> &mut apu::APU {

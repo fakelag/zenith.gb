@@ -83,7 +83,12 @@ impl Emu {
    }
 
     pub fn close(&mut self) {
+        self.mmu.save();
         self.mmu.close();
+    }
+
+    pub fn save(&mut self) {
+        self.mmu.save();
     }
 
     pub fn input_update(&mut self, input_vec: &Vec<InputEvent>) {

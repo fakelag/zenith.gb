@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use std::{sync::mpsc::{self}, time};
 
 use cartridge::cartridge::Cartridge;
@@ -70,7 +72,7 @@ impl sdl2::audio::AudioCallback for GbAudio {
                 out.copy_from_slice(&samples);
             }
             Err(_err) => {
-                // println!("recv err {:?}", std::time::Instant::now());
+                // println!("recv err {:?}", time::Instant::now());
                 for i in 0..APU_SAMPLES {
                     out[i] = Self::Channel::SILENCE;
                 }
@@ -120,12 +122,12 @@ fn create_emulator(rom_path: &str) -> Emu {
 
 fn scancode_to_gb_button(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
     match scancode {
-        Some(sdl2::keyboard::Scancode::W) => { Some(GbButton::GbButtonUp) }
-        Some(sdl2::keyboard::Scancode::A) => { Some(GbButton::GbButtonLeft) }
-        Some(sdl2::keyboard::Scancode::S) => { Some(GbButton::GbButtonDown) }
-        Some(sdl2::keyboard::Scancode::D) => { Some(GbButton::GbButtonRight) }
-        Some(sdl2::keyboard::Scancode::E) | Some(sdl2::keyboard::Scancode::O) => { Some(GbButton::GbButtonA) }
-        Some(sdl2::keyboard::Scancode::R) | Some(sdl2::keyboard::Scancode::P) => { Some(GbButton::GbButtonB) }
+        Some(sdl2::keyboard::Scancode::Up | sdl2::keyboard::Scancode::W) => { Some(GbButton::GbButtonUp) }
+        Some(sdl2::keyboard::Scancode::Left | sdl2::keyboard::Scancode::A) => { Some(GbButton::GbButtonLeft) }
+        Some(sdl2::keyboard::Scancode::Down | sdl2::keyboard::Scancode::S) => { Some(GbButton::GbButtonDown) }
+        Some(sdl2::keyboard::Scancode::Right | sdl2::keyboard::Scancode::D) => { Some(GbButton::GbButtonRight) }
+        Some(sdl2::keyboard::Scancode::C) | Some(sdl2::keyboard::Scancode::O) => { Some(GbButton::GbButtonA) }
+        Some(sdl2::keyboard::Scancode::V) | Some(sdl2::keyboard::Scancode::P) => { Some(GbButton::GbButtonB) }
         Some(sdl2::keyboard::Scancode::N) => { Some(GbButton::GbButtonSelect) }
         Some(sdl2::keyboard::Scancode::M) => { Some(GbButton::GbButtonStart) }
         _ => { None }
@@ -174,7 +176,7 @@ fn vsync_canvas(
     rt: &FrameBuffer,
     texture: &mut sdl2::render::Texture,
     canvas: &mut sdl2::render::WindowCanvas,
-    last_frame: &mut std::time::Instant, // @todo - Refactor into a system
+    last_frame: &mut time::Instant, // @todo - Refactor into a system
 ) {
     texture.with_lock(None, |buffer, size| {
         for x in 0..160 {
@@ -200,7 +202,7 @@ fn vsync_canvas(
     canvas.present();
 
     let frame_time = last_frame.elapsed();
-    *last_frame = std::time::Instant::now();
+    *last_frame = time::Instant::now();
     canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
 }
 
@@ -226,7 +228,7 @@ fn run_state(
             }
         }
         State::Running(ref mut emu) => {
-            let mut last_frame = std::time::Instant::now();
+            let mut last_frame = time::Instant::now();
             let texture_creator = canvas.texture_creator();
 
             let mut texture = texture_creator
@@ -234,6 +236,8 @@ fn run_state(
                 .unwrap();
 
             let mut input_vec = Vec::new();
+            let mut saved_at = time::Instant::now();
+
             loop {
                 let start_time = time::Instant::now();
 
@@ -256,6 +260,11 @@ fn run_state(
                     }
 
                     cycles_left = cycles_left.saturating_sub(cycles_run);
+                }
+
+                if saved_at.elapsed() > time::Duration::from_secs(60) {
+                    emu.save();
+                    saved_at = time::Instant::now();
                 }
 
                 let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
@@ -282,11 +291,15 @@ fn main() {
     'eventloop: loop {
         let mut next_state = run_state(&mut state, &mut canvas, &mut event_pump);
 
+        match state {
+            State::Running(ref mut emu) => {
+                emu.close();
+            }
+            _ => {}
+        }
+
         match next_state {
             State::Exit => {
-                if let State::Running(ref mut emu) = state {
-                    emu.close();
-                }
                 break 'eventloop;
             }
             State::Running(ref mut emu) => {
