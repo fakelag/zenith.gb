@@ -2,6 +2,7 @@ use crate::apu::apu;
 use crate::cartridge::cartridge::*;
 use crate::cpu::cpu;
 use crate::emu::emu::{self, GbButton::*};
+use crate::ppu::ppu::{self, FrameBuffer};
 use crate::timer::timer;
 use crate::util::util;
 
@@ -25,16 +26,8 @@ struct MbcRomOnly {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq)]
-pub enum MemoryRegion {
-    MemRegionOAM = (1 << 0),
-    MemRegionVRAM = (1 << 1),
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq)]
 pub enum AccessOrigin {
     AccessOriginNone,
-    AccessOriginPPU,
     AccessOriginCPU
 }
 
@@ -47,7 +40,6 @@ pub struct DmaTransfer {
 
 pub struct MMU {
     memory: Vec<u8>,
-    access_flags: u8,
     access_origin: AccessOrigin,
     supported_carttype: bool,
 
@@ -61,13 +53,13 @@ pub struct MMU {
     // @todo - These are here for now to trigger memory writes directly
     apu: apu::APU,
     timer: timer::Timer,
+    ppu: ppu::PPU,
 }
 
 impl MMU {
     pub fn new(cartridge: &Cartridge) -> MMU {
         let mut mmu = Self {
             memory: vec![0; 0x10000],
-            access_flags: 0,
             access_origin: AccessOrigin::AccessOriginNone,
             mbc: Box::new(MbcRomOnly::new()),
             active_dma: None,
@@ -77,6 +69,7 @@ impl MMU {
 
             apu: apu::APU::new(),
             timer: timer::Timer::new(),
+            ppu: ppu::PPU::new(),
         };
         mmu.load(cartridge);
         mmu
@@ -84,6 +77,13 @@ impl MMU {
 
     pub fn load(&mut self, cartridge: &Cartridge) {
         self.memory = vec![0; 0x10000];
+
+        self.memory[0xFF50] = 0x1;
+        self.memory[HWR_P1 as usize] = 0xCF;
+        self.memory[HWR_SB as usize] = 0x00;
+        self.memory[HWR_SC as usize] = 0x7E;
+        self.memory[HWR_IF as usize] = 0xE1;
+        self.memory[HWR_DMA as usize] = 0xFF;
 
         self.mbc = match cartridge.header.cart_type {
             0x1..=0x3 => {
@@ -133,14 +133,6 @@ impl MMU {
         }
     }
 
-    pub fn lock_region(&mut self, region: u8) {
-        self.access_flags |= region;
-    }
-
-    pub fn unlock_region(&mut self, region: u8) {
-        self.access_flags &= !region;
-    }
-
     pub fn address_accessible(&self, address: u16) -> bool {
         if self.access_origin != AccessOrigin::AccessOriginCPU {
             return true;
@@ -159,14 +151,17 @@ impl MMU {
         // }
 
         match address {
-            0x8000..=0x9FFF => (self.access_flags & MemoryRegion::MemRegionVRAM as u8) == 0,
-            0xFE00..=0xFE9F => (self.access_flags & MemoryRegion::MemRegionOAM as u8) == 0 && !self.active_dma.is_some(),
+            0xFE00..=0xFE9F => !self.active_dma.is_some(),
             _ => true
         }
     }
 
     pub fn set_access_origin(&mut self, origin: AccessOrigin) {
         self.access_origin = origin;
+    }
+
+    pub fn get_framebuffer(&self) -> &FrameBuffer {
+        self.ppu.get_framebuffer()
     }
 
     pub fn bus_read(&mut self, address: u16) -> u8 {
@@ -181,7 +176,7 @@ impl MMU {
             }
             0x8000..=0x9FFF => {
                 // 8 KiB Video RAM (VRAM)
-                return self.memory[usize::from(address)];
+                return self.ppu.read_vram(address);
             }
             0xA000..=0xBFFF => {
                 return self.mbc.read(address);
@@ -203,7 +198,7 @@ impl MMU {
             }
             0xFE00..=0xFE9F => {
                 // OAM - https://gbdev.io/pandocs/OAM.html#object-attribute-memory-oam
-                return self.memory[usize::from(address)];
+                return self.ppu.read_oam(address);
             }
             0xFEA0..=0xFEFF => {
                 // Prohibited memory.
@@ -211,13 +206,6 @@ impl MMU {
                 return 0;
             }
             0xFF00..=0xFF7F => {
-                let cpu_access = self.access_origin == AccessOrigin::AccessOriginCPU;
-
-                if !cpu_access {
-                    // @todo - Better system for this. Not all addresses are mapped to self.memory
-                    return self.memory[usize::from(address)];
-                }
-
                 match address {
                     HWR_P1 => {
                         let p1 = self.memory[address as usize];
@@ -225,42 +213,50 @@ impl MMU {
                         let button_bits = self.calc_button_bits(p1);
                         return button_bits | (p1 & 0xF0);
                     }
-                    HWR_DIV => { self.timer.read_div() }
-                    HWR_TAC => { self.timer.read_tac() }
-                    HWR_TIMA => { self.timer.read_tima() }
-                    HWR_TMA => { self.timer.read_tma() }
-                    HWR_DIV_LSB => { return 0xFF; }
-                    0xFF08..=0xFF0E => { return 0xFF; }
-                    0xFF15 => { return 0xFF; }
-                    0xFF1F => { return 0xFF; }
-                    0xFF27..=0xFF2F => { return 0xFF; }
-                    0xFF4C => { return 0xFF; }
-                    0xFF4D..=0xFF7F => {
-                        // Reads ignored for non-dmg registers
-                        return 0xFF;
-                    }
-                    HWR_NR10 => { return self.apu.read_nr10(); }
-                    HWR_NR11 => { return self.apu.read_nr11(); }
-                    HWR_NR12 => { return self.apu.read_nr12(); }
-                    HWR_NR13 => { return self.apu.read_nr13(); }
-                    HWR_NR14 => { return self.apu.read_nr14(); }
-                    HWR_NR21 => { return self.apu.read_nr21(); }
-                    HWR_NR22 => { return self.apu.read_nr22(); }
-                    HWR_NR23 => { return self.apu.read_nr23(); }
-                    HWR_NR24 => { return self.apu.read_nr24(); }
-                    0xFF30..=0xFF3F => { return self.apu.read_wave_ram(address); }
-                    HWR_NR30 => { return self.apu.read_nr30(); }
-                    HWR_NR31 => { return self.apu.read_nr31(); }
-                    HWR_NR32 => { return self.apu.read_nr32(); }
-                    HWR_NR33 => { return self.apu.read_nr33(); }
-                    HWR_NR34 => { return self.apu.read_nr34(); }
-                    HWR_NR41 => { return self.apu.read_nr41(); }
-                    HWR_NR42 => { return self.apu.read_nr42(); }
-                    HWR_NR43 => { return self.apu.read_nr43(); }
-                    HWR_NR44 => { return self.apu.read_nr44(); }
-                    HWR_NR50 => { return self.apu.read_nr50(); }
-                    HWR_NR51 => { return self.apu.read_nr51(); }
-                    HWR_NR52 => { return self.apu.read_nr52(); }
+                    HWR_DIV             => { self.timer.read_div() }
+                    HWR_TAC             => { self.timer.read_tac() }
+                    HWR_TIMA            => { self.timer.read_tima() }
+                    HWR_TMA             => { self.timer.read_tma() }
+                    HWR_DIV_LSB         => { return 0xFF; }
+                    0xFF08..=0xFF0E     => { return 0xFF; }
+                    0xFF15              => { return 0xFF; }
+                    0xFF1F              => { return 0xFF; }
+                    0xFF27..=0xFF2F     => { return 0xFF; }
+                    0xFF4C              => { return 0xFF; }
+                    0xFF4D..=0xFF7F     => { return 0xFF; } // Non-dmg regs
+                    HWR_NR10            => { return self.apu.read_nr10(); }
+                    HWR_NR11            => { return self.apu.read_nr11(); }
+                    HWR_NR12            => { return self.apu.read_nr12(); }
+                    HWR_NR13            => { return self.apu.read_nr13(); }
+                    HWR_NR14            => { return self.apu.read_nr14(); }
+                    HWR_NR21            => { return self.apu.read_nr21(); }
+                    HWR_NR22            => { return self.apu.read_nr22(); }
+                    HWR_NR23            => { return self.apu.read_nr23(); }
+                    HWR_NR24            => { return self.apu.read_nr24(); }
+                    0xFF30..=0xFF3F     => { return self.apu.read_wave_ram(address); }
+                    HWR_NR30            => { return self.apu.read_nr30(); }
+                    HWR_NR31            => { return self.apu.read_nr31(); }
+                    HWR_NR32            => { return self.apu.read_nr32(); }
+                    HWR_NR33            => { return self.apu.read_nr33(); }
+                    HWR_NR34            => { return self.apu.read_nr34(); }
+                    HWR_NR41            => { return self.apu.read_nr41(); }
+                    HWR_NR42            => { return self.apu.read_nr42(); }
+                    HWR_NR43            => { return self.apu.read_nr43(); }
+                    HWR_NR44            => { return self.apu.read_nr44(); }
+                    HWR_NR50            => { return self.apu.read_nr50(); }
+                    HWR_NR51            => { return self.apu.read_nr51(); }
+                    HWR_NR52            => { return self.apu.read_nr52(); }
+                    HWR_LCDC            => { return self.ppu.read_lcdc(); }
+                    HWR_STAT            => { return self.ppu.read_stat(); }
+                    HWR_LY              => { return self.ppu.read_ly(); }
+                    HWR_SCY             => { return self.ppu.read_scy(); }
+                    HWR_SCX             => { return self.ppu.read_scx(); }
+                    HWR_LYC             => { return self.ppu.read_lyc(); }
+                    HWR_BGP             => { return self.ppu.read_bgp(); }
+                    HWR_OBP0            => { return self.ppu.read_obp0(); }
+                    HWR_OBP1            => { return self.ppu.read_obp1(); }
+                    HWR_WY              => { return self.ppu.read_wy(); }
+                    HWR_WX              => { return self.ppu.read_wx(); }
                     _ => {
                         // IO ranges
                         return self.memory[usize::from(address)];
@@ -288,7 +284,7 @@ impl MMU {
                 self.mbc.write(address, data);
             }
             0x8000..=0x9FFF => {
-                self.memory[usize::from(address)] = data;
+                return self.ppu.write_vram(address, data);
             }
             0xA000..=0xBFFF => {
                 self.mbc.write(address, data);
@@ -303,14 +299,73 @@ impl MMU {
                 self.memory[usize::from(address - 0x2000)] = data;
             }
             0xFE00..=0xFE9F => {
-                self.memory[usize::from(address)] = data;
+                self.ppu.write_oam(address, data);
             }
             0xFEA0..=0xFEFF => {
                 // unused
                 // unreachable!();
             }
             0xFF00..=0xFF7F => {
-                self.bus_write_hwreg(address, data);
+                match address {
+                    HWR_P1 => {
+                        // Lower nibble RO
+                        let ro_bits = self.memory[usize::from(address)] & 0xCF;
+                        self.memory[usize::from(address)] = (data & 0x30) | ro_bits;
+                    }
+                    HWR_IF => {
+                        // Top 3 bits unused
+                        let ro_bits = self.memory[usize::from(address)] & 0xE0;
+                        self.memory[usize::from(address)] = (data & 0x1F) | ro_bits;
+                    }
+                    HWR_DMA => {
+                        self.dma_request = Some(data);
+                        self.memory[usize::from(address)] = data;
+                    }
+                    HWR_SC              => {}
+                    HWR_DIV_LSB         => { /* RO */ }
+                    HWR_DIV             => { self.timer.write_div(data) }
+                    HWR_TAC             => { self.timer.write_tac(data) }
+                    HWR_TIMA            => { self.timer.write_tima(data) }
+                    HWR_TMA             => { self.timer.write_tma(data) }
+                    // 0xFF4F           => { todo!("select vram bank cgb"); } // @todo CGB: vram bank
+                    0xFF4D..=0xFF70     => {} // Non-dmg regs
+                    HWR_NR10            => { self.apu.write_nr10(data); }
+                    HWR_NR11            => { self.apu.write_nr11(data); }
+                    HWR_NR12            => { self.apu.write_nr12(data); }
+                    HWR_NR13            => { self.apu.write_nr13(data); }
+                    HWR_NR14            => { self.apu.write_nr14(data); }
+                    HWR_NR21            => { self.apu.write_nr21(data); }
+                    HWR_NR22            => { self.apu.write_nr22(data); }
+                    HWR_NR23            => { self.apu.write_nr23(data); }
+                    HWR_NR24            => { self.apu.write_nr24(data); }
+                    0xFF30..=0xFF3F     => { self.apu.write_wave_ram(address, data); }
+                    HWR_NR30            => { self.apu.write_nr30(data); }
+                    HWR_NR31            => { self.apu.write_nr31(data); }
+                    HWR_NR32            => { self.apu.write_nr32(data); }
+                    HWR_NR33            => { self.apu.write_nr33(data); }
+                    HWR_NR34            => { self.apu.write_nr34(data); }
+                    HWR_NR41            => { self.apu.write_nr41(data); }
+                    HWR_NR42            => { self.apu.write_nr42(data); }
+                    HWR_NR43            => { self.apu.write_nr43(data); }
+                    HWR_NR44            => { self.apu.write_nr44(data); }
+                    HWR_NR50            => { self.apu.write_nr50(data); }
+                    HWR_NR51            => { self.apu.write_nr51(data); }
+                    HWR_NR52            => { self.apu.write_nr52(data); }
+                    HWR_LCDC            => { self.ppu.write_lcdc(data); }
+                    HWR_STAT            => { self.ppu.write_stat(data); }
+                    HWR_LY              => { self.ppu.write_ly(data); }
+                    HWR_SCY             => { self.ppu.write_scy(data); }
+                    HWR_SCX             => { self.ppu.write_scx(data); }
+                    HWR_LYC             => { self.ppu.write_lyc(data); }
+                    HWR_BGP             => { self.ppu.write_bgp(data); }
+                    HWR_OBP0            => { self.ppu.write_obp0(data); }
+                    HWR_OBP1            => { self.ppu.write_obp1(data); }
+                    HWR_WY              => { self.ppu.write_wy(data); }
+                    HWR_WX              => { self.ppu.write_wx(data); }
+                    _ => {
+                        self.memory[usize::from(address)] = data;
+                    }
+                }
             }
             0xFF80..=0xFFFE => {
                 self.memory[usize::from(address)] = data;
@@ -322,7 +377,12 @@ impl MMU {
         }
     }
 
-    pub fn step(&mut self, cycles_passed: u8) {
+    pub fn step(&mut self, cycles_passed: u8) -> bool {
+        let (vsync, interrupts) = self.ppu.step(cycles_passed);
+
+        let flags_if = self.r#if().get();
+        self.r#if().set(flags_if | interrupts);
+
         if self.timer.step(cycles_passed) {
             let flags_if = self.r#if().get();
             self.r#if().set(flags_if | cpu::INTERRUPT_BIT_TIMER);
@@ -346,8 +406,10 @@ impl MMU {
                         _ => active_dma.src + c,
                     };
 
+                    debug_assert!(dma_read_addr < 0xFE00 || dma_read_addr > 0xFE9F);
+
                     let byte = self.bus_read(dma_read_addr);
-                    self.bus_write(0xFE00 + c, byte);
+                    self.ppu.oam_dma(0xFE00 + c, byte);
                 }
                 true
             } else {
@@ -386,78 +448,12 @@ impl MMU {
 
         self.mbc.step(cycles_passed);
         self.apu.step(cycles_passed);
+
+        return vsync;
     }
 
     pub fn is_supported_cart_type(&self) -> bool {
         self.supported_carttype
-    }
-    
-    fn bus_write_hwreg(&mut self, address: u16, data: u8) {
-        if self.access_origin != AccessOrigin::AccessOriginCPU {
-            self.memory[usize::from(address)] = data;
-            return;
-        }
-
-        match address {
-            HWR_P1 => {
-                // Lower nibble RO
-                let ro_bits = self.memory[usize::from(address)] & 0xCF;
-                self.memory[usize::from(address)] = (data & 0x30) | ro_bits;
-            }
-            HWR_SC => {}
-            HWR_DIV_LSB => { /* RO */ }
-            HWR_DIV => { self.timer.write_div(data) }
-            HWR_TAC => { self.timer.write_tac(data) }
-            HWR_TIMA => { self.timer.write_tima(data) }
-            HWR_TMA => { self.timer.write_tma(data) }
-            HWR_IF => {
-                // Top 3 bits unused
-                let ro_bits = self.memory[usize::from(address)] & 0xE0;
-                self.memory[usize::from(address)] = (data & 0x1F) | ro_bits;
-            }
-            HWR_STAT => {
-                // Bit 7 unused, lower 3 bits RO
-                let ro_bits = self.memory[usize::from(address)] & 0x87;
-                self.memory[usize::from(address)] = (data & 0x78) | ro_bits;
-            }
-            HWR_LY => {
-                // RO
-                return;
-            }
-            HWR_DMA => {
-                self.dma_request = Some(data);
-                self.memory[usize::from(address)] = data;
-            }
-            // 0xFF4F => { todo!("select vram bank cgb"); } // @todo CGB: vram bank
-            0xFF4D..=0xFF70 => {
-                // Writes ignored for non DMG registers
-            }
-            HWR_NR10 => { self.apu.write_nr10(data); }
-            HWR_NR11 => { self.apu.write_nr11(data); }
-            HWR_NR12 => { self.apu.write_nr12(data); }
-            HWR_NR13 => { self.apu.write_nr13(data); }
-            HWR_NR14 => { self.apu.write_nr14(data); }
-            HWR_NR21 => { self.apu.write_nr21(data); }
-            HWR_NR22 => { self.apu.write_nr22(data); }
-            HWR_NR23 => { self.apu.write_nr23(data); }
-            HWR_NR24 => { self.apu.write_nr24(data); }
-            0xFF30..=0xFF3F => { self.apu.write_wave_ram(address, data); }
-            HWR_NR30 => { self.apu.write_nr30(data); }
-            HWR_NR31 => { self.apu.write_nr31(data); }
-            HWR_NR32 => { self.apu.write_nr32(data); }
-            HWR_NR33 => { self.apu.write_nr33(data); }
-            HWR_NR34 => { self.apu.write_nr34(data); }
-            HWR_NR41 => { self.apu.write_nr41(data); }
-            HWR_NR42 => { self.apu.write_nr42(data); }
-            HWR_NR43 => { self.apu.write_nr43(data); }
-            HWR_NR44 => { self.apu.write_nr44(data); }
-            HWR_NR50 => { self.apu.write_nr50(data); }
-            HWR_NR51 => { self.apu.write_nr51(data); }
-            HWR_NR52 => { self.apu.write_nr52(data); }
-            _ => {
-                self.memory[usize::from(address)] = data;
-            }
-        }
     }
 
     fn calc_button_bits(&self, p1_val: u8) -> u8 {
@@ -487,9 +483,9 @@ impl MMU {
         return button_bits & 0xF;
     }
 
-    pub fn p1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_P1, self) }
-    pub fn sb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SB, self) }
-    pub fn sc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SC, self) }
+    // pub fn p1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_P1, self) }
+    // pub fn sb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SB, self) }
+    // pub fn sc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SC, self) }
     // pub fn div_lsb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV_LSB, self) }
     // pub fn div<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV, self) }
     // pub fn tima<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TIMA, self) }
@@ -517,18 +513,18 @@ impl MMU {
     // pub fn nr50<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR50, self) }
     // pub fn nr51<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR51, self) }
     // pub fn nr52<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR52, self) }
-    pub fn lcdc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LCDC, self) }
-    pub fn stat<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_STAT, self) }
-    pub fn ly<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LY, self) }
-    pub fn scy<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SCY, self) }
-    pub fn scx<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SCX, self) }
-    pub fn lyc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LYC, self) }
-    pub fn dma<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DMA, self) }
-    pub fn bgp<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_BGP, self) }
-    pub fn obp0<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_OBP0, self) }
-    pub fn obp1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_OBP1, self) }
-    pub fn wy<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WY, self) }
-    pub fn wx<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WX, self) }
+    // pub fn lcdc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LCDC, self) }
+    // pub fn stat<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_STAT, self) }
+    // pub fn ly<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LY, self) }
+    // pub fn scy<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SCY, self) }
+    // pub fn scx<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SCX, self) }
+    // pub fn lyc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_LYC, self) }
+    // pub fn dma<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DMA, self) }
+    // pub fn bgp<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_BGP, self) }
+    // pub fn obp0<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_OBP0, self) }
+    // pub fn obp1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_OBP1, self) }
+    // pub fn wy<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WY, self) }
+    // pub fn wx<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_WX, self) }
     pub fn ie<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_IE, self) }
 }
 

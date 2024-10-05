@@ -5,7 +5,7 @@ use crate::{
     cartridge::cartridge::*,
     cpu::cpu,
     mmu::mmu,
-    ppu::ppu,
+    ppu::ppu::FrameBuffer,
 };
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -29,14 +29,12 @@ pub struct InputEvent {
 pub struct Emu {
     cartridge: Cartridge,
     pub cpu: cpu::CPU,
-    pub ppu: ppu::PPU,
     pub mmu: mmu::MMU,
 }
 
 impl Display for Emu {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.cpu.fmt(f)?;
-        self.ppu.fmt(f)?;
         Ok(())
     }
 }
@@ -46,7 +44,6 @@ impl Emu {
         Self {
             mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
-            ppu: ppu::PPU::new(),
             cartridge,
         }
     }
@@ -58,11 +55,8 @@ impl Emu {
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginCPU);
             let cycles = self.cpu.step(&mut self.mmu);
 
-            self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginPPU);
-            let vsync = self.ppu.step(&mut self.mmu, cycles);
-
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
-            self.mmu.step(cycles);
+            let vsync = self.mmu.step(cycles);
 
             cycles_run += u64::from(cycles);
 
@@ -93,29 +87,14 @@ impl Emu {
         }
    }
 
+   pub fn get_framebuffer(&self) -> &FrameBuffer {
+        self.mmu.get_framebuffer()
+   }
+
     pub fn dmg_boot(&mut self) {
         self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
 
         // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
-        self.mmu.bus_write(0xFF50, 0x1);
-        
-        self.mmu.p1().set(0xCF);
-        self.mmu.sb().set(0x00);
-        self.mmu.sc().set(0x7E);
-        self.mmu.r#if().set(0xE1);
-        self.mmu.lcdc().set(0x91);
-        self.mmu.stat().set(0x85);
-        self.mmu.scy().set(0x0);
-        self.mmu.scx().set(0x0);
-        self.mmu.ly().set(0x0);
-        self.mmu.lyc().set(0x0);
-        self.mmu.dma().set(0xFF);
-        self.mmu.bgp().set(0xFC);
-        self.mmu.obp0().set(0xFF);
-        self.mmu.obp1().set(0xFF);
-        self.mmu.wy().set(0x00);
-        self.mmu.wx().set(0x00);
-
         self.cpu.a().set(0x1);
         self.cpu.b().set(0);
         self.cpu.c().set(0x13);
@@ -131,7 +110,5 @@ impl Emu {
         self.cpu.set_flag(cpu::FLAG_N, false);
         self.cpu.set_flag(cpu::FLAG_H, if self.cartridge.header.header_checksum == 0x0 { false } else { true });
         self.cpu.set_flag(cpu::FLAG_C, if self.cartridge.header.header_checksum == 0x0 { false } else { true });
-
-        self.ppu.reset(&mut self.mmu);
     }
 }

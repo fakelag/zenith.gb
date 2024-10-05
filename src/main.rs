@@ -255,7 +255,7 @@ fn run_state(
                     let (cycles_run, vsync) = emu.run(cycles_left);
 
                     if vsync {
-                        let rt = emu.ppu.get_framebuffer();
+                        let rt = emu.get_framebuffer();
                         vsync_canvas(rt, &mut texture, canvas, &mut last_frame);
                     }
 
@@ -351,7 +351,7 @@ mod tests {
 
             if vsync {
                 if let Some(fs) = frame_chan {
-                    if let Err(err) = fs.send(*emu.ppu.get_framebuffer()) {
+                    if let Err(err) = fs.send(*emu.get_framebuffer()) {
                         panic!("Frame sender error: {err}");
                     }
                 }
