@@ -2,6 +2,7 @@ use crate::apu::apu;
 use crate::cartridge::cartridge::*;
 use crate::cpu::cpu;
 use crate::emu::emu::{self, GbButton::*};
+use crate::timer::timer;
 use crate::util::util;
 
 use super::hw_reg::*;
@@ -57,9 +58,9 @@ pub struct MMU {
 
     buttons: [bool; emu::GbButton::GbButtonMax as usize],
 
-    // @todo - This is for now here to trigger memory writes on the
-    // APU directly
+    // @todo - These are here for now to trigger memory writes directly
     apu: apu::APU,
+    timer: timer::Timer,
 }
 
 impl MMU {
@@ -73,7 +74,9 @@ impl MMU {
             dma_request: None,
             buttons: [false; emu::GbButton::GbButtonMax as usize],
             supported_carttype: true,
+
             apu: apu::APU::new(),
+            timer: timer::Timer::new(),
         };
         mmu.load(cartridge);
         mmu
@@ -222,6 +225,10 @@ impl MMU {
                         let button_bits = self.calc_button_bits(p1);
                         return button_bits | (p1 & 0xF0);
                     }
+                    HWR_DIV => { self.timer.read_div() }
+                    HWR_TAC => { self.timer.read_tac() }
+                    HWR_TIMA => { self.timer.read_tima() }
+                    HWR_TMA => { self.timer.read_tma() }
                     HWR_DIV_LSB => { return 0xFF; }
                     0xFF08..=0xFF0E => { return 0xFF; }
                     0xFF15 => { return 0xFF; }
@@ -316,6 +323,11 @@ impl MMU {
     }
 
     pub fn step(&mut self, cycles_passed: u8) {
+        if self.timer.step(cycles_passed) {
+            let flags_if = self.r#if().get();
+            self.r#if().set(flags_if | cpu::INTERRUPT_BIT_TIMER);
+        }
+
         // @todo - Precise timings
         // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
         // instead of the actual value at the given memory address,
@@ -393,19 +405,11 @@ impl MMU {
                 self.memory[usize::from(address)] = (data & 0x30) | ro_bits;
             }
             HWR_SC => {}
-            HWR_DIV_LSB => {
-                // RO
-            }
-            HWR_DIV => {
-                // Writing to 0xFF04 resets whole DIV clock
-                self.memory[usize::from(HWR_DIV_LSB)] = 0;
-                self.memory[usize::from(HWR_DIV)] = 0;
-            }
-            HWR_TAC => {
-                // Top 5 bits unused
-                let ro_bits = self.memory[usize::from(address)] & 0xF8;
-                self.memory[usize::from(address)] = (data & 0x7) | ro_bits;
-            }
+            HWR_DIV_LSB => { /* RO */ }
+            HWR_DIV => { self.timer.write_div(data) }
+            HWR_TAC => { self.timer.write_tac(data) }
+            HWR_TIMA => { self.timer.write_tima(data) }
+            HWR_TMA => { self.timer.write_tma(data) }
             HWR_IF => {
                 // Top 3 bits unused
                 let ro_bits = self.memory[usize::from(address)] & 0xE0;
@@ -486,11 +490,11 @@ impl MMU {
     pub fn p1<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_P1, self) }
     pub fn sb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SB, self) }
     pub fn sc<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_SC, self) }
-    pub fn div_lsb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV_LSB, self) }
-    pub fn div<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV, self) }
-    pub fn tima<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TIMA, self) }
-    pub fn tma<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TMA, self) }
-    pub fn tac<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TAC, self) }
+    // pub fn div_lsb<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV_LSB, self) }
+    // pub fn div<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_DIV, self) }
+    // pub fn tima<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TIMA, self) }
+    // pub fn tma<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TMA, self) }
+    // pub fn tac<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_TAC, self) }
     pub fn r#if<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_IF, self) }
     // pub fn nr10<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR10, self) }
     // pub fn nr11<'a>(&'a mut self) -> HwReg<'a> { HwReg::<'a>::new(HWR_NR11, self) }

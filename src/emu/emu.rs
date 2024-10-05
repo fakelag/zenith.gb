@@ -6,7 +6,6 @@ use crate::{
     cpu::cpu,
     mmu::mmu,
     ppu::ppu,
-    timer::timer
 };
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -32,7 +31,6 @@ pub struct Emu {
     pub cpu: cpu::CPU,
     pub ppu: ppu::PPU,
     pub mmu: mmu::MMU,
-    pub timer: timer::Timer,
 }
 
 impl Display for Emu {
@@ -49,7 +47,6 @@ impl Emu {
             mmu: mmu::MMU::new(&cartridge),
             cpu: cpu::CPU::new(),
             ppu: ppu::PPU::new(),
-            timer: timer::Timer::new(),
             cartridge,
         }
     }
@@ -65,7 +62,6 @@ impl Emu {
             let vsync = self.ppu.step(&mut self.mmu, cycles);
 
             self.mmu.set_access_origin(mmu::AccessOrigin::AccessOriginNone);
-            self.timer.step(&mut self.mmu, cycles);
             self.mmu.step(cycles);
 
             cycles_run += u64::from(cycles);
@@ -106,11 +102,6 @@ impl Emu {
         self.mmu.p1().set(0xCF);
         self.mmu.sb().set(0x00);
         self.mmu.sc().set(0x7E);
-        self.mmu.div_lsb().set(0xD4);
-        self.mmu.div().set(0xAB);
-        self.mmu.tima().set(0x00);
-        self.mmu.tma().set(0x00);
-        self.mmu.tac().set(0xF8);
         self.mmu.r#if().set(0xE1);
         self.mmu.lcdc().set(0x91);
         self.mmu.stat().set(0x85);
