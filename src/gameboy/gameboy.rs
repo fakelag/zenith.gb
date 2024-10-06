@@ -51,11 +51,9 @@ impl Gameboy {
         while cycles_run < num_cycles {
             let cycles = self.cpu.step(&mut self.soc);
 
-            let vsync = self.soc.hw_step(cycles);
-
             cycles_run += u64::from(cycles);
 
-            if vsync {
+            if self.soc.flush_events() & soc::SocEventBits::SocEventVSync as u8 != 0 {
                 return (cycles_run, true);
             }
         }
@@ -64,36 +62,7 @@ impl Gameboy {
     }
 
     pub fn dmg_boot(&mut self) {
-        // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
-        self.cpu.a().set(0x1);
-        self.cpu.b().set(0);
-        self.cpu.c().set(0x13);
-        self.cpu.d().set(0);
-        self.cpu.e().set(0xD8);
-        self.cpu.h().set(0x1);
-        self.cpu.l().set(0x4D);
-
-        self.cpu.sp().set(0xFFFE);
-        self.cpu.pc().set(0x100);
-
-        self.cpu.set_flag(cpu::FLAG_Z, true);
-        self.cpu.set_flag(cpu::FLAG_N, false);
-        self.cpu.set_flag(
-            cpu::FLAG_H,
-            if self.cartridge.header.header_checksum == 0x0 {
-                false
-            } else {
-                true
-            },
-        );
-        self.cpu.set_flag(
-            cpu::FLAG_C,
-            if self.cartridge.header.header_checksum == 0x0 {
-                false
-            } else {
-                true
-            },
-        );
+        self.cpu.init(&mut self.soc, &self.cartridge);
     }
 
     pub fn enable_external_audio(&mut self, sound_chan: apu::ApuSoundSender) {

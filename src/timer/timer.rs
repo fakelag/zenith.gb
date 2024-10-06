@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct Timer {
     and_result: bool,
     tima_overflow: bool,
@@ -17,7 +18,7 @@ impl Timer {
             tima_overflow: false,
             tima_overflow_tstates: 0,
             tac: 0,
-            div: 0xABD4,
+            div: 0xABCC,
             tima: 0,
             tma: 0,
         }
@@ -32,7 +33,7 @@ impl Timer {
         let mut div_next = self.div;
         let mut timer_interrupt = false;
 
-        for _ in 1..=t_states_passed {
+        for _ in 0..t_states_passed {
             div_next = div_next.wrapping_add(1);
 
             let div_bit = match tac_low_2 {
@@ -56,12 +57,14 @@ impl Timer {
                     self.tima_overflow = false;
                 }
             } else if self.and_result && !and_result {
-                let tima_prev = self.tima;
-                self.tima = self.tima.wrapping_add(1);
+                let (tima, of) = self.tima.overflowing_add(1);
+                self.tima = tima;
 
-                if tima_prev == 0xFF {
+                if of {
                     self.tima_overflow = true;
-                    self.tima_overflow_tstates = 4;
+
+                    // @todo - Check overflow & general timer behavior
+                    self.tima_overflow_tstates = 3;
                 }
             }
 
@@ -79,7 +82,7 @@ impl Timer {
     pub fn write_tac(&mut self, data: u8) {
         self.tac = data & 0x7;
     }
-    
+
     pub fn read_div(&self) -> u8 {
         (self.div >> 8) as u8
     }
@@ -93,6 +96,16 @@ impl Timer {
     }
 
     pub fn write_tima(&mut self, data: u8) {
+        /*
+            @todo - TIMA interrupt canceling
+            The reload of the TMA value as well as the interrupt request can be aborted by writing any value to TIMA during the four T-cycles until it is supposed to be reloaded.
+            The TIMA register contains whatever value was written to it even after the 4 T-cycles have elapsed and no interrupt will be requested.
+
+            If TIMA is written to on the same T-cycle on which the reload from TMA occurs the write is ignored and the value in TMA will be loaded into TIMA.
+            However, if TMA is written to on the same T-cycle on which the reload occurs,
+            TMA is updated before its value is loaded into TIMA, meaning the reload will be carried out with the new value.
+        */
+        // println!("tima write: {:?} {}", self, data);
         self.tima = data;
     }
 
