@@ -1,7 +1,5 @@
 use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
 
-use super::mmu;
-
 const GB_CLOCKS_PER_SECOND: u32 = 4_194_304 / 4;
 
 const RTC_S: usize = 0;
@@ -55,21 +53,21 @@ impl MBC3 {
 
     fn rtc_register_mask(rtc_select: usize) -> u8 {
         return match rtc_select {
-            0..=1   => 0b111111,
-            2       => 0b11111,
-            3       => 0b11111111,
-            4       => 0b11000001,
-            _       => unreachable!("invalid register"),
+            0..=1 => 0b111111,
+            2 => 0b11111,
+            3 => 0b11111111,
+            4 => 0b11000001,
+            _ => unreachable!("invalid register"),
         };
     }
 
     fn rtc_rollover(rtc_select: usize) -> u16 {
         return match rtc_select {
-            0..=1   => 60,
-            2       => 24,
-            3       => 0x1FF,
-            4       => unreachable!("dh does not have rollover"),
-            _       => unreachable!("invalid register"),
+            0..=1 => 60,
+            2 => 24,
+            3 => 0x1FF,
+            4 => unreachable!("dh does not have rollover"),
+            _ => unreachable!("invalid register"),
         };
     }
 
@@ -88,15 +86,16 @@ impl MBC3 {
                 }
             }
             RTC_DL => {
-                let mut day_counter: u16 = (u16::from(self.rtc_registers[RTC_DH]) << 8) | u16::from(self.rtc_registers[RTC_DL]);
+                let mut day_counter: u16 = (u16::from(self.rtc_registers[RTC_DH]) << 8)
+                    | u16::from(self.rtc_registers[RTC_DL]);
                 day_counter = day_counter.wrapping_add(1);
-    
+
                 if day_counter & (1 << 9) != 0 {
                     // overflow
-                    day_counter = 1 << 15               // day counter carry bit
-                        | (day_counter & (1 << 14));    // halt bit
+                    day_counter = 1 << 15            // day counter carry bit
+                        | (day_counter & (1 << 14)); // halt bit
                 }
-    
+
                 self.rtc_registers[RTC_DH] = (day_counter >> 8).try_into().unwrap();
                 self.rtc_registers[RTC_DL] = (day_counter & 0xFF).try_into().unwrap();
             }
@@ -105,7 +104,7 @@ impl MBC3 {
     }
 }
 
-impl mmu::MBC for MBC3 {
+impl mbc::MBC for MBC3 {
     fn load(&mut self, cartridge: &Cartridge) {
         let hdr = &cartridge.header;
 
@@ -183,21 +182,19 @@ impl mmu::MBC for MBC3 {
                     self.rom_bank = usize::from(bank_num) % self.num_rom_banks;
                 }
             }
-            0x4000..=0x5FFF => {
-                match data {
-                    0..=0x3 => {
-                        self.ram_bank = Some(usize::from(data) % self.num_ram_banks);
-                        self.rtc_select = None;
-                    }
-                    0x8..=0x0C => {
-                        if self.has_rtc {
-                            self.ram_bank = None;
-                            self.rtc_select = Some((data - 0x8).into());
-                        }
-                    }
-                    _ => {}
+            0x4000..=0x5FFF => match data {
+                0..=0x3 => {
+                    self.ram_bank = Some(usize::from(data) % self.num_ram_banks);
+                    self.rtc_select = None;
                 }
-            }
+                0x8..=0x0C => {
+                    if self.has_rtc {
+                        self.ram_bank = None;
+                        self.rtc_select = Some((data - 0x8).into());
+                    }
+                }
+                _ => {}
+            },
             0x6000..=0x7FFF => {
                 if !self.has_rtc {
                     return;
@@ -250,9 +247,10 @@ impl mmu::MBC for MBC3 {
 
         if self.rtc_cycles_left <= cycles.into() {
             self.rtc_inc(RTC_S);
-            self.rtc_cycles_left = GB_CLOCKS_PER_SECOND - (u32::from(cycles) - self.rtc_cycles_left);
+            self.rtc_cycles_left =
+                GB_CLOCKS_PER_SECOND - (u32::from(cycles) - self.rtc_cycles_left);
         } else {
-            self.rtc_cycles_left =self.rtc_cycles_left.wrapping_sub(cycles.into());
+            self.rtc_cycles_left = self.rtc_cycles_left.wrapping_sub(cycles.into());
         }
     }
 

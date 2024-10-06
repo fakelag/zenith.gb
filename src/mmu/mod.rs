@@ -1,7 +1,5 @@
-pub mod mmu;
-pub mod hw_reg;
-mod mbc1;
-mod mbc2;
-mod mbc3;
-mod mbc5;
-mod mbc;
+pub mod mbc;
+pub mod mbc1;
+pub mod mbc2;
+pub mod mbc3;
+pub mod mbc5;

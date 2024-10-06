@@ -1,6 +1,7 @@
-use crate::mmu::mmu;
 use super::cpu::CPU;
+use crate::soc::soc;
 
+#[rustfmt::skip]
 #[derive(Debug, Clone, Copy)]
 pub enum OperandKind {
     /* implied */                   None,
@@ -19,7 +20,7 @@ pub enum OperandKind {
     Bit,
 }
 
-type OpcodeFn = fn(&mut CPU, mmu: &mut mmu::MMU, instr: &Instruction, opcode: u8);
+type OpcodeFn = fn(&mut CPU, soc: &mut soc::SOC, instr: &Instruction, opcode: u8);
 
 pub struct Instruction {
     pub dst: OperandKind,
@@ -38,6 +39,7 @@ pub fn get_instruction_cb(opcode: u8) -> &'static Instruction {
 }
 
 // https://gbdev.io/gb-opcodes/optables/
+#[rustfmt::skip]
 const INSTR_INDEX: [Instruction; 256] = [
 /* 0x00 NOP          | - - - - */  Instruction{dst:OperandKind::None,       src:OperandKind::None,       cycles:1,   cycles_skipped:0,   exec:CPU::opcode_nop},
 /* 0x01 LD BC n16    | - - - - */  Instruction{dst:OperandKind::R16,        src:OperandKind::Imm16,      cycles:3,   cycles_skipped:0,   exec:CPU::opcode_ld},
@@ -297,6 +299,7 @@ const INSTR_INDEX: [Instruction; 256] = [
 /* 0xFF RST $38      | - - - - */  Instruction{dst:OperandKind::None,       src:OperandKind::None,       cycles:4,   cycles_skipped:0,   exec:CPU::opcode_rst},
 ];
 
+#[rustfmt::skip]
 const INSTR_INDEX_CB: [Instruction; 256] = [
 /* 0x00 RLC B        | Z 0 0 C */  Instruction{dst:OperandKind::R8,         src:OperandKind::None,       cycles:2,   cycles_skipped:0,   exec:CPU::opcode_rlc},
 /* 0x01 RLC C        | Z 0 0 C */  Instruction{dst:OperandKind::R8,         src:OperandKind::None,       cycles:2,   cycles_skipped:0,   exec:CPU::opcode_rlc},

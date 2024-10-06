@@ -1,25 +1,24 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 
-use std::{sync::mpsc::{self}, time};
-
-use cartridge::cartridge::Cartridge;
-use apu::apu::{
-    APU_FREQ,
-    APU_NUM_CHANNELS,
-    APU_SAMPLES,
-    APU_SAMPLES_PER_CHANNEL,
+use std::{
+    sync::mpsc::{self},
+    time,
 };
+
+use apu::apu::{APU_FREQ, APU_NUM_CHANNELS, APU_SAMPLES, APU_SAMPLES_PER_CHANNEL};
+use cartridge::cartridge::Cartridge;
 
 mod apu;
 mod cartridge;
 mod cpu;
-mod emu;
+mod gameboy;
 mod mmu;
 mod ppu;
+mod soc;
 mod timer;
 mod util;
 
-use emu::emu::{Emu, GbButton, InputEvent};
+use gameboy::gameboy::*;
 use ppu::ppu::FrameBuffer;
 use sdl2::audio::AudioFormatNum;
 
@@ -38,14 +37,18 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x88, 0xa0, 0x48),
     sdl2::pixels::Color::RGB(0x48, 0x68, 0x30),
     sdl2::pixels::Color::RGB(0x28, 0x40, 0x20),
-    sdl2::pixels::Color::RGB(0x18, 0x28, 0x08)
+    sdl2::pixels::Color::RGB(0x18, 0x28, 0x08),
 ];
 
 fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::Window> {
     let video_subsystem = sdl_ctx.video().unwrap();
 
     let window = video_subsystem
-        .window("Gameboy", GB_SCREEN_WIDTH * WINDOW_SIZE_MULT, GB_SCREEN_HEIGHT * WINDOW_SIZE_MULT)
+        .window(
+            "Gameboy",
+            GB_SCREEN_WIDTH * WINDOW_SIZE_MULT,
+            GB_SCREEN_HEIGHT * WINDOW_SIZE_MULT,
+        )
         .position_centered()
         .resizable()
         .opengl()
@@ -72,7 +75,10 @@ impl sdl2::audio::AudioCallback for GbAudio {
     type Channel = i16;
 
     fn callback(&mut self, out: &mut [Self::Channel]) {
-        match self.sound_recv.recv_timeout(time::Duration::from_millis(15)) {
+        match self
+            .sound_recv
+            .recv_timeout(time::Duration::from_millis(15))
+        {
             Ok(samples) => {
                 debug_assert!(samples.len() == out.len());
 
@@ -88,13 +94,12 @@ impl sdl2::audio::AudioCallback for GbAudio {
     }
 }
 
-fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
-    sdl2::audio::AudioDevice<GbAudio>,
-    apu::apu::ApuSoundSender,
-) {
+fn sdl2_create_audio(
+    sdl_ctx: &sdl2::Sdl,
+) -> (sdl2::audio::AudioDevice<GbAudio>, apu::apu::ApuSoundSender) {
     let audio_subsystem = sdl_ctx.audio().unwrap();
 
-    let spec_desired = sdl2::audio::AudioSpecDesired{
+    let spec_desired = sdl2::audio::AudioSpecDesired {
         channels: Some(APU_NUM_CHANNELS),
         samples: Some(APU_SAMPLES_PER_CHANNEL),
         freq: Some(APU_FREQ as i32),
@@ -102,11 +107,9 @@ fn sdl2_create_audio(sdl_ctx: &sdl2::Sdl) -> (
 
     let (sound_send, sound_recv) = mpsc::sync_channel::<Vec<i16>>(1);
 
-    let device = audio_subsystem.open_playback(None, &spec_desired, |_spec| {
-        GbAudio {
-            sound_recv,
-        }
-    }).unwrap();
+    let device = audio_subsystem
+        .open_playback(None, &spec_desired, |_spec| GbAudio { sound_recv })
+        .unwrap();
 
     device.resume();
 
@@ -127,14 +130,11 @@ fn sdl2_enable_controller(sdl_ctx: &sdl2::Sdl) -> Result<sdl2::controller::GameC
             }
 
             match controller_subsystem.open(id) {
-                Ok(c) => {
-                    Some(c)
-                }
-                Err(e) => {
-                    None
-                }
+                Ok(c) => Some(c),
+                Err(_e) => None,
             }
-        }).ok_or_else(|| format!("Couldn't find any controllers"))?;
+        })
+        .ok_or_else(|| format!("Couldn't find any controllers"))?;
 
     _ = controller.set_rumble(0, 20_000, 500);
     _ = controller.set_led(PALETTE[0].r, PALETTE[0].g, PALETTE[0].b);
@@ -142,112 +142,125 @@ fn sdl2_enable_controller(sdl_ctx: &sdl2::Sdl) -> Result<sdl2::controller::GameC
     return Ok(controller);
 }
 
-fn create_emulator(rom_path: &str) -> Emu {
+fn create_emulator(rom_path: &str) -> Gameboy {
     let cart = Cartridge::new(rom_path);
-    let mut emu = Emu::new(cart);
-    emu.dmg_boot();
-    emu
+    let mut gb = Gameboy::new(cart);
+    gb.dmg_boot();
+    gb
 }
 
 fn scancode_to_gb_btn(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
     match scancode {
-        Some(
-            sdl2::keyboard::Scancode::Up | sdl2::keyboard::Scancode::W
-        ) => { Some(GbButton::GbButtonUp) }
-        Some(
-            sdl2::keyboard::Scancode::Left | sdl2::keyboard::Scancode::A
-        ) => { Some(GbButton::GbButtonLeft) }
-        Some(
-            sdl2::keyboard::Scancode::Down | sdl2::keyboard::Scancode::S
-        ) => { Some(GbButton::GbButtonDown) }
-        Some(
-            sdl2::keyboard::Scancode::Right | sdl2::keyboard::Scancode::D
-        ) => { Some(GbButton::GbButtonRight) }
-        Some(
-            sdl2::keyboard::Scancode::C) | Some(sdl2::keyboard::Scancode::O
-        ) => { Some(GbButton::GbButtonA) }
-        Some(
-            sdl2::keyboard::Scancode::V) | Some(sdl2::keyboard::Scancode::P
-        ) => { Some(GbButton::GbButtonB) }
-        Some(
-            sdl2::keyboard::Scancode::N
-        ) => { Some(GbButton::GbButtonSelect) }
-        Some(
-            sdl2::keyboard::Scancode::M
-        ) => { Some(GbButton::GbButtonStart) }
-        _ => { None }
+        Some(sdl2::keyboard::Scancode::Up | sdl2::keyboard::Scancode::W) => {
+            Some(GbButton::GbButtonUp)
+        }
+        Some(sdl2::keyboard::Scancode::Left | sdl2::keyboard::Scancode::A) => {
+            Some(GbButton::GbButtonLeft)
+        }
+        Some(sdl2::keyboard::Scancode::Down | sdl2::keyboard::Scancode::S) => {
+            Some(GbButton::GbButtonDown)
+        }
+        Some(sdl2::keyboard::Scancode::Right | sdl2::keyboard::Scancode::D) => {
+            Some(GbButton::GbButtonRight)
+        }
+        Some(sdl2::keyboard::Scancode::C) | Some(sdl2::keyboard::Scancode::O) => {
+            Some(GbButton::GbButtonA)
+        }
+        Some(sdl2::keyboard::Scancode::V) | Some(sdl2::keyboard::Scancode::P) => {
+            Some(GbButton::GbButtonB)
+        }
+        Some(sdl2::keyboard::Scancode::N) => Some(GbButton::GbButtonSelect),
+        Some(sdl2::keyboard::Scancode::M) => Some(GbButton::GbButtonStart),
+        _ => None,
     }
 }
 
 fn controller_btn_to_gb_btn(btn: sdl2::controller::Button, _which: u32) -> Option<GbButton> {
     match btn {
-        sdl2::controller::Button::DPadUp => { Some(GbButton::GbButtonUp) }
-        sdl2::controller::Button::DPadLeft => { Some(GbButton::GbButtonLeft) }
-        sdl2::controller::Button::DPadDown =>{ Some(GbButton::GbButtonDown) }
-        sdl2::controller::Button::DPadRight =>{ Some(GbButton::GbButtonRight) }
-        sdl2::controller::Button::A => { Some(GbButton::GbButtonA) }
-        sdl2::controller::Button::B => { Some(GbButton::GbButtonB) }
-        sdl2::controller::Button::Guide => { Some(GbButton::GbButtonSelect) }
-        sdl2::controller::Button::Start => { Some(GbButton::GbButtonStart) }
-        _ => { None }
+        sdl2::controller::Button::DPadUp => Some(GbButton::GbButtonUp),
+        sdl2::controller::Button::DPadLeft => Some(GbButton::GbButtonLeft),
+        sdl2::controller::Button::DPadDown => Some(GbButton::GbButtonDown),
+        sdl2::controller::Button::DPadRight => Some(GbButton::GbButtonRight),
+        sdl2::controller::Button::A => Some(GbButton::GbButtonA),
+        sdl2::controller::Button::B => Some(GbButton::GbButtonB),
+        sdl2::controller::Button::Guide => Some(GbButton::GbButtonSelect),
+        sdl2::controller::Button::Start => Some(GbButton::GbButtonStart),
+        _ => None,
     }
 }
 
 fn controller_axis_gb_btn(axis: sdl2::controller::Axis) -> Option<(GbButton, GbButton)> {
     match axis {
-        sdl2::controller::Axis::LeftX => { Some((GbButton::GbButtonLeft, GbButton::GbButtonRight)) }
-        sdl2::controller::Axis::LeftY => { Some((GbButton::GbButtonUp, GbButton::GbButtonDown)) }
-        _ => { None }
+        sdl2::controller::Axis::LeftX => Some((GbButton::GbButtonLeft, GbButton::GbButtonRight)),
+        sdl2::controller::Axis::LeftY => Some((GbButton::GbButtonUp, GbButton::GbButtonDown)),
+        _ => None,
     }
 }
 
 enum State {
     Exit,
     Idle,
-    Running(Emu),
+    Running(Gameboy),
 }
 
-fn poll_events(
-    input_vec: &mut Vec<InputEvent>,
-    event_pump: &mut sdl2::EventPump,
-) -> Option<State> {
+fn poll_events(input_vec: &mut Vec<InputEvent>, event_pump: &mut sdl2::EventPump) -> Option<State> {
     for event in event_pump.poll_iter() {
         match event {
             sdl2::event::Event::DropFile { filename, .. } => {
                 return Some(State::Running(create_emulator(&filename)));
             }
-            sdl2::event::Event::Quit {..} => {
+            sdl2::event::Event::Quit { .. } => {
                 return Some(State::Exit);
             }
-            sdl2::event::Event::KeyDown { scancode, repeat, .. } => {
+            sdl2::event::Event::KeyDown {
+                scancode, repeat, ..
+            } => {
                 if repeat {
                     continue;
                 }
                 if let Some(gb_button) = scancode_to_gb_btn(scancode) {
-                    input_vec.push(InputEvent { down: true, button: gb_button });
+                    input_vec.push(InputEvent {
+                        down: true,
+                        button: gb_button,
+                    });
                 }
             }
             sdl2::event::Event::KeyUp { scancode, .. } => {
                 if let Some(gb_button) = scancode_to_gb_btn(scancode) {
-                    input_vec.push(InputEvent { down: false, button: gb_button });
+                    input_vec.push(InputEvent {
+                        down: false,
+                        button: gb_button,
+                    });
                 }
-            },
+            }
             sdl2::event::Event::ControllerButtonDown { which, button, .. } => {
                 if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
-                    input_vec.push(InputEvent { down: true, button: gb_button });
+                    input_vec.push(InputEvent {
+                        down: true,
+                        button: gb_button,
+                    });
                 }
             }
             sdl2::event::Event::ControllerButtonUp { which, button, .. } => {
                 if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
-                    input_vec.push(InputEvent { down: false, button: gb_button });
+                    input_vec.push(InputEvent {
+                        down: false,
+                        button: gb_button,
+                    });
                 }
             }
-            sdl2::event::Event::ControllerAxisMotion { axis, value, ..} => {
+            sdl2::event::Event::ControllerAxisMotion { axis, value, .. } => {
                 let dead_zone = 10_000;
 
                 if let Some((btn_neg, btn_pos)) = controller_axis_gb_btn(axis) {
-                    input_vec.push(InputEvent { down: value < -dead_zone, button: btn_neg });
-                    input_vec.push(InputEvent { down: value > dead_zone, button: btn_pos });
+                    input_vec.push(InputEvent {
+                        down: value < -dead_zone,
+                        button: btn_neg,
+                    });
+                    input_vec.push(InputEvent {
+                        down: value > dead_zone,
+                        button: btn_pos,
+                    });
                 }
             }
             _ => {}
@@ -263,24 +276,26 @@ fn vsync_canvas(
     canvas: &mut sdl2::render::WindowCanvas,
     last_frame: &mut time::Instant, // @todo - Refactor into a system
 ) {
-    texture.with_lock(None, |buffer, size| {
-        for x in 0..160 {
-            for y in 0..144 {
-                let color = rt[y][x];
+    texture
+        .with_lock(None, |buffer, size| {
+            for x in 0..160 {
+                for y in 0..144 {
+                    let color = rt[y][x];
 
-                let index = y * size + x * 3;
-                match color {
-                    0..=3 => {
-                        let c = PALETTE[color as usize];
-                        buffer[index] = c.r;
-                        buffer[index+1] = c.g;
-                        buffer[index+2] = c.b;
+                    let index = y * size + x * 3;
+                    match color {
+                        0..=3 => {
+                            let c = PALETTE[color as usize];
+                            buffer[index] = c.r;
+                            buffer[index + 1] = c.g;
+                            buffer[index + 2] = c.b;
+                        }
+                        _ => unreachable!(),
                     }
-                    _ => unreachable!(),
                 }
             }
-        }
-    }).unwrap();
+        })
+        .unwrap();
 
     canvas.clear();
     canvas.copy(&texture, None, None).unwrap();
@@ -288,7 +303,16 @@ fn vsync_canvas(
 
     let frame_time = last_frame.elapsed();
     *last_frame = time::Instant::now();
-    canvas.window_mut().set_title(format!("fps={:?}", (1000_000 / std::cmp::max(frame_time.as_micros(), 1))).as_str()).unwrap();
+    canvas
+        .window_mut()
+        .set_title(
+            format!(
+                "fps={:?}",
+                (1000_000 / std::cmp::max(frame_time.as_micros(), 1))
+            )
+            .as_str(),
+        )
+        .unwrap();
 }
 
 fn run_state(
@@ -297,22 +321,20 @@ fn run_state(
     event_pump: &mut sdl2::EventPump,
 ) -> State {
     match state {
-        State::Idle => {
-            loop {
-                for event in event_pump.wait_timeout_iter(100) {
-                    match event {
-                        sdl2::event::Event::DropFile { filename, .. } => {
-                            return State::Running(create_emulator(&filename));
-                        }
-                        sdl2::event::Event::Quit {..} => {
-                            return State::Exit;
-                        }
-                        _ => {}
+        State::Idle => loop {
+            for event in event_pump.wait_timeout_iter(100) {
+                match event {
+                    sdl2::event::Event::DropFile { filename, .. } => {
+                        return State::Running(create_emulator(&filename));
                     }
+                    sdl2::event::Event::Quit { .. } => {
+                        return State::Exit;
+                    }
+                    _ => {}
                 }
             }
-        }
-        State::Running(ref mut emu) => {
+        },
+        State::Running(ref mut gb) => {
             let mut last_frame = time::Instant::now();
             let texture_creator = canvas.texture_creator();
 
@@ -331,16 +353,16 @@ fn run_state(
                 }
 
                 if input_vec.len() > 0 {
-                    emu.input_update(&input_vec);
+                    gb.input_update(&input_vec);
                     input_vec.clear();
                 }
 
                 let mut cycles_left = M_CYCLES_PER_FRAME;
                 while cycles_left > 0 {
-                    let (cycles_run, vsync) = emu.run(cycles_left);
+                    let (cycles_run, vsync) = gb.run(cycles_left);
 
                     if vsync {
-                        let rt = emu.get_framebuffer();
+                        let rt = gb.get_framebuffer();
                         vsync_canvas(rt, &mut texture, canvas, &mut last_frame);
                     }
 
@@ -348,7 +370,7 @@ fn run_state(
                 }
 
                 if saved_at.elapsed() > time::Duration::from_secs(60) {
-                    emu.save();
+                    gb.save();
                     saved_at = time::Instant::now();
                 }
 
@@ -356,11 +378,13 @@ fn run_state(
                 let sleep_time = FRAME_TIME.saturating_sub(elapsed);
 
                 if sleep_time > 0 {
-                   spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+                    spin_sleep::sleep(time::Duration::from_micros(sleep_time));
                 }
             }
         }
-        State::Exit => { return State::Exit; }
+        State::Exit => {
+            return State::Exit;
+        }
     }
 }
 
@@ -371,7 +395,7 @@ fn main() {
     let (_ad, sound_chan) = sdl2_create_audio(&sdl_ctx);
 
     let _controller = sdl2_enable_controller(&sdl_ctx);
-    
+
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     let mut state = State::Idle;
 
@@ -379,8 +403,8 @@ fn main() {
         let mut next_state = run_state(&mut state, &mut canvas, &mut event_pump);
 
         match state {
-            State::Running(ref mut emu) => {
-                emu.close();
+            State::Running(ref mut gb) => {
+                gb.close();
             }
             _ => {}
         }
@@ -389,8 +413,8 @@ fn main() {
             State::Exit => {
                 break 'eventloop;
             }
-            State::Running(ref mut emu) => {
-                emu.enable_external_audio(sound_chan.clone());
+            State::Running(ref mut gb) => {
+                gb.enable_external_audio(sound_chan.clone());
             }
             _ => {}
         }
@@ -399,30 +423,33 @@ fn main() {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::{Path, PathBuf}, sync::mpsc::{Receiver, SyncSender}};
     use colored::Colorize;
     use cpu::cpu::CPU;
     use rayon::prelude::*;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::mpsc::{Receiver, SyncSender},
+    };
 
-    fn create_test_emulator(rom_path: &str) -> Option<Emu> {
+    fn create_test_emulator(rom_path: &str) -> Option<Gameboy> {
         let cart = Cartridge::new(rom_path);
-        let mut emu = Emu::new(cart);
+        let mut gb = Gameboy::new(cart);
 
-        if !emu.mmu.is_supported_cart_type() {
+        if !gb.is_supported_cart_type() {
             println!("Skipping {rom_path} due to unsupported cart type");
             return None;
         }
 
-        emu.dmg_boot();
-        Some(emu)
+        gb.dmg_boot();
+        Some(gb)
     }
 
     fn run_test_emulator<T>(
-        emu: &mut Emu,
+        ctx: &mut Gameboy,
         break_chan: Receiver<T>,
         input_chan: Option<&Receiver<InputEvent>>,
         frame_chan: Option<&SyncSender<FrameBuffer>>,
@@ -434,11 +461,11 @@ mod tests {
         let mut cycles_run = 0;
 
         while cycles_run < max_cycles {
-            let (cycles_passed, vsync) = emu.run(mcycles_per_frame);
+            let (cycles_passed, vsync) = ctx.run(mcycles_per_frame);
 
             if vsync {
                 if let Some(fs) = frame_chan {
-                    if let Err(err) = fs.send(*emu.get_framebuffer()) {
+                    if let Err(err) = fs.send(*ctx.get_framebuffer()) {
                         panic!("Frame sender error: {err}");
                     }
                 }
@@ -446,7 +473,7 @@ mod tests {
 
             if let Some(input) = input_chan {
                 if let Ok(next_input) = input.try_recv() {
-                    emu.input_update(&vec![next_input]);
+                    ctx.input_update(&vec![next_input]);
                 }
             }
 
@@ -467,7 +494,8 @@ mod tests {
             || cpu.d().get() != 8
             || cpu.e().get() != 13
             || cpu.h().get() != 21
-            || cpu.l().get() != 34 {
+            || cpu.l().get() != 34
+        {
             return false;
         }
 
@@ -477,13 +505,13 @@ mod tests {
     fn mts_runner(rom_path: &str, _inputs: Option<Vec<GbButton>>) -> Option<bool> {
         let mut emu_res = create_test_emulator(rom_path);
 
-        if let Some(emu) = &mut emu_res {
+        if let Some(gb) = &mut emu_res {
             let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
 
-            emu.cpu.set_breakpoint(Some(break_send));
+            gb.set_breakpoint(Some(break_send));
 
-            let bp_triggered = run_test_emulator(emu, break_recv, None, None);
-            let test_passed = bp_triggered.is_some() && mts_passed(&mut emu.cpu);
+            let bp_triggered = run_test_emulator(gb, break_recv, None, None);
+            let test_passed = bp_triggered.is_some() && mts_passed(gb.get_cpu());
             return Some(test_passed);
         } else {
             None
@@ -491,11 +519,7 @@ mod tests {
     }
 
     fn snapshot_runner(rom_path: &str, inputs: Option<Vec<GbButton>>) -> Option<bool> {
-        let root_path = PathBuf::from(
-            rom_path
-                .strip_prefix("tests/roms/")
-                .unwrap_or("unnamed")
-            );
+        let root_path = PathBuf::from(rom_path.strip_prefix("tests/roms/").unwrap_or("unnamed"));
 
         let snapshot_dir = root_path
             .parent()
@@ -507,7 +531,11 @@ mod tests {
         return snapshot_test(rom_path, &snapshot_dir, inputs);
     }
 
-    fn snapshot_test(rom_path: &str, snapshot_dir: &str, mut inputs: Option<Vec<GbButton>>) -> Option<bool> {
+    fn snapshot_test(
+        rom_path: &str,
+        snapshot_dir: &str,
+        mut inputs: Option<Vec<GbButton>>,
+    ) -> Option<bool> {
         let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
         let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
         let (input_send, input_recv) = std::sync::mpsc::channel::<InputEvent>();
@@ -522,7 +550,7 @@ mod tests {
             return None;
         }
 
-        let mut emu = emu_result.unwrap();
+        let mut gb = emu_result.unwrap();
 
         let rom_path_string = rom_path.to_string();
         let snapshot_dir_string = snapshot_dir.to_string();
@@ -538,9 +566,9 @@ mod tests {
                 .to_str()
                 .expect("filename must be valid utf-8");
 
-            let cmp_image = if let Ok(snapshot) = bmp::open(
-                format!("tests/snapshots/{snapshot_dir_string}/{rom_filename}.bmp")
-            ) {
+            let cmp_image = if let Ok(snapshot) = bmp::open(format!(
+                "tests/snapshots/{snapshot_dir_string}/{rom_filename}.bmp"
+            )) {
                 if snapshot.get_height() != 144 || snapshot.get_width() != 160 {
                     eprintln!("Invalid image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
                     None
@@ -561,7 +589,12 @@ mod tests {
                         if let Some(input_vector) = &mut inputs {
                             if frame_count > 60 && frame_count % 20 == 0 {
                                 if let Some(press_next) = input_vector.pop() {
-                                    input_send.send(InputEvent{ button: press_next, down: true }).unwrap();
+                                    input_send
+                                        .send(InputEvent {
+                                            button: press_next,
+                                            down: true,
+                                        })
+                                        .unwrap();
                                     release_inputs.push((frame_count + 10, press_next));
                                 }
                             }
@@ -572,7 +605,12 @@ mod tests {
                                 return true;
                             }
 
-                            input_send.send(InputEvent{ button: release_next.1, down: false }).unwrap();
+                            input_send
+                                .send(InputEvent {
+                                    button: release_next.1,
+                                    down: false,
+                                })
+                                .unwrap();
                             return false;
                         });
 
@@ -587,10 +625,11 @@ mod tests {
                                     let snapshot_pixel = img.get_pixel(x as u32, y as u32);
                                     if snapshot_pixel.r != palette_color.r
                                         || snapshot_pixel.g != palette_color.g
-                                        || snapshot_pixel.b != palette_color.b {
-                                            match_snapshot = false;
-                                            break 'img_check;
-                                        }
+                                        || snapshot_pixel.b != palette_color.b
+                                    {
+                                        match_snapshot = false;
+                                        break 'img_check;
+                                    }
                                 }
                             }
 
@@ -612,12 +651,17 @@ mod tests {
                                         bmp_img.set_pixel(
                                             x as u32,
                                             y as u32,
-                                            bmp::Pixel{ r: palette_color.r, g: palette_color.g, b: palette_color.b }
+                                            bmp::Pixel {
+                                                r: palette_color.r,
+                                                g: palette_color.g,
+                                                b: palette_color.b,
+                                            },
                                         );
                                     }
                                 }
 
-                                _ = bmp_img.save(format!("tests/snapshots/verify/{rom_filename}.bmp"));
+                                _ = bmp_img
+                                    .save(format!("tests/snapshots/verify/{rom_filename}.bmp"));
                             }
                         }
 
@@ -628,12 +672,8 @@ mod tests {
             }
         });
 
-        let frame_check_passed = run_test_emulator(
-            &mut emu,
-            break_recv,
-            Some(&input_recv),
-            Some(&frame_send),
-        );
+        let frame_check_passed =
+            run_test_emulator(&mut gb, break_recv, Some(&input_recv), Some(&frame_send));
         let test_passed = frame_check_passed.is_some();
         return Some(test_passed);
     }
@@ -642,7 +682,7 @@ mod tests {
         let path = PathBuf::from(rom_or_dir);
 
         let roms = if path.is_file() {
-            vec!(rom_or_dir.to_string())
+            vec![rom_or_dir.to_string()]
         } else {
             let mut rom_paths = Vec::new();
             let dir_files = fs::read_dir(rom_or_dir).expect("directory must exist");
@@ -650,15 +690,15 @@ mod tests {
             for dir_file in dir_files {
                 let p = dir_file.unwrap();
                 let metadata = p.metadata().unwrap();
-    
+
                 if !metadata.is_file() {
                     continue;
                 }
-    
+
                 if p.path().extension().unwrap() != "gb" {
                     continue;
                 }
-    
+
                 let full_path: String = p.path().display().to_string();
                 rom_paths.push(full_path);
             }
@@ -671,8 +711,9 @@ mod tests {
 
     #[test]
     fn mts() {
-        type RunnerFn = fn(path:&str, Option<Vec<GbButton>>) -> Option<bool>;
+        type RunnerFn = fn(path: &str, Option<Vec<GbButton>>) -> Option<bool>;
 
+        #[rustfmt::skip]
         let test_roms: Vec<(RunnerFn, &str, Option<Vec<GbButton>>)>  = vec!(
             (snapshot_runner, "tests/roms/blargg/cpu_instrs/", None),
             (snapshot_runner, "tests/roms/rtc3test/rtc3test.0.gb", Some(vec![GbButton::GbButtonA])),
@@ -715,32 +756,34 @@ mod tests {
             .map(|(runner, rom_path, inputs)| (rom_path, runner(rom_path, inputs.clone())))
             .collect::<Vec<(&String, Option<bool>)>>();
 
-        results
-            .iter()
-            .for_each(|(path, pass_opt)| {
-                if let Some(is_passing) = pass_opt {
-                    if *is_passing {
-                        println!("[{}]: {path}", "Passed".green().bold());
-                    } else {
-                        eprintln!("[{}]: {path}", "Failed".red().bold());
-                    }
+        results.iter().for_each(|(path, pass_opt)| {
+            if let Some(is_passing) = pass_opt {
+                if *is_passing {
+                    println!("[{}]: {path}", "Passed".green().bold());
+                } else {
+                    eprintln!("[{}]: {path}", "Failed".red().bold());
                 }
-            });
-        
-        let stats = results
-            .iter()
-            .fold((0, 0, 0), |acc, res| {
-                if let Some(is_passing) = res.1 {
-                    if is_passing {
-                        return (acc.0 + 1, acc.1, acc.2);
-                    } else {
-                        return (acc.0, acc.1 + 1, acc.2);
-                    }
-                }
-                return (acc.0, acc.1, acc.2 + 1);
-            });
+            }
+        });
 
-        println!("{} passed {} failed, {} skipped, {} total", stats.0, stats.1, stats.2, results.len());
+        let stats = results.iter().fold((0, 0, 0), |acc, res| {
+            if let Some(is_passing) = res.1 {
+                if is_passing {
+                    return (acc.0 + 1, acc.1, acc.2);
+                } else {
+                    return (acc.0, acc.1 + 1, acc.2);
+                }
+            }
+            return (acc.0, acc.1, acc.2 + 1);
+        });
+
+        println!(
+            "{} passed {} failed, {} skipped, {} total",
+            stats.0,
+            stats.1,
+            stats.2,
+            results.len()
+        );
 
         // assert!(result_vec.iter().all(|(_, pass)| *pass));
     }

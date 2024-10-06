@@ -1,7 +1,5 @@
 use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
 
-use super::mmu;
-
 pub struct MBC5 {
     rom: Vec<u8>,
     ram: Vec<u8>,
@@ -14,7 +12,7 @@ pub struct MBC5 {
 
     num_rom_banks: usize,
     num_ram_banks: usize,
-    
+
     save_path: Option<String>,
 }
 
@@ -33,7 +31,7 @@ impl MBC5 {
     }
 }
 
-impl mmu::MBC for MBC5 {
+impl mbc::MBC for MBC5 {
     fn load(&mut self, cartridge: &Cartridge) {
         let hdr = &cartridge.header;
 
@@ -90,7 +88,8 @@ impl mmu::MBC for MBC5 {
                 self.rom_bank = ((self.rom_bank & 0x100) | usize::from(data)) % self.num_rom_banks;
             }
             0x3000..=0x3FFF => {
-                self.rom_bank = ((self.rom_bank & 0xFF) | (usize::from(data & 1) << 8)) % self.num_rom_banks;
+                self.rom_bank =
+                    ((self.rom_bank & 0xFF) | (usize::from(data & 1) << 8)) % self.num_rom_banks;
             }
             0x4000..=0x5FFF => {
                 self.ram_bank = (usize::from(data) & 0xF) % self.num_ram_banks;

@@ -1,7 +1,5 @@
 use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
 
-use super::mmu;
-
 const BYTES_8KIB: usize = 8 * 1024;
 const BYTES_32KIB: usize = 32 * 1024;
 const BYTES_1MIB: usize = 1024 * 1024;
@@ -40,7 +38,9 @@ impl MBC1 {
         let ram_size = self.ram.len();
         return match (ram_size, self.mode_flag) {
             (BYTES_8KIB, _) => usize::from(address - 0xA000) % ram_size,
-            (BYTES_32KIB, true) => usize::from(0x2000 * u16::from(self.ram_bank) + (address - 0xA000)),
+            (BYTES_32KIB, true) => {
+                usize::from(0x2000 * u16::from(self.ram_bank) + (address - 0xA000))
+            }
             (BYTES_32KIB, false) => usize::from(address - 0xA000),
             (0, _) => panic!("ram size 0"),
             _ => unreachable!(),
@@ -48,7 +48,7 @@ impl MBC1 {
     }
 }
 
-impl mmu::MBC for MBC1 {
+impl mbc::MBC for MBC1 {
     fn load(&mut self, cartridge: &Cartridge) {
         let hdr = &cartridge.header;
 
@@ -62,7 +62,10 @@ impl mmu::MBC for MBC1 {
             let ram_banks = mbc::ram_banks(hdr);
             self.ram = vec![0; ram_banks.size_bytes];
         } else if hdr.ram_size != 0 {
-            panic!("cart_type={} should have ram size 0 (has {})", hdr.cart_type, hdr.ram_size);
+            panic!(
+                "cart_type={} should have ram size 0 (has {})",
+                hdr.cart_type, hdr.ram_size
+            );
         }
 
         match hdr.cart_type {
@@ -82,8 +85,8 @@ impl mmu::MBC for MBC1 {
                 if self.mode_flag {
                     let zero_bank_number: usize = match self.rom.len() {
                         // @todo - Multicart support (MBC1M)
-                        BYTES_1MIB => { (usize::from(self.ram_bank) & 0x1) << 5 }
-                        BYTES_2MIB => { (usize::from(self.ram_bank) & 0x3) << 5 }
+                        BYTES_1MIB => (usize::from(self.ram_bank) & 0x1) << 5,
+                        BYTES_2MIB => (usize::from(self.ram_bank) & 0x3) << 5,
                         _ => 0,
                     };
 
@@ -95,8 +98,14 @@ impl mmu::MBC for MBC1 {
             }
             0x4000..=0x7FFF => {
                 let high_bank_number: usize = match self.rom.len() {
-                    BYTES_1MIB => { (usize::from(self.rom_bank & self.rom_mask)) | ((usize::from(self.ram_bank) & 0x1) << 5) }
-                    BYTES_2MIB => { (usize::from(self.rom_bank & self.rom_mask)) | ((usize::from(self.ram_bank) & 0x3) << 5) }
+                    BYTES_1MIB => {
+                        (usize::from(self.rom_bank & self.rom_mask))
+                            | ((usize::from(self.ram_bank) & 0x1) << 5)
+                    }
+                    BYTES_2MIB => {
+                        (usize::from(self.rom_bank & self.rom_mask))
+                            | ((usize::from(self.ram_bank) & 0x3) << 5)
+                    }
                     _ => usize::from(self.rom_bank),
                 };
 
