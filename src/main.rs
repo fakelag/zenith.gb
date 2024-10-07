@@ -721,6 +721,8 @@ mod tests {
             (snapshot_runner, "tests/roms/rtc3test/rtc3test.2.gb", Some(vec![GbButton::GbButtonDown, GbButton::GbButtonDown, GbButton::GbButtonA])),
             (snapshot_runner, "tests/roms/blargg/instr_timing/", None),
             (snapshot_runner, "tests/roms/blargg/dmg_sound/", None),
+            (snapshot_runner, "tests/roms/blargg/mem_timing/", None),
+            (snapshot_runner, "tests/roms/blargg/mem_timing-2/", None),
             (snapshot_runner, "tests/roms/mts/manual-only/sprite_priority.gb", None),
             (mts_runner, "tests/roms/mts/acceptance/bits/", None),
             (mts_runner, "tests/roms/mts/acceptance/instr/", None),
