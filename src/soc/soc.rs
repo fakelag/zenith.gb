@@ -6,7 +6,7 @@ use crate::{
         mbc1, mbc2, mbc3, mbc5,
     },
     ppu::ppu::{self, FrameBuffer},
-    timer::timer,
+    timer::timer::Timer,
     util::util,
     GbButton, InputEvent,
 };
@@ -42,7 +42,7 @@ impl ClockContext<'_> {
 pub struct SOC {
     pub cycles: u64,
     apu: apu::APU,
-    timer: timer::Timer,
+    timer: Timer,
     ppu: ppu::PPU,
 
     memory: Vec<u8>,
@@ -74,7 +74,7 @@ impl SOC {
             event_bits: 0,
 
             apu: apu::APU::new(),
-            timer: timer::Timer::new(),
+            timer: Timer::new(),
             ppu: ppu::PPU::new(),
 
             #[cfg(test)]
@@ -249,6 +249,7 @@ impl SOC {
         };
     }
 
+    #[rustfmt::skip]
     pub fn clock_write(&mut self, address: u16, data: u8) {
         if !self.address_accessible(address) {
             self.clock();
@@ -290,64 +291,65 @@ impl SOC {
                 self.clock();
             }
             0xFF00..=0xFF7F => {
-                self.clock();
                 match address {
                     HWR_P1 => {
+                        self.clock();
                         // Lower nibble RO
                         let ro_bits = self.memory[usize::from(address)] & 0xCF;
                         self.memory[usize::from(address)] = (data & 0x30) | ro_bits;
                     }
                     HWR_IF => {
+                        self.clock();
                         // Top 3 bits unused
                         let ro_bits = self.memory[usize::from(address)] & 0xE0;
                         self.memory[usize::from(address)] = (data & 0x1F) | ro_bits;
                     }
                     HWR_DMA => {
+                        self.clock();
                         self.dma_request = Some(data);
                         self.memory[usize::from(address)] = data;
                     }
-                    HWR_SC => {}
-                    HWR_DIV_LSB => { /* RO */ }
-                    HWR_DIV => self.timer.write_div(data),
-                    HWR_TAC => self.timer.write_tac(data),
-                    HWR_TIMA => self.timer.write_tima(data),
-                    HWR_TMA => self.timer.write_tma(data),
-                    // 0xFF4F           => { todo!("select vram bank cgb"); } // @todo CGB: vram bank
-                    0xFF4D..=0xFF70 => {} // Non-dmg regs
-                    HWR_NR10 => self.apu.write_nr10(data),
-                    HWR_NR11 => self.apu.write_nr11(data),
-                    HWR_NR12 => self.apu.write_nr12(data),
-                    HWR_NR13 => self.apu.write_nr13(data),
-                    HWR_NR14 => self.apu.write_nr14(data),
-                    HWR_NR21 => self.apu.write_nr21(data),
-                    HWR_NR22 => self.apu.write_nr22(data),
-                    HWR_NR23 => self.apu.write_nr23(data),
-                    HWR_NR24 => self.apu.write_nr24(data),
-                    0xFF30..=0xFF3F => self.apu.write_wave_ram(address, data),
-                    HWR_NR30 => self.apu.write_nr30(data),
-                    HWR_NR31 => self.apu.write_nr31(data),
-                    HWR_NR32 => self.apu.write_nr32(data),
-                    HWR_NR33 => self.apu.write_nr33(data),
-                    HWR_NR34 => self.apu.write_nr34(data),
-                    HWR_NR41 => self.apu.write_nr41(data),
-                    HWR_NR42 => self.apu.write_nr42(data),
-                    HWR_NR43 => self.apu.write_nr43(data),
-                    HWR_NR44 => self.apu.write_nr44(data),
-                    HWR_NR50 => self.apu.write_nr50(data),
-                    HWR_NR51 => self.apu.write_nr51(data),
-                    HWR_NR52 => self.apu.write_nr52(data),
-                    HWR_LCDC => self.ppu.write_lcdc(data),
-                    HWR_STAT => self.ppu.write_stat(data),
-                    HWR_LY => self.ppu.write_ly(data),
-                    HWR_SCY => self.ppu.write_scy(data),
-                    HWR_SCX => self.ppu.write_scx(data),
-                    HWR_LYC => self.ppu.write_lyc(data),
-                    HWR_BGP => self.ppu.write_bgp(data),
-                    HWR_OBP0 => self.ppu.write_obp0(data),
-                    HWR_OBP1 => self.ppu.write_obp1(data),
-                    HWR_WY => self.ppu.write_wy(data),
-                    HWR_WX => self.ppu.write_wx(data),
-                    _ => self.memory[usize::from(address)] = data,
+                    HWR_DIV                 => self.clock_timer_write(Timer::clock_write_div, data),
+                    HWR_TAC                 => self.clock_timer_write(Timer::clock_write_tac, data),
+                    HWR_TIMA                => self.clock_timer_write(Timer::clock_write_tima, data),
+                    HWR_TMA                 => self.clock_timer_write(Timer::clock_write_tma, data),
+                    // 0xFF4F               => { todo!("select vram bank cgb"); } // @todo CGB: vram bank
+                    0xFF4D..=0xFF70         => { self.clock(); }
+                    HWR_NR10                => { self.clock(); self.apu.write_nr10(data) }
+                    HWR_NR11                => { self.clock(); self.apu.write_nr11(data) }
+                    HWR_NR12                => { self.clock(); self.apu.write_nr12(data) }
+                    HWR_NR13                => { self.clock(); self.apu.write_nr13(data) }
+                    HWR_NR14                => { self.clock(); self.apu.write_nr14(data) }
+                    HWR_NR21                => { self.clock(); self.apu.write_nr21(data) }
+                    HWR_NR22                => { self.clock(); self.apu.write_nr22(data) }
+                    HWR_NR23                => { self.clock(); self.apu.write_nr23(data) }
+                    HWR_NR24                => { self.clock(); self.apu.write_nr24(data) }
+                    0xFF30..=0xFF3F         => { self.clock(); self.apu.write_wave_ram(address, data) }
+                    HWR_NR30                => { self.clock(); self.apu.write_nr30(data) },
+                    HWR_NR31                => { self.clock(); self.apu.write_nr31(data) },
+                    HWR_NR32                => { self.clock(); self.apu.write_nr32(data) },
+                    HWR_NR33                => { self.clock(); self.apu.write_nr33(data) },
+                    HWR_NR34                => { self.clock(); self.apu.write_nr34(data) },
+                    HWR_NR41                => { self.clock(); self.apu.write_nr41(data) },
+                    HWR_NR42                => { self.clock(); self.apu.write_nr42(data) },
+                    HWR_NR43                => { self.clock(); self.apu.write_nr43(data) },
+                    HWR_NR44                => { self.clock(); self.apu.write_nr44(data) },
+                    HWR_NR50                => { self.clock(); self.apu.write_nr50(data) },
+                    HWR_NR51                => { self.clock(); self.apu.write_nr51(data) },
+                    HWR_NR52                => { self.clock(); self.apu.write_nr52(data) },
+                    HWR_LCDC                => { self.clock(); self.ppu.write_lcdc(data) },
+                    HWR_STAT                => { self.clock(); self.ppu.write_stat(data) },
+                    HWR_LY                  => { self.clock(); self.ppu.write_ly(data) },
+                    HWR_SCY                 => { self.clock(); self.ppu.write_scy(data) },
+                    HWR_SCX                 => { self.clock(); self.ppu.write_scx(data) },
+                    HWR_LYC                 => { self.clock(); self.ppu.write_lyc(data) },
+                    HWR_BGP                 => { self.clock(); self.ppu.write_bgp(data) },
+                    HWR_OBP0                => { self.clock(); self.ppu.write_obp0(data) },
+                    HWR_OBP1                => { self.clock(); self.ppu.write_obp1(data) },
+                    HWR_WY                  => { self.clock(); self.ppu.write_wy(data) },
+                    HWR_WX                  => { self.clock(); self.ppu.write_wx(data) },
+                    HWR_SC | HWR_DIV_LSB    => { self.clock(); },
+                    _                       => { self.clock(); self.memory[usize::from(address)] = data },
                 }
             }
             0xFF80..=0xFFFE => {
@@ -370,6 +372,27 @@ impl SOC {
 
         self.ppu.clock(&mut ctx);
         self.timer.clock(&mut ctx);
+
+        self.clock_oam_dma();
+
+        self.mbc.clock();
+        self.apu.clock();
+
+        self.cycles += 1;
+    }
+
+    pub fn clock_timer_write(
+        &mut self,
+        clock_timer_cb: fn(&mut Timer, data: u8, ctx: &mut ClockContext),
+        data: u8,
+    ) {
+        let mut ctx = ClockContext {
+            interrupts: &mut self.memory[HWR_IF as usize],
+            events: &mut self.event_bits,
+        };
+
+        self.ppu.clock(&mut ctx);
+        clock_timer_cb(&mut self.timer, data, &mut ctx);
 
         self.clock_oam_dma();
 
