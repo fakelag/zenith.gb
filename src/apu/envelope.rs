@@ -20,7 +20,7 @@ impl Envelope {
         }
     }
 
-    pub fn step(&mut self) {
+    pub fn clock(&mut self) {
         if self.period == 0 || !self.enabled {
             return;
         }
@@ -55,9 +55,7 @@ impl Envelope {
     }
 
     pub fn read_nrx2(&mut self) -> u8 {
-        self.initial_volume << 4
-            | if self.add_mode { 1 << 3 } else { 0 }
-            | self.period
+        self.initial_volume << 4 | if self.add_mode { 1 << 3 } else { 0 } | self.period
     }
 
     pub fn trigger(&mut self) {

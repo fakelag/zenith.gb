@@ -8,7 +8,7 @@ pub trait MBC {
     fn load(&mut self, cartridge: &Cartridge);
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, data: u8);
-    fn step(&mut self, cycles: u8);
+    fn clock(&mut self);
     fn save(&mut self);
 }
 
@@ -132,7 +132,7 @@ impl MBC for MbcRomOnly {
         // noop
     }
 
-    fn step(&mut self, _cycles: u8) {
+    fn clock(&mut self) {
         // noop
     }
 

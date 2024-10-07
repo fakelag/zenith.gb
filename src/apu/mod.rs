@@ -1,17 +1,17 @@
 pub mod apu;
+mod audiocvt;
 mod channel1;
 mod channel2;
 mod channel3;
 mod channel4;
-mod lengthcounter;
 mod envelope;
+mod lengthcounter;
 mod sweep;
 mod wav_file;
-mod audiocvt;
 
 pub trait Channel {
-    fn step(&mut self);
-    fn length_step(&mut self);
+    fn clock(&mut self);
+    fn length_clock(&mut self);
     fn get_sample(&self) -> u8;
     fn get_length_counter(&mut self) -> &mut lengthcounter::LengthCounter;
     fn get_envelope(&mut self) -> Option<&mut envelope::Envelope>;

@@ -11,10 +11,7 @@ use crate::{
     GbButton, InputEvent,
 };
 
-use super::{
-    hw_reg::*,
-    interrupt::{INTERRUPT_BIT_JOYPAD, INTERRUPT_BIT_TIMER},
-};
+use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
 
 pub enum SocEventBits {
     SocEventNone = 0,
@@ -25,6 +22,21 @@ struct DmaTransfer {
     src: u16,
     count: u8,
     cycles: u16, // 160 + 1
+}
+
+pub struct ClockContext<'a> {
+    interrupts: &'a mut u8,
+    events: &'a mut u8,
+}
+
+impl ClockContext<'_> {
+    pub fn set_interrupt(&mut self, interrupt_bit: u8) {
+        *self.interrupts |= interrupt_bit;
+    }
+
+    pub fn set_events(&mut self, event_bit: SocEventBits) {
+        *self.events |= event_bit as u8;
+    }
 }
 
 pub struct SOC {
@@ -351,25 +363,18 @@ impl SOC {
     }
 
     pub fn clock(&mut self) {
-        let (vsync, interrupts) = self.ppu.step(1);
+        let mut ctx = ClockContext {
+            interrupts: &mut self.memory[HWR_IF as usize],
+            events: &mut self.event_bits,
+        };
 
-        // @todo better
-        if vsync {
-            self.event_bits |= SocEventBits::SocEventVSync as u8;
-        }
-
-        // @todo - Set from PPU directly
-        self.set_interrupt(interrupts);
-
-        if self.timer.step(1) {
-            // @todo - Set from Timer directly
-            self.set_interrupt(INTERRUPT_BIT_TIMER);
-        }
+        self.ppu.clock(&mut ctx);
+        self.timer.clock(&mut ctx);
 
         self.clock_oam_dma();
 
-        self.mbc.step(1);
-        self.apu.step(1);
+        self.mbc.clock();
+        self.apu.clock();
 
         self.cycles += 1;
     }
@@ -432,12 +437,13 @@ impl SOC {
         // This also affects the CPU when fetching opcodes, allowing for code execution through DMA transfers.
         // https://hacktix.github.io/GBEDG/dma/
 
-        let inc_count = if let Some(active_dma) = &self.active_dma {
+        if let Some(active_dma) = &mut self.active_dma {
             let c = u16::from(active_dma.count);
 
-            let address = match active_dma.src + c {
-                0xFE00..=0xFFFF => 0xC000 + ((active_dma.src + c) & 0x1FFF),
-                _ => active_dma.src + c,
+            let dst = active_dma.src + c;
+            let address = match dst {
+                0xFE00..=0xFFFF => 0xC000 + (dst & 0x1FFF),
+                _ => dst,
             };
 
             debug_assert!(address < 0xFE00 || address > 0xFE9F);
@@ -453,20 +459,14 @@ impl SOC {
                     unreachable!()
                 }
             };
+
             self.ppu.oam_dma(0xFE00 + c, byte);
-            true
-        } else {
-            false
-        };
 
-        if inc_count {
-            if let Some(active_dma) = &mut self.active_dma {
-                active_dma.count += 1;
-                active_dma.cycles += 1;
+            active_dma.cycles += 1;
+            active_dma.count += 1;
 
-                if active_dma.count > 0x9F {
-                    self.active_dma = None;
-                }
+            if active_dma.count > 0x9F {
+                self.active_dma = None;
             }
         }
 

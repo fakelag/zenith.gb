@@ -1,9 +1,4 @@
-use super::{
-    envelope::Envelope,
-    lengthcounter::LengthCounter,
-    sweep::Sweep,
-    Channel,
-};
+use super::{envelope::Envelope, lengthcounter::LengthCounter, sweep::Sweep, Channel};
 
 const LENGTH_COUNTER_INIT: u16 = 64;
 
@@ -48,8 +43,8 @@ impl Channel1 {
         }
     }
 
-    pub fn sweep_step(&mut self) {
-        let is_overflow = self.sweep.step();
+    pub fn sweep_clock(&mut self) {
+        let is_overflow = self.sweep.clock();
 
         if is_overflow {
             self.is_enabled = false;
@@ -79,7 +74,8 @@ impl Channel1 {
     }
 
     pub fn write_nr11(&mut self, data: u8) {
-        self.length_counter.set_count(LENGTH_COUNTER_INIT - u16::from(data & 0x3F));
+        self.length_counter
+            .set_count(LENGTH_COUNTER_INIT - u16::from(data & 0x3F));
         self.reg_waveduty = (data >> 6) & 0x3;
     }
 
@@ -100,10 +96,11 @@ impl Channel1 {
     pub fn write_nr14(&mut self, data: u8) {
         let length_enable_bit = data & 0x40 != 0;
         let trigger_bit = data & 0x80 != 0;
-    
+
         self.sweep.set_frequency_msb(data);
 
-        self.length_counter.write_nrx4(trigger_bit, length_enable_bit);
+        self.length_counter
+            .write_nrx4(trigger_bit, length_enable_bit);
 
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;
@@ -135,7 +132,7 @@ impl Channel1 {
 }
 
 impl Channel for Channel1 {
-    fn step(&mut self) {
+    fn clock(&mut self) {
         self.freq_timer = self.freq_timer.saturating_sub(1);
 
         if self.freq_timer != 0 {
@@ -149,15 +146,15 @@ impl Channel for Channel1 {
             return;
         }
 
-        let wave_sample: u8 = self.envelope.get_volume() *
-            ((DUTY_WAVE[self.reg_waveduty as usize] >> self.duty_cycle) & 0x1);
+        let wave_sample: u8 = self.envelope.get_volume()
+            * ((DUTY_WAVE[self.reg_waveduty as usize] >> self.duty_cycle) & 0x1);
 
         self.sample = wave_sample;
         self.duty_cycle = (self.duty_cycle + 1) & 0x7;
     }
 
-    fn length_step(&mut self) {
-        if self.length_counter.step() {
+    fn length_clock(&mut self) {
+        if self.length_counter.clock() {
             self.is_enabled = false;
         }
     }

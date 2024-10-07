@@ -1,6 +1,6 @@
 use std::fmt::{self, Display};
 
-use crate::soc::interrupt;
+use crate::soc::{interrupt, soc};
 
 pub type FrameBuffer = [[u8; 160]; 144];
 
@@ -183,10 +183,10 @@ impl PPU {
         self.stat_mode = PpuMode::PpuHBlank;
     }
 
-    pub fn step(&mut self, cycles_passed: u8) -> (bool, u8) {
+    pub fn clock(&mut self, ctx: &mut soc::ClockContext) {
         if !self.lcdc_enable {
             self.reset();
-            return (false, 0);
+            return;
         }
 
         if self.is_disabled {
@@ -196,9 +196,7 @@ impl PPU {
 
         debug_assert!(self.ly <= 153);
 
-        let mut dots_budget = u16::from(cycles_passed * 4) + self.dots_leftover;
-        let mut vsync = false;
-        let mut interrupts: u8 = 0;
+        let mut dots_budget = 4 + self.dots_leftover;
 
         self.dots_leftover = 0;
 
@@ -247,9 +245,8 @@ impl PPU {
                             self.window_line_counter = 0;
                             self.draw_window = false;
 
-                            vsync = true;
-
-                            interrupts |= interrupt::INTERRUPT_BIT_VBLANK;
+                            ctx.set_interrupt(interrupt::INTERRUPT_BIT_VBLANK);
+                            ctx.set_events(soc::SocEventBits::SocEventVSync);
                         }
                         (PpuMode::PpuVBlank, PpuMode::PpuOamScan) => {
                             debug_assert!(self.dots_mode == DOTS_PER_VBLANK);
@@ -284,10 +281,8 @@ impl PPU {
         self.stat_lyc_eq_ly = self.ly == self.lyc;
 
         if self.handle_stat_interrupt() {
-            interrupts |= interrupt::INTERRUPT_BIT_LCD;
+            ctx.set_interrupt(interrupt::INTERRUPT_BIT_LCD);
         }
-
-        return (vsync, interrupts);
     }
 
     pub fn read_lcdc(&self) -> u8 {

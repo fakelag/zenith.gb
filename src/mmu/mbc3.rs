@@ -236,7 +236,7 @@ impl mbc::MBC for MBC3 {
         }
     }
 
-    fn step(&mut self, cycles: u8) {
+    fn clock(&mut self) {
         if !self.has_rtc {
             return;
         }
@@ -245,12 +245,11 @@ impl mbc::MBC for MBC3 {
             return;
         }
 
-        if self.rtc_cycles_left <= cycles.into() {
+        if self.rtc_cycles_left <= 1 {
             self.rtc_inc(RTC_S);
-            self.rtc_cycles_left =
-                GB_CLOCKS_PER_SECOND - (u32::from(cycles) - self.rtc_cycles_left);
+            self.rtc_cycles_left = GB_CLOCKS_PER_SECOND - (1 - self.rtc_cycles_left);
         } else {
-            self.rtc_cycles_left = self.rtc_cycles_left.wrapping_sub(cycles.into());
+            self.rtc_cycles_left = self.rtc_cycles_left.wrapping_sub(1);
         }
     }
 

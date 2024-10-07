@@ -1,3 +1,5 @@
+use crate::soc::{interrupt, soc};
+
 #[derive(Debug)]
 pub struct Timer {
     and_result: bool,
@@ -24,14 +26,13 @@ impl Timer {
         }
     }
 
-    pub fn step(&mut self, cycles_passed: u8) -> bool {
-        let t_states_passed = u16::from(cycles_passed * 4);
+    pub fn clock(&mut self, ctx: &mut soc::ClockContext) {
+        let t_states_passed = 4;
 
         let timer_enable = self.tac & 0x4 != 0;
         let tac_low_2 = self.tac & 0x3;
 
         let mut div_next = self.div;
-        let mut timer_interrupt = false;
 
         for _ in 0..t_states_passed {
             div_next = div_next.wrapping_add(1);
@@ -52,7 +53,7 @@ impl Timer {
                 if self.tima_overflow_tstates == 0 {
                     self.tima = self.tma;
 
-                    timer_interrupt = true;
+                    ctx.set_interrupt(interrupt::INTERRUPT_BIT_TIMER);
 
                     self.tima_overflow = false;
                 }
@@ -72,7 +73,6 @@ impl Timer {
         }
 
         self.div = div_next;
-        return timer_interrupt;
     }
 
     pub fn read_tac(&self) -> u8 {

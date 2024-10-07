@@ -1,5 +1,3 @@
-use crate::soc::soc::SOC;
-
 pub const HWR_P1: u16 = 0xFF00;
 pub const HWR_SB: u16 = 0xFF01;
 pub const HWR_SC: u16 = 0xFF02;

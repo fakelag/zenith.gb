@@ -1,4 +1,3 @@
-
 pub struct LengthCounter {
     frame_seq_step: u8,
     initial_count: u16,
@@ -16,7 +15,7 @@ impl LengthCounter {
         }
     }
 
-    pub fn step(&mut self) -> bool {
+    pub fn clock(&mut self) -> bool {
         if self.enabled && self.count != 0 {
             self.count -= 1;
         }

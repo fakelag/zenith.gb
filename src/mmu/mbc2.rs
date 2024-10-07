@@ -104,7 +104,7 @@ impl mbc::MBC for MBC2 {
         }
     }
 
-    fn step(&mut self, _cycles: u8) {
+    fn clock(&mut self) {
         // noop
     }
 
