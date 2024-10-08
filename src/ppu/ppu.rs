@@ -55,7 +55,6 @@ struct SpriteWithTile {
 }
 
 pub struct PPU {
-    is_disabled: bool,
     dots_mode: u16,
     dots_frame: u32,
     dots_leftover: u16,
@@ -121,7 +120,6 @@ impl Display for PPU {
 impl PPU {
     pub fn new() -> Self {
         Self {
-            is_disabled: true,
             draw_window: false,
             bg_scanline_mask: [0; 160],
             window_line_counter: 0,
@@ -150,7 +148,7 @@ impl PPU {
             stat_mode1_select: false,
             stat_mode0_select: false,
             stat_lyc_eq_ly: true,
-            stat_mode: PpuMode::PpuVBlank,
+            stat_mode: PpuMode::PpuOamScan,
             ly: 0,
             lyc: 0,
             scy: 0,
@@ -172,11 +170,10 @@ impl PPU {
 
         self.sprite_buffer.clear();
         self.oam_cursor = 0;
-        self.dots_frame = 0;
+        self.dots_frame = DOTS_PER_OAM_SCAN.into();
         self.dots_leftover = 0;
         self.dots_mode = 0;
         self.draw_length = 0;
-        self.is_disabled = true;
 
         // Reset mode bits to 0 to signal that
         // its safe to write to vram/oam
@@ -185,13 +182,7 @@ impl PPU {
 
     pub fn clock(&mut self, ctx: &mut soc::ClockContext) {
         if !self.lcdc_enable {
-            self.reset();
             return;
-        }
-
-        if self.is_disabled {
-            self.is_disabled = false;
-            self.stat_mode = PpuMode::PpuOamScan;
         }
 
         debug_assert!(self.ly <= 153);
@@ -250,8 +241,11 @@ impl PPU {
                         }
                         (PpuMode::PpuVBlank, PpuMode::PpuOamScan) => {
                             debug_assert!(self.dots_mode == DOTS_PER_VBLANK);
-                            debug_assert!(self.dots_frame == 456 * 154);
-                            debug_assert!(self.ly == 154);
+
+                            // @todo - These conditions should be true for any normal frame
+                            // but may not be true for the first frame / when lcdc enable bit is toggled
+                            // debug_assert!(self.dots_frame == 456 * 154);
+                            // debug_assert!(self.ly == 154);
 
                             self.ly = 0;
                             self.dots_frame = 0;
@@ -297,7 +291,13 @@ impl PPU {
     }
 
     pub fn write_lcdc(&mut self, data: u8) {
-        self.lcdc_enable = data & (1 << 7) != 0;
+        let enable_next = data & (1 << 7) != 0;
+
+        if self.lcdc_enable && !enable_next {
+            self.reset();
+        }
+
+        self.lcdc_enable = enable_next;
         self.lcdc_wnd_tilemap = data & (1 << 6) != 0;
         self.lcdc_wnd_enable = data & (1 << 5) != 0;
         self.lcdc_bg_wnd_tiles = data & (1 << 4) != 0;
@@ -679,6 +679,10 @@ impl PPU {
 
                 // println!("{} [fifo {bg_fifo_count}] - sprite idx {} at {}", x, sprite.0, sprite.1);
                 remaining_sprites.remove(sprite.0);
+
+                // if sprite_penalty == 0 {
+                //     sprite_penalty += 2;
+                // }
 
                 sprite_penalty += 6; // Sprite fetch cycles
                 did_sprite_fetch = true;
