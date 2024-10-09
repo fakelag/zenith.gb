@@ -1,17 +1,17 @@
 use std::fmt::{self, Display};
 
-use crate::cpu::*;
+use crate::soc::{interrupt, soc};
 
 pub type FrameBuffer = [[u8; 160]; 144];
 
-const DOTS_PER_OAM_SCAN: u16 = 80;
-const DOTS_PER_VBLANK: u16 = 4560;
-const DOTS_PER_SCANLINE: u16 = 456;
+const CYCLES_PER_OAM_SCAN: u16 = 20;
+const CYCLES_PER_DRAW: u16 = 43;
+const CYCLES_PER_VBLANK_LINE: u16 = 114;
 
 const ADDR_TILEMAP_9800: u16 = 0x1800;
 const ADDR_TILEMAP_9C00: u16 = 0x1C00;
 
-const STAT_SELECT_LYC_BIT:   u8 = 6;
+const STAT_SELECT_LYC_BIT: u8 = 6;
 const STAT_SELECT_MODE2_BIT: u8 = 5;
 const STAT_SELECT_MODE1_BIT: u8 = 4;
 const STAT_SELECT_MODE0_BIT: u8 = 3;
@@ -24,7 +24,7 @@ macro_rules! read_write {
         pub fn $read_name(&self) -> u8 {
             self.$var_name
         }
-    
+
         pub fn $write_name(&mut self, data: u8) {
             self.$var_name = data;
         }
@@ -55,19 +55,15 @@ struct SpriteWithTile {
 }
 
 pub struct PPU {
-    is_disabled: bool,
-    dots_mode: u16,
-    dots_frame: u32,
-    dots_leftover: u16,
+    cycles_mode: u16,
+    cycles_frame: u32,
 
     draw_length: u16,
 
-    stat_interrupt: u8,
-    stat_interrupt_prev: u8,
+    stat_interrupt: bool,
 
     vram: Box<[u8; 0x2000]>,
     oam: Box<[u8; 0xA0]>,
-    oam_cursor: u8,
     sprite_buffer: Vec<Sprite>,
 
     // WY = LY has been true at some point during current frame
@@ -113,7 +109,6 @@ pub struct PPU {
 impl Display for PPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "PPU")?;
-        writeln!(f, "dots_mode={:?}", self.dots_mode)?;
         Ok(())
     }
 }
@@ -121,20 +116,16 @@ impl Display for PPU {
 impl PPU {
     pub fn new() -> Self {
         Self {
-            is_disabled: true,
             draw_window: false,
             bg_scanline_mask: [0; 160],
             window_line_counter: 0,
-            dots_mode: 0,
             fetcher_x: 0,
-            dots_frame: 0,
-            dots_leftover: 0,
+            cycles_mode: CYCLES_PER_OAM_SCAN,
+            cycles_frame: 0,
             draw_length: 0,
-            stat_interrupt: 0,
-            stat_interrupt_prev: 0,
+            stat_interrupt: false,
             vram: vec![0; 0x2000].into_boxed_slice().try_into().unwrap(),
             oam: vec![0; 0xA0].into_boxed_slice().try_into().unwrap(),
-            oam_cursor: 0,
             sprite_buffer: Vec::with_capacity(10),
             rt: [[0; 160]; 144],
             lcdc_enable: true,
@@ -150,7 +141,7 @@ impl PPU {
             stat_mode1_select: false,
             stat_mode0_select: false,
             stat_lyc_eq_ly: true,
-            stat_mode: PpuMode::PpuVBlank,
+            stat_mode: PpuMode::PpuOamScan,
             ly: 0,
             lyc: 0,
             scy: 0,
@@ -171,160 +162,138 @@ impl PPU {
         self.ly = 0;
 
         self.sprite_buffer.clear();
-        self.oam_cursor = 0;
-        self.dots_frame = 0;
-        self.dots_leftover = 0;
-        self.dots_mode = 0;
+        self.cycles_frame = 0;
+        self.cycles_mode = CYCLES_PER_OAM_SCAN;
         self.draw_length = 0;
-        self.is_disabled = true;
 
         // Reset mode bits to 0 to signal that
         // its safe to write to vram/oam
         self.stat_mode = PpuMode::PpuHBlank;
     }
 
-    pub fn step(&mut self, cycles_passed: u8) -> (bool, u8) {
+    pub fn clock(&mut self, ctx: &mut soc::ClockContext) {
         if !self.lcdc_enable {
-            self.reset();
-            return (false, 0);
+            return;
         }
 
-        if self.is_disabled {
-            self.is_disabled = false;
-            self.stat_mode = PpuMode::PpuOamScan;
-        }
-    
         debug_assert!(self.ly <= 153);
-        
-        let mut dots_budget = u16::from(cycles_passed * 4) + self.dots_leftover;
-        let mut vsync = false;
-        let mut interrupts: u8 = 0;
 
-        self.dots_leftover = 0;
+        self.cycles_frame += 1;
+        self.cycles_mode -= 1;
 
-        while dots_budget > 0 {
-            let mode_result = match self.stat_mode {
-                PpuMode::PpuOamScan => { self.mode_oam_scan(dots_budget) }
-                PpuMode::PpuDraw    => { self.mode_draw(dots_budget) }
-                PpuMode::PpuHBlank  => { self.mode_hblank(dots_budget) }
-                PpuMode::PpuVBlank  => { self.mode_vblank(dots_budget) }
-            };
-    
-            if let Some((dots_spent, mode_res)) = mode_result {
-                dots_budget -= dots_spent;
+        if self.cycles_mode > 0 {
+            self.handle_stat_interrupt(ctx);
+            return;
+        }
 
-                self.dots_frame += u32::from(dots_spent);
-                self.dots_mode += dots_spent;
+        self.update_mode(ctx);
 
-                if let Some(next_mode) = mode_res {
-                    match (self.stat_mode, next_mode) {
-                        (PpuMode::PpuOamScan, PpuMode::PpuDraw) => {
-                            debug_assert!(self.dots_mode == DOTS_PER_OAM_SCAN);
-                            
-                            if self.wy == self.ly {
-                                self.draw_window = true;
-                            } else if self.draw_window {
-                                self.window_line_counter += 1;
-                            }
-                        }
-                        (PpuMode::PpuDraw, PpuMode::PpuHBlank) => {
-                            debug_assert!(self.dots_mode >= 172);
-                            debug_assert!(self.dots_mode <= 289);
+        self.handle_stat_interrupt(ctx);
 
-                            // println!("draw length={}", self.dots_mode);
+        debug_assert!(self.cycles_mode != 0);
+        debug_assert!(self.cycles_frame == 0);
+    }
 
-                            // reset, move to hblank
-                            self.fetcher_x = 0;
-                        }
-                        (PpuMode::PpuHBlank, PpuMode::PpuOamScan) => {
-                            debug_assert!(self.dots_frame == u32::from(self.ly) * 456);
-                        }
-                        (PpuMode::PpuHBlank, PpuMode::PpuVBlank) => {
-                            debug_assert!(self.dots_mode >= 87);
-                            debug_assert!(self.dots_mode <= 204);
-                            debug_assert!(self.ly == 144);
-
-                            self.window_line_counter = 0;
-                            self.draw_window = false;
-
-                            vsync = true;
-
-                            interrupts |= cpu::INTERRUPT_BIT_VBLANK;
-                        }
-                        (PpuMode::PpuVBlank, PpuMode::PpuOamScan) => {
-                            debug_assert!(self.dots_mode == DOTS_PER_VBLANK);
-                            debug_assert!(self.dots_frame == 456*154);
-                            debug_assert!(self.ly == 154);
-
-                            self.ly = 0;
-                            self.dots_frame = 0;
-                        }
-                        _=> { unreachable!() }
-                    }
-
-                    match next_mode {
-                        PpuMode::PpuOamScan => {
-                            self.sprite_buffer.clear();
-                            self.oam_cursor = 0;
-                        }
-                        _ => {}
-                    }
-
-                    self.dots_mode = 0;
-                    self.stat_mode = next_mode;
+    fn update_mode(&mut self, ctx: &mut soc::ClockContext) {
+        match self.stat_mode {
+            PpuMode::PpuOamScan => {
+                if self.wy == self.ly {
+                    self.draw_window = true;
+                } else if self.draw_window {
+                    self.window_line_counter += 1;
                 }
-            } else {
-                self.dots_leftover = dots_budget;
-                break;
+
+                self.cycles_mode = self.mode_draw();
+                self.draw_length = self.cycles_mode;
+                self.stat_mode = PpuMode::PpuDraw;
+            }
+            PpuMode::PpuDraw => {
+                self.fetcher_x = 0;
+                self.cycles_mode = 94 - self.draw_length;
+                self.stat_mode = PpuMode::PpuHBlank;
+            }
+            PpuMode::PpuHBlank => {
+                self.ly += 1;
+                self.update_lyc_eq_ly();
+
+                self.stat_mode = if self.ly >= 144 {
+                    ctx.set_interrupt(interrupt::INTERRUPT_BIT_VBLANK);
+                    ctx.set_events(soc::SocEventBits::SocEventVSync);
+
+                    self.draw_window = false;
+                    self.window_line_counter = 0;
+
+                    self.cycles_mode = CYCLES_PER_VBLANK_LINE;
+                    PpuMode::PpuVBlank
+                } else {
+                    self.mode_oam_scan();
+                    self.cycles_mode = CYCLES_PER_OAM_SCAN;
+                    PpuMode::PpuOamScan
+                };
+            }
+            PpuMode::PpuVBlank => {
+                self.ly += 1;
+
+                if self.ly >= 154 {
+                    self.ly = 0;
+                    self.stat_mode = PpuMode::PpuOamScan;
+                    self.cycles_mode = CYCLES_PER_OAM_SCAN;
+                } else {
+                    self.cycles_mode = CYCLES_PER_VBLANK_LINE;
+                }
+
+                self.update_lyc_eq_ly();
             }
         }
 
-        self.stat_lyc_eq_ly = self.ly == self.lyc;
-
-        if self.handle_stat_interrupt() {
-            interrupts |= cpu::INTERRUPT_BIT_LCD;
-        }
-
-        return (vsync, interrupts);
+        self.cycles_frame = 0;
     }
 
     pub fn read_lcdc(&self) -> u8 {
-        (self.lcdc_enable as u8)                << 7
-            | (self.lcdc_wnd_tilemap as u8)     << 6
-            | (self.lcdc_wnd_enable as u8)      << 5
-            | (self.lcdc_bg_wnd_tiles as u8)    << 4
-            | (self.lcdc_bg_tilemap as u8)      << 3
-            | (self.lcdc_obj_size as u8)        << 2
-            | (self.lcdc_obj_enable as u8)      << 1
+        (self.lcdc_enable as u8) << 7
+            | (self.lcdc_wnd_tilemap as u8) << 6
+            | (self.lcdc_wnd_enable as u8) << 5
+            | (self.lcdc_bg_wnd_tiles as u8) << 4
+            | (self.lcdc_bg_tilemap as u8) << 3
+            | (self.lcdc_obj_size as u8) << 2
+            | (self.lcdc_obj_enable as u8) << 1
             | (self.lcdc_bg_wnd_enable as u8)
     }
 
     pub fn write_lcdc(&mut self, data: u8) {
-        self.lcdc_enable =          data & (1 << 7) != 0;
-        self.lcdc_wnd_tilemap =     data & (1 << 6) != 0;
-        self.lcdc_wnd_enable =      data & (1 << 5) != 0;
-        self.lcdc_bg_wnd_tiles =    data & (1 << 4) != 0;
-        self.lcdc_bg_tilemap =      data & (1 << 3) != 0;
-        self.lcdc_obj_size =        data & (1 << 2) != 0;
-        self.lcdc_obj_enable =      data & (1 << 1) != 0;
-        self.lcdc_bg_wnd_enable =   data & (1 << 0) != 0;
+        let enable_next = data & (1 << 7) != 0;
+
+        if self.lcdc_enable && !enable_next {
+            self.reset();
+        } else if !self.lcdc_enable && enable_next {
+            self.update_lyc_eq_ly();
+        }
+
+        self.lcdc_enable = enable_next;
+        self.lcdc_wnd_tilemap = data & (1 << 6) != 0;
+        self.lcdc_wnd_enable = data & (1 << 5) != 0;
+        self.lcdc_bg_wnd_tiles = data & (1 << 4) != 0;
+        self.lcdc_bg_tilemap = data & (1 << 3) != 0;
+        self.lcdc_obj_size = data & (1 << 2) != 0;
+        self.lcdc_obj_enable = data & (1 << 1) != 0;
+        self.lcdc_bg_wnd_enable = data & (1 << 0) != 0;
     }
 
     pub fn read_stat(&self) -> u8 {
-        (self.stat_lyc_select as u8)            << 6
-            | (self.stat_mode2_select as u8)    << 5
-            | (self.stat_mode1_select as u8)    << 4
-            | (self.stat_mode0_select as u8)    << 3
-            | (self.stat_lyc_eq_ly as u8)       << 2
+        (self.stat_lyc_select as u8) << 6
+            | (self.stat_mode2_select as u8) << 5
+            | (self.stat_mode1_select as u8) << 4
+            | (self.stat_mode0_select as u8) << 3
+            | (self.stat_lyc_eq_ly as u8) << 2
             | (self.stat_mode as u8)
             | 0x80
     }
 
     pub fn write_stat(&mut self, data: u8) {
-        self.stat_lyc_select =      data & (1 << 6) != 0;
-        self.stat_mode2_select =    data & (1 << 5) != 0;
-        self.stat_mode1_select =    data & (1 << 4) != 0;
-        self.stat_mode0_select =    data & (1 << 3) != 0;
+        self.stat_lyc_select = data & (1 << 6) != 0;
+        self.stat_mode2_select = data & (1 << 5) != 0;
+        self.stat_mode1_select = data & (1 << 4) != 0;
+        self.stat_mode0_select = data & (1 << 3) != 0;
     }
 
     pub fn read_ly(&self) -> u8 {
@@ -333,18 +302,30 @@ impl PPU {
 
     pub fn write_ly(&mut self, _data: u8) {
         // noop
+        // self.ly = 0;
+    }
+
+    pub fn read_lyc(&self) -> u8 {
+        self.lyc
+    }
+
+    pub fn write_lyc(&mut self, data: u8) {
+        self.lyc = data;
+        if self.lcdc_enable {
+            self.update_lyc_eq_ly();
+        }
     }
 
     pub fn read_oam(&self, addr: u16) -> u8 {
         return match self.stat_mode {
-            PpuMode::PpuOamScan | PpuMode::PpuDraw => { 0xFF },
+            PpuMode::PpuOamScan | PpuMode::PpuDraw => 0xFF,
             _ => self.oam[(addr & 0xFF) as usize],
-        }
+        };
     }
 
     pub fn write_oam(&mut self, addr: u16, data: u8) {
         match self.stat_mode {
-            PpuMode::PpuOamScan | PpuMode::PpuDraw => {},
+            PpuMode::PpuOamScan | PpuMode::PpuDraw => {}
             _ => self.oam[(addr & 0xFF) as usize] = data,
         }
     }
@@ -355,19 +336,18 @@ impl PPU {
 
     pub fn read_vram(&self, addr: u16) -> u8 {
         return match self.stat_mode {
-            PpuMode::PpuDraw => { 0xFF },
+            PpuMode::PpuDraw => 0xFF,
             _ => self.vram[(addr & 0x1FFF) as usize],
         };
     }
 
     pub fn write_vram(&mut self, addr: u16, data: u8) {
         match self.stat_mode {
-            PpuMode::PpuDraw => {},
+            PpuMode::PpuDraw => {}
             _ => self.vram[(addr & 0x1FFF) as usize] = data,
         }
     }
 
-    read_write!(read_lyc, write_lyc, lyc);
     read_write!(read_scy, write_scy, scy);
     read_write!(read_scx, write_scx, scx);
     read_write!(read_wy, write_wy, wy);
@@ -376,45 +356,34 @@ impl PPU {
     read_write!(read_obp0, write_obp0, obp0);
     read_write!(read_obp1, write_obp1, obp1);
 
-    fn mode_oam_scan(&mut self, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        let change_mode = self.dots_mode + dots_to_run >= DOTS_PER_OAM_SCAN;
-        let dots = if change_mode {
-            DOTS_PER_OAM_SCAN - self.dots_mode
-        } else {
-            dots_to_run
-        };
+    fn update_lyc_eq_ly(&mut self) {
+        self.stat_lyc_eq_ly = self.ly == self.lyc;
+    }
 
-        let num_obj_scan = dots / 2;
+    fn mode_oam_scan(&mut self) {
         let ly = self.ly;
         let obj_height: u8 = if self.lcdc_obj_size { 16 } else { 8 };
 
-        for _ in 1..=num_obj_scan {
-            debug_assert!(self.oam_cursor < 40);
+        self.sprite_buffer.clear();
 
-            if self.sprite_buffer.len() < 10 {
-                let obj_addr = (self.oam_cursor as usize) * 4;
-                let x_coord = self.oam[obj_addr + 1];
-                let y_coord = self.oam[obj_addr];
-                
-                if ly + 16 >= y_coord && ly + 16 < y_coord + obj_height {
-                    self.sprite_buffer.push(Sprite{
-                        y: y_coord,
-                        x: x_coord,
-                        tile: self.oam[obj_addr + 2],
-                        attr: self.oam[obj_addr + 3],
-                    });
-                }
+        for oam_cursor in 0..40 {
+            if self.sprite_buffer.len() >= 10 {
+                break;
             }
 
-            self.oam_cursor += 1;
-        }
+            let obj_addr = oam_cursor * 4;
+            let x_coord = self.oam[obj_addr + 1];
+            let y_coord = self.oam[obj_addr];
 
-        if self.dots_mode + dots_to_run >= DOTS_PER_OAM_SCAN {
-            debug_assert!(self.oam_cursor == 40);
-            return Some((dots, Some(PpuMode::PpuDraw)));
+            if ly + 16 >= y_coord && ly + 16 < y_coord + obj_height {
+                self.sprite_buffer.push(Sprite {
+                    y: y_coord,
+                    x: x_coord,
+                    tile: self.oam[obj_addr + 2],
+                    attr: self.oam[obj_addr + 3],
+                });
+            }
         }
-
-        Some((dots, None))
     }
 
     fn fetch_bg_tile_number(&mut self, is_window: bool) -> u8 {
@@ -429,7 +398,12 @@ impl PPU {
 
         self.fetcher_x += 1;
 
-        let tilemap_bit = if is_window { self.lcdc_wnd_tilemap } else { self.lcdc_bg_tilemap };
+        let tilemap_bit = if is_window {
+            self.lcdc_wnd_tilemap
+        } else {
+            self.lcdc_bg_tilemap
+        };
+
         let tilemap_addr = if tilemap_bit {
             ADDR_TILEMAP_9C00
         } else {
@@ -448,7 +422,9 @@ impl PPU {
         let y_with_flip = if sprite_oam.attr & OAM_BIT_Y_FLIP == 0 {
             ly.wrapping_sub(sprite_oam.y)
         } else {
-            obj_height.wrapping_sub(ly.wrapping_sub(sprite_oam.y)).wrapping_sub(1)
+            obj_height
+                .wrapping_sub(ly.wrapping_sub(sprite_oam.y))
+                .wrapping_sub(1)
         };
 
         let line_offset = u16::from((y_with_flip % obj_height) * 2);
@@ -472,7 +448,8 @@ impl PPU {
             (self.vram[tile_base], self.vram[tile_base + 1])
         } else {
             let e: i8 = tile_number as i8;
-            let tile_base = (0x1000 as u16).wrapping_add_signed(e as i16 * 16 + line_offset as i16) as usize;
+            let tile_base =
+                (0x1000 as u16).wrapping_add_signed(e as i16 * 16 + line_offset as i16) as usize;
             (self.vram[tile_base], self.vram[tile_base + 1])
         };
 
@@ -573,11 +550,16 @@ impl PPU {
 
         self.sprite_buffer.reverse();
         self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
-        let sprites_with_tiles: Vec<SpriteWithTile> = self.sprite_buffer
+        let sprites_with_tiles: Vec<SpriteWithTile> = self
+            .sprite_buffer
             .iter()
             .map(|oam_entry| {
                 let (tile_lsb, tile_msb) = self.fetch_sprite_tile_tuple(oam_entry);
-                SpriteWithTile{ oam_entry: *oam_entry, tile_lsb, tile_msb }
+                SpriteWithTile {
+                    oam_entry: *oam_entry,
+                    tile_lsb,
+                    tile_msb,
+                }
             })
             .collect();
 
@@ -585,7 +567,7 @@ impl PPU {
             let sprite_screen_x: i16 = i16::from(sprite.oam_entry.x) - 8;
 
             for bit_idx in 0..8 {
-                let x: i16 = sprite_screen_x + (7-bit_idx);
+                let x: i16 = sprite_screen_x + (7 - bit_idx);
 
                 if x >= 160 || x < 0 {
                     continue;
@@ -593,11 +575,7 @@ impl PPU {
 
                 let x_flip = sprite.oam_entry.attr & OAM_BIT_X_FLIP != 0;
 
-                let bit_idx_flip = if x_flip {
-                    7 - bit_idx
-                } else {
-                    bit_idx
-                };
+                let bit_idx_flip = if x_flip { 7 - bit_idx } else { bit_idx };
 
                 let hb = (sprite.tile_msb >> bit_idx_flip) & 0x1;
                 let lb = (sprite.tile_lsb >> bit_idx_flip) & 0x1;
@@ -633,34 +611,25 @@ impl PPU {
             }
         }
 
-        let sprite_positions = sprites_with_tiles
-            .iter()
-            .map(|sp| sp.oam_entry.x)
-            .collect();
+        let sprite_positions = sprites_with_tiles.iter().map(|sp| sp.oam_entry.x).collect();
 
         return Some(sprite_positions);
     }
 
     fn calc_mode3_len(&self, window_pos: Option<u8>, sprite_pos: Option<Vec<u8>>) -> u16 {
         // @todo Check timing when window and a sprite fetch overlap
-        let scx_penalty = u16::from(self.scx % 8);
+        let mut scx_penalty = u16::from(self.scx % 8);
+        scx_penalty /= 4; // convert to M-cycles
 
-        let window_penalty: u16 = if window_pos.is_some() {
-            6
-        } else {
-            0
-        };
-        
+        let mut window_penalty: u16 = if window_pos.is_some() { 6 } else { 0 };
+        window_penalty /= 4; // convert to M-cycles
+
         let mut sprite_penalty: u16 = 0;
         if let Some(sprite_vec) = sprite_pos {
-            let mut remaining_sprites = sprite_vec
-                .iter()
-                .rev()
-                .copied()
-                .collect::<Vec<u8>>();
+            let mut remaining_sprites = sprite_vec.iter().rev().copied().collect::<Vec<u8>>();
 
             let mut bg_fifo_count: u8 = 8;
-            
+
             let mut did_sprite_fetch = false;
             let mut x = 0;
             while x < 160 {
@@ -685,114 +654,57 @@ impl PPU {
                 // println!("{} [fifo {bg_fifo_count}] - sprite idx {} at {}", x, sprite.0, sprite.1);
                 remaining_sprites.remove(sprite.0);
 
+                // if sprite_penalty == 0 {
+                //     sprite_penalty += 2;
+                // }
+
                 sprite_penalty += 6; // Sprite fetch cycles
                 did_sprite_fetch = true;
             }
+
+            sprite_penalty /= 4; // convert to M-cycles
         }
 
-        let mode3_length = 172 + scx_penalty + window_penalty + sprite_penalty;
+        let mode3_length = CYCLES_PER_DRAW + scx_penalty + window_penalty + sprite_penalty;
         return mode3_length;
     }
 
-    fn mode_draw(&mut self, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        if self.dots_mode == 0 {
-            for x in 0..160 {
-                self.bg_scanline_mask[x] = 0;
-            }
-            self.draw_background();
-            let window_pos = self.draw_window();
-            let sprite_pos = self.draw_sprites();
-
-            self.draw_length = self.calc_mode3_len(window_pos, sprite_pos);
-            return Some((1, None));
+    fn mode_draw(&mut self) -> u16 {
+        for x in 0..160 {
+            self.bg_scanline_mask[x] = 0;
         }
 
-        debug_assert!(self.dots_mode > 0);
-        debug_assert!(self.draw_length >= 172);
-        debug_assert!(self.draw_length <= 289);
+        self.draw_background();
+        let window_pos = self.draw_window();
+        let sprite_pos = self.draw_sprites();
 
-        let change_mode = self.dots_mode + dots_to_run >= self.draw_length;
-
-        let dots = if change_mode {
-            self.draw_length - self.dots_mode
-        } else {
-            dots_to_run
-        };
-
-        if change_mode {
-            return Some((dots, Some(PpuMode::PpuHBlank)));
-        }
-
-        return Some((dots, None));
+        self.calc_mode3_len(window_pos, sprite_pos)
     }
 
-    fn mode_hblank(&mut self, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        let hblank_length = 376 - self.draw_length;
-        debug_assert!(80 + self.draw_length + hblank_length == 456);
-
-        if self.dots_mode + dots_to_run >= hblank_length {
-            let dots = hblank_length - self.dots_mode;
-
-            self.ly += 1;
-
-            let next_mode = if self.ly == 144 {
-                PpuMode::PpuVBlank
-            } else {
-                PpuMode::PpuOamScan
-            };
-
-            return Some((dots, Some(next_mode)));
-        }
-        Some((dots_to_run, None))
-    }
-
-    fn mode_vblank(&mut self, dots_to_run: u16) -> Option<(u16, Option<PpuMode>)> {
-        let ly = self.ly;
-        let current_line = (144 + ((self.dots_mode + dots_to_run) / DOTS_PER_SCANLINE)).try_into().unwrap();
-
-        if current_line > ly {
-            self.ly = current_line;
-
-            if current_line < 154 {
-                return Some((dots_to_run, None));
-            }
-
-            let dots = DOTS_PER_SCANLINE - (self.dots_mode % DOTS_PER_SCANLINE);
-            return Some((dots, Some(PpuMode::PpuOamScan)));
-        }
-
-        Some((dots_to_run, None))
-    }
-
-    fn handle_stat_interrupt(&mut self) -> bool {
-        self.stat_interrupt = 0;
+    fn handle_stat_interrupt(&mut self, ctx: &mut soc::ClockContext) {
+        let mut stat_interrupt = 0;
 
         if self.stat_lyc_select && self.stat_lyc_eq_ly {
-            self.stat_interrupt |= 1 << STAT_SELECT_LYC_BIT;
+            stat_interrupt |= 1 << STAT_SELECT_LYC_BIT;
         }
 
         if self.stat_mode2_select && self.stat_mode == PpuMode::PpuOamScan {
-            self.stat_interrupt |= 1 << STAT_SELECT_MODE2_BIT;
+            stat_interrupt |= 1 << STAT_SELECT_MODE2_BIT;
         }
 
         if self.stat_mode1_select && self.stat_mode == PpuMode::PpuVBlank {
-            self.stat_interrupt |= 1 << STAT_SELECT_MODE1_BIT;
-        }
-        
-        if self.stat_mode0_select && self.stat_mode == PpuMode::PpuHBlank {
-            self.stat_interrupt |= 1 << STAT_SELECT_MODE0_BIT;
+            stat_interrupt |= 1 << STAT_SELECT_MODE1_BIT;
         }
 
-        let mut lcd_interrupt = false;
+        if self.stat_mode0_select && self.stat_mode == PpuMode::PpuHBlank {
+            stat_interrupt |= 1 << STAT_SELECT_MODE0_BIT;
+        }
 
         // low to high transition
-        if self.stat_interrupt_prev == 0 && self.stat_interrupt != 0 {
-            lcd_interrupt = true;
+        if self.stat_interrupt == false && stat_interrupt != 0 {
+            ctx.set_interrupt(interrupt::INTERRUPT_BIT_LCD);
         }
 
-        self.stat_interrupt_prev = self.stat_interrupt;
-
-        return lcd_interrupt;
+        self.stat_interrupt = stat_interrupt != 0;
     }
-
 }

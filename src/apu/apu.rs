@@ -3,13 +3,8 @@ use std::sync::mpsc::SyncSender;
 use crate::{GB_DEFAULT_FPS, TARGET_FPS};
 
 use super::{
-    audiocvt::AudioCVT,
-    channel1::Channel1,
-    channel2::Channel2,
-    channel3::Channel3,
-    channel4::Channel4,
-    wav_file::write_wav,
-    Channel,
+    audiocvt::AudioCVT, channel1::Channel1, channel2::Channel2, channel3::Channel3,
+    channel4::Channel4, wav_file::write_wav, Channel,
 };
 
 pub const APU_FREQ: u32 = 44_100;
@@ -87,12 +82,12 @@ impl APU {
         }
     }
 
-    pub fn step(&mut self, cycles: u8) {
-        for _c in 0..(cycles * 4) {
+    pub fn clock(&mut self) {
+        for _c in 0..4 {
             self.frame_sequencer();
 
             for channel in self.get_channels() {
-                channel.step();
+                channel.clock();
             }
 
             self.sample_audio();
@@ -124,17 +119,17 @@ impl APU {
         match self.frame_sequencer_step {
             0 | 2 | 4 | 6 => {
                 for channel in self.get_channels() {
-                    channel.length_step();
+                    channel.length_clock();
                 }
 
                 if self.frame_sequencer_step == 2 || self.frame_sequencer_step == 6 {
-                    self.channel1.sweep_step();
+                    self.channel1.sweep_clock();
                 }
             }
             7 => {
                 for channel in self.get_channels() {
                     if let Some(envelope) = channel.get_envelope() {
-                        envelope.step();
+                        envelope.clock();
                     }
                 }
             }
@@ -146,7 +141,9 @@ impl APU {
         self.frame_sequencer_step = next_step;
 
         for channel in self.get_channels() {
-            channel.get_length_counter().update_frame_sequencer_step(next_step);
+            channel
+                .get_length_counter()
+                .update_frame_sequencer_step(next_step);
         }
     }
 
@@ -166,7 +163,7 @@ impl APU {
             let channel = &*self.get_channels()[i];
 
             let sample = f32::from(channel.get_sample());
-            
+
             if self.left_pan[i] {
                 left_scaled += sample * APU::get_volume_scale(self.left_vol);
             }
@@ -219,7 +216,7 @@ impl APU {
 
         for i in 0..4 {
             self.right_pan[i] = (data >> i) & 0x1 != 0;
-            self.left_pan[i] = (data >> (i+4)) & 0x1 != 0;
+            self.left_pan[i] = (data >> (i + 4)) & 0x1 != 0;
         }
     }
 
@@ -232,7 +229,7 @@ impl APU {
                 self.right_vin = false;
                 self.left_vol = 0;
                 self.right_vol = 0;
-    
+
                 for i in 0..4 {
                     self.left_pan[i] = false;
                     self.right_pan[i] = false;
@@ -283,59 +280,67 @@ impl APU {
     pub fn write_nr10(&mut self, data: u8) {
         if !self.audio_enabled {
             return;
-        } 
+        }
         self.channel1.write_nr10(data);
     }
 
     pub fn write_nr11(&mut self, data: u8) {
         // @todo CGB: Audio disabled prevents writing to length counters
-        self.channel1.write_nr11(if self.audio_enabled { data } else { data & 0x3F });
+        self.channel1.write_nr11(if self.audio_enabled {
+            data
+        } else {
+            data & 0x3F
+        });
     }
 
     pub fn write_nr12(&mut self, data: u8) {
         if !self.audio_enabled {
             return;
-        } 
+        }
         self.channel1.write_nr12(data);
     }
 
     pub fn write_nr13(&mut self, data: u8) {
         if !self.audio_enabled {
             return;
-        } 
+        }
         self.channel1.write_nr13(data);
     }
 
     pub fn write_nr14(&mut self, data: u8) {
         if !self.audio_enabled {
             return;
-        } 
+        }
         self.channel1.write_nr14(data);
     }
 
     pub fn write_nr21(&mut self, data: u8) {
         // @todo CGB: Audio disabled prevents writing to length counters
-        self.channel2.write_nr21(if self.audio_enabled { data } else { data & 0x3F });
+        self.channel2.write_nr21(if self.audio_enabled {
+            data
+        } else {
+            data & 0x3F
+        });
     }
 
     pub fn write_nr22(&mut self, data: u8) {
         if !self.audio_enabled {
             return;
-        } 
+        }
         self.channel2.write_nr22(data);
     }
 
     pub fn write_nr23(&mut self, data: u8) {
         if !self.audio_enabled {
             return;
-        } 
+        }
         self.channel2.write_nr23(data);
     }
 
     pub fn write_nr24(&mut self, data: u8) {
         if !self.audio_enabled {
             return;
-        } 
+        }
         self.channel2.write_nr24(data);
     }
 
@@ -487,7 +492,7 @@ impl APU {
             &mut self.channel1,
             &mut self.channel2,
             &mut self.channel3,
-            &mut self.channel4
+            &mut self.channel4,
         ]
     }
 }

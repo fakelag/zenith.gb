@@ -1,5 +1,3 @@
-use super::mmu::MMU;
-
 pub const HWR_P1: u16 = 0xFF00;
 pub const HWR_SB: u16 = 0xFF01;
 pub const HWR_SC: u16 = 0xFF02;
@@ -43,49 +41,3 @@ pub const HWR_OBP1: u16 = 0xFF49;
 pub const HWR_WY: u16 = 0xFF4A;
 pub const HWR_WX: u16 = 0xFF4B;
 pub const HWR_IE: u16 = 0xFFFF;
-
-pub struct HwReg<'a> {
-    addr: u16,
-    mmu: &'a mut MMU,
-}
-
-impl<'a> HwReg<'a> {
-    pub fn new(addr: u16, mmu: &'a mut MMU) -> HwReg<'a> {
-        Self { addr, mmu }
-    }
-
-    pub fn set(&mut self, val: u8) {
-        self.mmu.bus_write(self.addr, val);
-    }
-
-    pub fn get(&mut self) -> u8 {
-        self.mmu.bus_read(self.addr)
-    }
-
-    pub fn inc(&mut self) -> u8 {
-        let prev = self.mmu.bus_read(self.addr);
-        self.mmu.bus_write(self.addr, prev.wrapping_add(1));
-        prev
-    }
-
-    pub fn dec(&mut self) -> u8 {
-        let prev = self.mmu.bus_read(self.addr);
-        self.mmu.bus_write(self.addr, prev.wrapping_sub(1));
-        prev
-    }
-
-    pub fn check_bit(&mut self, bit: u8) -> bool {
-        debug_assert!(bit < 8);
-        (self.get() & (1 << bit)) != 0
-    }
-
-    pub fn set_bit(&mut self, bit: u8, set: bool) {
-        let current_val = self.get();
-    
-        if set {
-            self.set(current_val | (1 << bit));
-        } else {
-            self.set(current_val & !(1 << bit));
-        }
-    }
-}

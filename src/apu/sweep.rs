@@ -25,7 +25,7 @@ impl Sweep {
         }
     }
 
-    pub fn step(&mut self) -> bool {
+    pub fn clock(&mut self) -> bool {
         if !self.enabled {
             return false;
         }
@@ -50,7 +50,7 @@ impl Sweep {
 
         if self.shift == 0 {
             return false;
-        } 
+        }
 
         self.shadow_frequency = next_freq;
         self.reg_frequency = next_freq;
@@ -68,10 +68,7 @@ impl Sweep {
     }
 
     pub fn read_nr10(&mut self) -> u8 {
-        self.period << 4
-            | if self.negate { 1 << 3 } else { 0 }
-            | self.shift
-            | 0x80
+        self.period << 4 | if self.negate { 1 << 3 } else { 0 } | self.shift | 0x80
     }
 
     pub fn trigger(&mut self) -> bool {
@@ -79,7 +76,7 @@ impl Sweep {
         self.shadow_frequency = self.reg_frequency;
         self.enabled = self.period != 0 || self.shift != 0;
         self.reload_timer();
-        
+
         if self.shift != 0 {
             let freq = self.calc_frequency();
             return self.overflow_check(freq);

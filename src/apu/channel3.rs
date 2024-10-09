@@ -76,7 +76,8 @@ impl Channel3 {
     }
 
     pub fn write_nr31(&mut self, data: u8) {
-        self.length_counter.set_count(LENGTH_COUNTER_INIT - u16::from(data));
+        self.length_counter
+            .set_count(LENGTH_COUNTER_INIT - u16::from(data));
     }
 
     pub fn write_nr32(&mut self, data: u8) {
@@ -90,10 +91,11 @@ impl Channel3 {
     pub fn write_nr34(&mut self, data: u8) {
         let length_enable_bit = data & 0x40 != 0;
         let trigger_bit = data & 0x80 != 0;
-    
+
         self.reg_frequency = ((u16::from(data) & 0x7) << 8) | (self.reg_frequency & 0xFF);
 
-        self.length_counter.write_nrx4(trigger_bit, length_enable_bit);
+        self.length_counter
+            .write_nrx4(trigger_bit, length_enable_bit);
 
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;
@@ -104,9 +106,13 @@ impl Channel3 {
 
     pub fn write_wave_ram(&mut self, addr: usize, data: u8) {
         if self.is_enabled() {
-               // @todo CGB: self.last_sample_step is irrelevant on CGB. Write to last_sample_index occurs always
+            // @todo CGB: self.last_sample_step is irrelevant on CGB. Write to last_sample_index occurs always
             if self.last_sample_step < 2 {
-                let last_sample_index = if self.sample_index == 0 { 31 } else { self.sample_index - 1 };
+                let last_sample_index = if self.sample_index == 0 {
+                    31
+                } else {
+                    self.sample_index - 1
+                };
                 self.wave_ram[last_sample_index / 2] = data;
             }
             return;
@@ -116,7 +122,7 @@ impl Channel3 {
 
     pub fn read_nr30(&mut self) -> u8 {
         let dac_bit = (self.reg_dac_enable as u8) << 7;
-        dac_bit| 0x7F
+        dac_bit | 0x7F
     }
 
     pub fn read_nr31(&mut self) -> u8 {
@@ -140,7 +146,11 @@ impl Channel3 {
         if self.is_enabled() {
             // @todo CGB: self.last_sample_step is irrelevant on CGB. Read from last_sample_index occurs always
             if self.last_sample_step < 2 {
-                let last_sample_index = if self.sample_index == 0 { 31 } else { self.sample_index - 1 };
+                let last_sample_index = if self.sample_index == 0 {
+                    31
+                } else {
+                    self.sample_index - 1
+                };
                 return self.wave_ram[last_sample_index / 2];
             }
             return 0xFF;
@@ -150,7 +160,7 @@ impl Channel3 {
 }
 
 impl Channel for Channel3 {
-    fn step(&mut self) {
+    fn clock(&mut self) {
         self.last_sample_step = self.last_sample_step.saturating_add(1);
 
         self.freq_timer = self.freq_timer.saturating_sub(1);
@@ -184,8 +194,8 @@ impl Channel for Channel3 {
         self.last_sample_step = 0;
     }
 
-    fn length_step(&mut self) {
-        if self.length_counter.step() {
+    fn length_clock(&mut self) {
+        if self.length_counter.clock() {
             self.is_enabled = false;
         }
     }

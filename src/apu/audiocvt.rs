@@ -13,7 +13,8 @@ impl AudioCVT {
             sdl2::audio::AudioFormat::s16_sys(),
             2,
             44_100,
-        ).expect("conversion should be possible");
+        )
+        .expect("conversion should be possible");
 
         Self { cvt }
     }
@@ -23,7 +24,8 @@ impl AudioCVT {
         // from APU code. @todo - Benchmark and test. Something similar to (i16::from(sample) - 32) << 10 but
         // with 0 value as silence
 
-        let converted_audio: Vec<_> = self.cvt
+        let converted_audio: Vec<_> = self
+            .cvt
             .convert(src.to_vec())
             .chunks_exact(2)
             .map(|sample_byte| i16::from_ne_bytes([sample_byte[0], sample_byte[1]]))

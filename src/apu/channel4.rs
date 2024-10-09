@@ -2,16 +2,7 @@ use super::{envelope::Envelope, lengthcounter::LengthCounter, Channel};
 
 const LENGTH_COUNTER_INIT: u16 = 64;
 
-const DIVISORS: [u8; 8] = [
-    8,
-    16,
-    32,
-    48,
-    64,
-    80,
-    96,
-    112,
-];
+const DIVISORS: [u8; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
 pub struct Channel4 {
     freq_timer: u16,
@@ -56,7 +47,8 @@ impl Channel4 {
     }
 
     pub fn write_nr41(&mut self, data: u8) {
-        self.length_counter.set_count(LENGTH_COUNTER_INIT - u16::from(data & 0x3F));
+        self.length_counter
+            .set_count(LENGTH_COUNTER_INIT - u16::from(data & 0x3F));
     }
 
     pub fn write_nr42(&mut self, data: u8) {
@@ -79,7 +71,8 @@ impl Channel4 {
         let length_enable_bit = data & 0x40 != 0;
         let trigger_bit = data & 0x80 != 0;
 
-        self.length_counter.write_nrx4(trigger_bit, length_enable_bit);
+        self.length_counter
+            .write_nrx4(trigger_bit, length_enable_bit);
 
         if self.length_counter.is_enabled() && self.length_counter.get_count() == 0 {
             self.is_enabled = false;
@@ -97,9 +90,7 @@ impl Channel4 {
     }
 
     pub fn read_nr43(&mut self) -> u8 {
-        self.reg_clock_shift << 4
-            | if self.reg_lfsr_7bit { 1 << 3 } else { 0 }
-            | self.reg_divisor
+        self.reg_clock_shift << 4 | if self.reg_lfsr_7bit { 1 << 3 } else { 0 } | self.reg_divisor
     }
 
     pub fn read_nr44(&mut self) -> u8 {
@@ -114,7 +105,7 @@ impl Channel4 {
 }
 
 impl Channel for Channel4 {
-    fn step(&mut self) {
+    fn clock(&mut self) {
         self.freq_timer = self.freq_timer.saturating_sub(1);
 
         if self.freq_timer != 0 {
@@ -140,8 +131,8 @@ impl Channel for Channel4 {
         self.sample = self.envelope.get_volume() * (self.lfsr & 0x1) as u8;
     }
 
-    fn length_step(&mut self) {
-        if self.length_counter.step() {
+    fn length_clock(&mut self) {
+        if self.length_counter.clock() {
             self.is_enabled = false;
         }
     }
@@ -162,7 +153,6 @@ impl Channel for Channel4 {
         self.is_enabled && self.reg_dac_enable
     }
 
-    
     fn shutdown(&mut self) {
         self.is_enabled = false;
         self.reg_dac_enable = false;
