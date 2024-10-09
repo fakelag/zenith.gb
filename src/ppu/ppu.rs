@@ -215,7 +215,6 @@ impl PPU {
             PpuMode::PpuHBlank => {
                 self.ly += 1;
                 self.update_lyc_eq_ly();
-                // println!("[{}] hblank inc ly to {}", ctx.cycles, self.ly);
 
                 self.stat_mode = if self.ly >= 144 {
                     ctx.set_interrupt(interrupt::INTERRUPT_BIT_VBLANK);
