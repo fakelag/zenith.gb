@@ -1,4 +1,4 @@
-use std::{io::Write, fs};
+use std::{fs, io::Write};
 
 pub fn write_wav(file_name: &str, wav_data: &Vec<i16>) {
     let mut wav_file = Vec::new();

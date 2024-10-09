@@ -5,7 +5,7 @@ use crate::util::util;
 use super::inst_def::*;
 
 impl cpu::CPU {
-    pub fn opcode_nop(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { }
+    pub fn opcode_nop(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {}
 
     pub fn opcode_ld_b_b(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
         if let Some(bp) = &self.ld_bb_breakpoint {
@@ -62,10 +62,10 @@ impl cpu::CPU {
 
                         let dst_reg = (opcode >> 3) & 0x7;
                         let val = self.clock_read_at_hl(soc);
-            
+
                         // note: r16addr2r8 will never trigger 0x6 write to [hl]
                         debug_assert!(dst_reg != 0x6);
-            
+
                         self.write_r8(dst_reg, val);
                     }
                 }
@@ -209,7 +209,6 @@ impl cpu::CPU {
                 self.write_r8(dst_reg, sum);
             }
             OperandKind::R16 => {
-
                 let dst_reg = (opcode >> 4) & 0x3;
                 let curr_val = self.read_r16(dst_reg);
                 let sum = curr_val.wrapping_add(1);
@@ -249,7 +248,6 @@ impl cpu::CPU {
                 self.write_r8(dst_reg, sum);
             }
             OperandKind::R16 => {
-
                 let dst_reg = (opcode >> 4) & 0x3;
                 let curr_val = self.read_r16(dst_reg);
                 let sum = curr_val.wrapping_sub(1);
@@ -366,8 +364,14 @@ impl cpu::CPU {
 
                 self.set_flag(cpu::FLAG_Z, false);
                 self.set_flag(cpu::FLAG_N, false);
-                self.set_flag(cpu::FLAG_H, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10);
-                self.set_flag(cpu::FLAG_C, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100);
+                self.set_flag(
+                    cpu::FLAG_H,
+                    (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10,
+                );
+                self.set_flag(
+                    cpu::FLAG_C,
+                    (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100,
+                );
 
                 soc.clock();
                 soc.clock();
@@ -413,7 +417,6 @@ impl cpu::CPU {
         };
 
         let e: i8 = self.clock_consume_byte_from_pc(soc) as i8;
-
 
         if branch_taken {
             let pc_val = self.pc().get();
@@ -485,7 +488,7 @@ impl cpu::CPU {
         }
 
         // @todo Halt bug
-        // The CPU continues execution after the HALT, but the byte after it is read twice in a row (PC is not incremented, due to a hardware bug). 
+        // The CPU continues execution after the HALT, but the byte after it is read twice in a row (PC is not incremented, due to a hardware bug).
     }
 
     pub fn opcode_adc(&mut self, soc: &mut SOC, instr: &Instruction, opcode: u8) {
@@ -576,7 +579,9 @@ impl cpu::CPU {
     }
 
     pub fn opcode_jp(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
-        if opcode == 0xE9 /* JP HL */ {
+        if opcode == 0xE9
+        /* JP HL */
+        {
             let hl_val = self.hl().get();
             self.pc().set(hl_val);
             return;
@@ -698,18 +703,42 @@ impl cpu::CPU {
         }
     }
 
-    pub fn opcode_prefix(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("0xCB prefix"); }
-    pub fn opcode_illegal_d3(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_db(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_dd(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_e3(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_e4(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_eb(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_ec(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_ed(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_f4(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_fc(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
-    pub fn opcode_illegal_fd(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) { unreachable!("Undocumented opcode"); }
+    pub fn opcode_prefix(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("0xCB prefix");
+    }
+    pub fn opcode_illegal_d3(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_db(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_dd(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_e3(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_e4(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_eb(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_ec(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_ed(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_f4(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_fc(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
+    pub fn opcode_illegal_fd(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        unreachable!("Undocumented opcode");
+    }
 
     // 0xCB instructions
 
@@ -795,7 +824,7 @@ impl cpu::CPU {
 
         let val = self.clock_read_r8_hladdr(soc, reg);
         let bit_set = (val >> bit_index) & 0x1;
-        
+
         self.set_flag(cpu::FLAG_Z, bit_set == 0);
         self.set_flag(cpu::FLAG_N, false);
         self.set_flag(cpu::FLAG_H, true);
@@ -821,7 +850,6 @@ impl cpu::CPU {
         self.clock_write_r8_hladdr(soc, reg, new_val);
     }
 
-    
     fn rrc(&mut self, value: u8) -> u8 {
         let carry_bit = value & 0x1;
 
@@ -898,7 +926,12 @@ impl cpu::CPU {
         };
     }
 
-    fn clock_consume_src_r8_imm8_hladdr(&mut self, soc: &mut SOC, src: OperandKind, opcode: u8) -> u8 {
+    fn clock_consume_src_r8_imm8_hladdr(
+        &mut self,
+        soc: &mut SOC,
+        src: OperandKind,
+        opcode: u8,
+    ) -> u8 {
         let val = match src {
             OperandKind::R8 => {
                 let src_reg = opcode & 0x7;
@@ -906,9 +939,7 @@ impl cpu::CPU {
                 debug_assert!(src_reg < 0x8);
                 self.read_r8(src_reg)
             }
-            OperandKind::R16Addr => {
-                soc.clock_read(self.hl().get())
-            }
+            OperandKind::R16Addr => soc.clock_read(self.hl().get()),
             OperandKind::Imm8 => {
                 let val = self.clock_consume_byte_from_pc(soc);
                 val
@@ -923,7 +954,7 @@ impl cpu::CPU {
 
         let sum_full = u16::from(dst_val) + u16::from(val) + u16::from(carry);
         let sum_low = util::get_low(sum_full);
-        
+
         self.set_flag(cpu::FLAG_Z, sum_low == 0);
         self.set_flag(cpu::FLAG_N, false);
         self.set_flag(cpu::FLAG_H, ((dst_val & 0xF) + (val & 0xF) + carry) > 0xF);
@@ -939,7 +970,7 @@ impl cpu::CPU {
         let res_low = util::get_low(res_full as u16);
 
         let half_carry = ((dst_val as i8) & 0xF) - ((val as i8) & 0xF) - (carry as i8);
-        
+
         self.set_flag(cpu::FLAG_Z, res_low == 0);
         self.set_flag(cpu::FLAG_N, true);
         self.set_flag(cpu::FLAG_H, half_carry < 0);
