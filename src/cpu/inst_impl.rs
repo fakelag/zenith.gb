@@ -562,7 +562,6 @@ impl cpu::CPU {
     pub fn opcode_push(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
         let reg = (opcode >> 4) & 0x3;
 
-        // @todo - pushu16 utility
         soc.clock();
 
         let msb = self.read_r16stk_msb(reg);
@@ -642,7 +641,6 @@ impl cpu::CPU {
         };
 
         if branch_taken {
-            // @todo - pushu16 utility
             soc.clock();
 
             let pc_msb = util::get_high(self.pc().get());
@@ -658,7 +656,6 @@ impl cpu::CPU {
     }
 
     pub fn opcode_rst(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
-        // @todo - pushu16 utility
         soc.clock();
 
         let pc_msb = util::get_high(self.pc().get());
