@@ -1,4 +1,4 @@
-use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
+use crate::{cartridge::cartridge::Cartridge, mbc::mbc};
 
 pub struct MBC5 {
     rom: Vec<u8>,

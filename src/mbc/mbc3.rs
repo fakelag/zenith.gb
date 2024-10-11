@@ -1,4 +1,4 @@
-use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
+use crate::{cartridge::cartridge::Cartridge, mbc::mbc};
 
 const GB_CLOCKS_PER_SECOND: u32 = 4_194_304 / 4;
 
