@@ -1,5 +1,3 @@
-#![cfg_attr(not(any(test, debug_assertions)), windows_subsystem = "windows")]
-
 use std::{
     sync::mpsc::{self},
     time,

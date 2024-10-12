@@ -6,6 +6,17 @@ pub fn create_test_emulator(rom_path: &str) -> Gameboy {
     let cart = Cartridge::new(rom_path);
     let mut gb = Gameboy::new(cart);
 
+    let (sound_send, sound_recv) = std::sync::mpsc::sync_channel::<Vec<i16>>(1);
+
+    gb.enable_external_audio(sound_send);
+
+    std::thread::spawn(move || loop {
+        match sound_recv.recv() {
+            Err(_err) => break,
+            _ => {}
+        }
+    });
+
     gb.dmg_boot();
     gb
 }
