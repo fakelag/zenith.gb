@@ -1,11 +1,12 @@
 use crate::{
     apu::apu,
     cartridge::cartridge::Cartridge,
-    mmu::{
+    mbc::{
         mbc::{MbcRomOnly, MBC},
         mbc1, mbc2, mbc3, mbc5,
     },
     ppu::ppu::{self, FrameBuffer},
+    serial::serial,
     timer::timer::Timer,
     util::util,
     GbButton, InputEvent,
@@ -45,6 +46,7 @@ pub struct SOC {
     apu: apu::APU,
     timer: Timer,
     ppu: ppu::PPU,
+    serial: serial::Serial,
 
     memory: Vec<u8>,
 
@@ -77,6 +79,7 @@ impl SOC {
             apu: apu::APU::new(),
             timer: Timer::new(),
             ppu: ppu::PPU::new(),
+            serial: serial::Serial::new(),
 
             #[cfg(test)]
             supported_carttype: true,
@@ -93,8 +96,6 @@ impl SOC {
 
         self.memory[0xFF50] = 0x1;
         self.memory[HWR_P1 as usize] = 0xCF;
-        self.memory[HWR_SB as usize] = 0x00;
-        self.memory[HWR_SC as usize] = 0x7E;
         self.memory[HWR_IF as usize] = 0xE1;
         self.memory[HWR_DMA as usize] = 0xFF;
 
@@ -190,6 +191,8 @@ impl SOC {
                         let button_bits = util::calc_button_bits(&self.buttons, p1);
                         return button_bits | (p1 & 0xF0);
                     }
+                    HWR_SB => self.serial.read_sb(),
+                    HWR_SC => self.serial.read_sc(),
                     HWR_DIV => self.timer.read_div(),
                     HWR_TAC => self.timer.read_tac(),
                     HWR_TIMA => self.timer.read_tima(),
@@ -299,6 +302,8 @@ impl SOC {
                         let ro_bits = self.memory[usize::from(address)] & 0xCF;
                         self.memory[usize::from(address)] = (data & 0x30) | ro_bits;
                     }
+                    HWR_SB => { self.clock(); self.serial.write_sb(data) },
+                    HWR_SC => { self.clock(); self.serial.write_sc(data) },
                     HWR_IF => {
                         self.clock();
                         // Top 3 bits unused
@@ -349,7 +354,7 @@ impl SOC {
                     HWR_OBP1                => { self.clock(); self.ppu.write_obp1(data) },
                     HWR_WY                  => { self.clock(); self.ppu.write_wy(data) },
                     HWR_WX                  => { self.clock(); self.ppu.write_wx(data) },
-                    HWR_SC | HWR_DIV_LSB    => { self.clock(); },
+                    HWR_DIV_LSB             => { self.clock(); },
                     _                       => { self.clock(); self.memory[usize::from(address)] = data },
                 }
             }
@@ -379,6 +384,7 @@ impl SOC {
 
         self.mbc.clock();
         self.apu.clock();
+        self.serial.clock(&mut ctx);
 
         self.cycles += 1;
     }
@@ -401,6 +407,7 @@ impl SOC {
 
         self.mbc.clock();
         self.apu.clock();
+        self.serial.clock(&mut ctx);
 
         self.cycles += 1;
     }

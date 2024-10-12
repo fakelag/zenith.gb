@@ -17,7 +17,7 @@ pub type ApuSoundSender = SyncSender<Vec<i16>>;
 pub type AudioBuffer = Vec<u8>;
 
 const T_CYCLES_PER_FRAME: u64 = (4_194_304.0 * (TARGET_FPS / GB_DEFAULT_FPS)) as u64;
-const FRAME_SEQUENCER_START: u16 = (T_CYCLES_PER_FRAME / 512.0 as u64) as u16;
+const FRAME_SEQUENCER_START: u16 = (T_CYCLES_PER_FRAME / (512.0 * 4.0) as u64) as u16;
 const SAMPLE_COUNTER_START: u16 = (T_CYCLES_PER_FRAME / APU_FREQ as f64 as u64) as u16;
 
 const RECORD_WAV_FILE: bool = false;
@@ -83,14 +83,20 @@ impl APU {
     }
 
     pub fn clock(&mut self) {
+        self.frame_sequencer();
+
         for _c in 0..4 {
-            self.frame_sequencer();
+            self.channel1.clock();
+            self.channel2.clock();
+            self.channel3.clock();
+            self.channel4.clock();
 
-            for channel in self.get_channels() {
-                channel.clock();
+            self.sample_counter -= 1;
+
+            if self.sample_counter == 0 {
+                self.sample_counter = SAMPLE_COUNTER_START;
+                self.sample_audio();
             }
-
-            self.sample_audio();
         }
     }
 
@@ -148,14 +154,6 @@ impl APU {
     }
 
     pub fn sample_audio(&mut self) {
-        self.sample_counter -= 1;
-
-        if self.sample_counter > 0 {
-            return;
-        }
-
-        self.sample_counter = SAMPLE_COUNTER_START;
-
         let mut left_scaled = 0.0;
         let mut right_scaled = 0.0;
 

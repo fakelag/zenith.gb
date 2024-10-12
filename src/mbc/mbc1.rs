@@ -1,4 +1,4 @@
-use crate::{cartridge::cartridge::Cartridge, mmu::mbc};
+use crate::{cartridge::cartridge::Cartridge, mbc::mbc};
 
 const BYTES_8KIB: usize = 8 * 1024;
 const BYTES_32KIB: usize = 32 * 1024;

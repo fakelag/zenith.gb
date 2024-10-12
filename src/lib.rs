@@ -1,5 +1,3 @@
-#![cfg_attr(not(any(test, debug_assertions)), windows_subsystem = "windows")]
-
 use std::{
     sync::mpsc::{self},
     time,
@@ -7,20 +5,26 @@ use std::{
 
 use apu::apu::{APU_FREQ, APU_NUM_CHANNELS, APU_SAMPLES, APU_SAMPLES_PER_CHANNEL};
 use cartridge::cartridge::Cartridge;
-
-mod apu;
-mod cartridge;
-mod cpu;
-mod gameboy;
-mod mmu;
-mod ppu;
-mod soc;
-mod timer;
-mod util;
-
 use gameboy::gameboy::*;
 use ppu::ppu::FrameBuffer;
 use sdl2::audio::AudioFormatNum;
+
+pub mod apu;
+pub mod cartridge;
+pub mod cpu;
+pub mod gameboy;
+pub mod mbc;
+pub mod ppu;
+pub mod serial;
+pub mod soc;
+pub mod timer;
+pub mod util;
+
+pub enum State {
+    Exit,
+    Idle,
+    Running(Gameboy),
+}
 
 pub const GB_DEFAULT_FPS: f64 = 59.73;
 pub const TARGET_FPS: f64 = GB_DEFAULT_FPS;
@@ -40,7 +44,7 @@ const PALETTE: [sdl2::pixels::Color; 4] = [
     sdl2::pixels::Color::RGB(0x18, 0x28, 0x08),
 ];
 
-fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::Window> {
+pub fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::Window> {
     let video_subsystem = sdl_ctx.video().unwrap();
 
     let window = video_subsystem
@@ -67,7 +71,7 @@ fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::
     return canvas;
 }
 
-struct GbAudio {
+pub struct GbAudio {
     sound_recv: mpsc::Receiver<Vec<i16>>,
 }
 
@@ -94,7 +98,7 @@ impl sdl2::audio::AudioCallback for GbAudio {
     }
 }
 
-fn sdl2_create_audio(
+pub fn sdl2_create_audio(
     sdl_ctx: &sdl2::Sdl,
 ) -> (sdl2::audio::AudioDevice<GbAudio>, apu::apu::ApuSoundSender) {
     let audio_subsystem = sdl_ctx.audio().unwrap();
@@ -116,7 +120,9 @@ fn sdl2_create_audio(
     (device, sound_send)
 }
 
-fn sdl2_enable_controller(sdl_ctx: &sdl2::Sdl) -> Result<sdl2::controller::GameController, String> {
+pub fn sdl2_enable_controller(
+    sdl_ctx: &sdl2::Sdl,
+) -> Result<sdl2::controller::GameController, String> {
     let controller_subsystem = sdl_ctx.game_controller()?;
 
     let available = controller_subsystem
@@ -142,7 +148,7 @@ fn sdl2_enable_controller(sdl_ctx: &sdl2::Sdl) -> Result<sdl2::controller::GameC
     return Ok(controller);
 }
 
-fn create_emulator(rom_path: &str) -> Gameboy {
+pub fn create_emulator(rom_path: &str) -> Gameboy {
     let cart = Cartridge::new(rom_path);
     let mut gb = Gameboy::new(cart);
     gb.dmg_boot();
@@ -195,12 +201,6 @@ fn controller_axis_gb_btn(axis: sdl2::controller::Axis) -> Option<(GbButton, GbB
         sdl2::controller::Axis::LeftY => Some((GbButton::GbButtonUp, GbButton::GbButtonDown)),
         _ => None,
     }
-}
-
-enum State {
-    Exit,
-    Idle,
-    Running(Gameboy),
 }
 
 fn poll_events(input_vec: &mut Vec<InputEvent>, event_pump: &mut sdl2::EventPump) -> Option<State> {
@@ -315,7 +315,7 @@ fn vsync_canvas(
         .unwrap();
 }
 
-fn run_state(
+pub fn run_state(
     state: &mut State,
     canvas: &mut sdl2::render::WindowCanvas,
     event_pump: &mut sdl2::EventPump,
@@ -388,41 +388,6 @@ fn run_state(
     }
 }
 
-fn main() {
-    let sdl_ctx = sdl2::init().unwrap();
-    let mut canvas = sdl2_create_window(&sdl_ctx);
-
-    let (_ad, sound_chan) = sdl2_create_audio(&sdl_ctx);
-
-    let _controller = sdl2_enable_controller(&sdl_ctx);
-
-    let mut event_pump = sdl_ctx.event_pump().unwrap();
-    let mut state = State::Idle;
-
-    'eventloop: loop {
-        let mut next_state = run_state(&mut state, &mut canvas, &mut event_pump);
-
-        match state {
-            State::Running(ref mut gb) => {
-                gb.close();
-            }
-            _ => {}
-        }
-
-        match next_state {
-            State::Exit => {
-                break 'eventloop;
-            }
-            State::Running(ref mut gb) => {
-                gb.enable_external_audio(sound_chan.clone());
-            }
-            _ => {}
-        }
-
-        state = next_state;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,7 +400,7 @@ mod tests {
         sync::mpsc::{Receiver, SyncSender},
     };
 
-    fn create_test_emulator(rom_path: &str) -> Option<Gameboy> {
+    pub fn create_test_emulator(rom_path: &str) -> Option<Gameboy> {
         let cart = Cartridge::new(rom_path);
         let mut gb = Gameboy::new(cart);
 
@@ -449,7 +414,7 @@ mod tests {
     }
 
     fn run_test_emulator<T>(
-        ctx: &mut Gameboy,
+        gb: &mut Gameboy,
         break_chan: Receiver<T>,
         input_chan: Option<&Receiver<InputEvent>>,
         frame_chan: Option<&SyncSender<FrameBuffer>>,
@@ -461,11 +426,11 @@ mod tests {
         let mut cycles_run = 0;
 
         while cycles_run < max_cycles {
-            let (cycles_passed, vsync) = ctx.run(mcycles_per_frame);
+            let (cycles_passed, vsync) = gb.run(mcycles_per_frame);
 
             if vsync {
                 if let Some(fs) = frame_chan {
-                    if let Err(err) = fs.send(*ctx.get_framebuffer()) {
+                    if let Err(err) = fs.send(*gb.get_framebuffer()) {
                         panic!("Frame sender error: {err}");
                     }
                 }
@@ -473,7 +438,7 @@ mod tests {
 
             if let Some(input) = input_chan {
                 if let Ok(next_input) = input.try_recv() {
-                    ctx.input_update(&vec![next_input]);
+                    gb.input_update(&vec![next_input]);
                 }
             }
 
