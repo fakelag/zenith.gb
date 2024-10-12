@@ -75,7 +75,6 @@ name = "gbemu-rs"
 version = "0.1.0"
 dependencies = [
  "bmp",
- "byteorder",
  "colored",
  "rayon",
  "sdl2",
