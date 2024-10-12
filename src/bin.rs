@@ -15,6 +15,10 @@ fn main() {
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     let mut state = State::Idle;
 
+    if let Some(preload_rom) = std::env::args().nth(1) {
+        state = State::Running(create_emulator(&preload_rom));
+    }
+
     'eventloop: loop {
         let mut next_state = run_state(&mut state, &mut canvas, &mut event_pump);
 

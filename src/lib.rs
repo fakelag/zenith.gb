@@ -148,7 +148,7 @@ pub fn sdl2_enable_controller(
     return Ok(controller);
 }
 
-fn create_emulator(rom_path: &str) -> Gameboy {
+pub fn create_emulator(rom_path: &str) -> Gameboy {
     let cart = Cartridge::new(rom_path);
     let mut gb = Gameboy::new(cart);
     gb.dmg_boot();
