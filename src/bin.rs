@@ -16,7 +16,9 @@ fn main() {
     let mut state = State::Idle;
 
     if let Some(preload_rom) = std::env::args().nth(1) {
-        state = State::Running(create_emulator(&preload_rom));
+        let mut emu = create_emulator(&preload_rom);
+        emu.enable_external_audio(sound_chan.clone());
+        state = State::Running(emu);
     }
 
     'eventloop: loop {
