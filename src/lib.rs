@@ -11,16 +11,16 @@ use gameboy::gameboy::*;
 use ppu::ppu::FrameBuffer;
 use sdl2::audio::AudioFormatNum;
 
-mod apu;
-mod cartridge;
-mod cpu;
-mod gameboy;
-mod mbc;
-mod ppu;
-mod serial;
-mod soc;
-mod timer;
-mod util;
+pub mod apu;
+pub mod cartridge;
+pub mod cpu;
+pub mod gameboy;
+pub mod mbc;
+pub mod ppu;
+pub mod serial;
+pub mod soc;
+pub mod timer;
+pub mod util;
 
 pub enum State {
     Exit,
@@ -402,7 +402,7 @@ mod tests {
         sync::mpsc::{Receiver, SyncSender},
     };
 
-    fn create_test_emulator(rom_path: &str) -> Option<Gameboy> {
+    pub fn create_test_emulator(rom_path: &str) -> Option<Gameboy> {
         let cart = Cartridge::new(rom_path);
         let mut gb = Gameboy::new(cart);
 
@@ -416,7 +416,7 @@ mod tests {
     }
 
     fn run_test_emulator<T>(
-        ctx: &mut Gameboy,
+        gb: &mut Gameboy,
         break_chan: Receiver<T>,
         input_chan: Option<&Receiver<InputEvent>>,
         frame_chan: Option<&SyncSender<FrameBuffer>>,
@@ -428,11 +428,11 @@ mod tests {
         let mut cycles_run = 0;
 
         while cycles_run < max_cycles {
-            let (cycles_passed, vsync) = ctx.run(mcycles_per_frame);
+            let (cycles_passed, vsync) = gb.run(mcycles_per_frame);
 
             if vsync {
                 if let Some(fs) = frame_chan {
-                    if let Err(err) = fs.send(*ctx.get_framebuffer()) {
+                    if let Err(err) = fs.send(*gb.get_framebuffer()) {
                         panic!("Frame sender error: {err}");
                     }
                 }
@@ -440,7 +440,7 @@ mod tests {
 
             if let Some(input) = input_chan {
                 if let Ok(next_input) = input.try_recv() {
-                    ctx.input_update(&vec![next_input]);
+                    gb.input_update(&vec![next_input]);
                 }
             }
 
