@@ -26,19 +26,27 @@ fn run_test_emulator(gb: &mut Gameboy, cycles: u64) -> u64 {
     cycles_run
 }
 
-fn cpu_instrs() {
+fn cpu_instrs_bench() {
     let cycles = 56_152_830;
 
     let mut gb = create_test_emulator("./tests/roms/blargg/cpu_instrs/cpu_instrs.gb");
     black_box(run_test_emulator(&mut gb, cycles));
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
-    let mut cpu_instrs_group = c.benchmark_group("cpu_instrs");
+fn ppu_bench() {
+    let cycles = 56_152_830;
 
-    cpu_instrs_group.sample_size(10);
-    cpu_instrs_group.bench_function("cpu_instrs", |b| b.iter(|| cpu_instrs()));
-    cpu_instrs_group.finish();
+    let mut gb = create_test_emulator("./dev/rgbds/gb_sprites_and_tiles.gb");
+    black_box(run_test_emulator(&mut gb, cycles));
+}
+
+fn criterion_benchmark(c: &mut Criterion) {
+    let mut g = c.benchmark_group("bench_group");
+
+    g.sample_size(10);
+    g.bench_function("cpu_instrs", |b| b.iter(|| cpu_instrs_bench()));
+    g.bench_function("ppu_bench", |b| b.iter(|| ppu_bench()));
+    g.finish();
 }
 
 criterion_group!(benches, criterion_benchmark);
