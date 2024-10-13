@@ -13,262 +13,270 @@ impl cpu::CPU {
         }
     }
 
-    pub fn opcode_ld(&mut self, soc: &mut SOC, instr: &Instruction, opcode: u8) {
-        match (instr.dst, instr.src) {
-            (OperandKind::R8, OperandKind::R8) => {
-                // 0b01xxxyyy
-                let src_reg = opcode & 0x7;
-                let dst_reg = (opcode >> 3) & 0x7;
-                let val = self.read_r8(src_reg);
+    pub fn opcode_ld_r8_r8(&mut self, _soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        // 0b01xxxyyy
+        let src_reg = opcode & 0x7;
+        let dst_reg = (opcode >> 3) & 0x7;
+        let val = self.read_r8(src_reg);
 
-                // note: reg2reg will never trigger 0x6 write to [hl]
-                debug_assert!(dst_reg != 0x6);
-                debug_assert!(src_reg != 0x6);
+        // note: reg2reg will never trigger 0x6 write to [hl]
+        debug_assert!(dst_reg != 0x6);
+        debug_assert!(src_reg != 0x6);
 
-                self.write_r8(dst_reg, val);
-            }
-            (OperandKind::R8, OperandKind::Imm8) => {
-                let dst_reg = (opcode >> 3) & 0x7;
-                let n8 = self.clock_consume_byte_from_pc(soc);
-
-                debug_assert!(dst_reg != 0x6); // should only happen with 0x36
-
-                self.write_r8(dst_reg, n8);
-            }
-            (OperandKind::R8, OperandKind::R16Addr) => {
-                match opcode {
-                    0x0A /* LD A [BC] */ => {
-                        let val = soc.clock_read(self.bc().get());
-                        self.a().set(val);
-                    }
-                    0x1A /* LD A [DE] */ => {
-                        let val = soc.clock_read(self.de().get());
-                        self.a().set(val);
-                    }
-                    0x2A /* LD A [HL+] */ => {
-                        let val = soc.clock_read(self.hl().get());
-                        self.a().set(val);
-                        self.hl().inc();
-                    }
-                    0x3A /* LD A [HL-] */ => {
-                        let val = soc.clock_read(self.hl().get());
-                        self.a().set(val);
-                        self.hl().dec();
-                    }
-                    _ => /* LD r8, [HL] */ {
-                        debug_assert!([0x46, 0x4E, 0x56, 0x5E, 0x66, 0x6E, 0x7E].contains(&opcode));
-                        // src_reg is always 0x6 e.g [HL]
-                        debug_assert!(opcode & 0x7 == 0x6);
-
-                        let dst_reg = (opcode >> 3) & 0x7;
-                        let val = self.clock_read_at_hl(soc);
-
-                        // note: r16addr2r8 will never trigger 0x6 write to [hl]
-                        debug_assert!(dst_reg != 0x6);
-
-                        self.write_r8(dst_reg, val);
-                    }
-                }
-            }
-            (OperandKind::R8, OperandKind::Imm16Addr) => {
-                debug_assert!(opcode == 0xFA /* LD A [a16] */);
-
-                let lsb = self.clock_consume_byte_from_pc(soc);
-                let msb = self.clock_consume_byte_from_pc(soc);
-
-                let val = soc.clock_read(util::value(msb, lsb));
-                self.a().set(val);
-            }
-            (OperandKind::R16, OperandKind::R16) => {
-                debug_assert!([0xF8, 0xF9].contains(&opcode));
-                match opcode {
-                    0xF8 /* LD HL SP+ */ => {
-                        let e = self.clock_consume_byte_from_pc(soc) as i8;
-
-                        let sp_val = self.sp().get();
-                        let sum = i32::from(sp_val) + i32::from(e);
-
-                        self.set_flag(cpu::FLAG_Z, false);
-                        self.set_flag(cpu::FLAG_N, false);
-                        self.set_flag(cpu::FLAG_H, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10);
-                        self.set_flag(cpu::FLAG_C, (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100);
-                        // self.l().set(util::get_low(sum as u16));
-
-                        // Note: technically h & l are set separately on different machine cycles
-                        self.hl().set(sum as u16);
-                        soc.clock();
-
-                        // self.h().set(util::get_high(sum as u16));
-                    }
-                    0xF9 /* LD SP HL  */=> {
-                        let hl_val = self.hl().get();
-                        self.sp().set(hl_val);
-
-                        soc.clock();
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            (OperandKind::R16, OperandKind::Imm16) => {
-                debug_assert!([0x01, 0x11, 0x21, 0x31].contains(&opcode));
-                let dst_reg = (opcode >> 4) & 0x3;
-
-                let lsb = self.clock_consume_byte_from_pc(soc);
-                let msb = self.clock_consume_byte_from_pc(soc);
-
-                self.write_r16(dst_reg, util::value(msb, lsb));
-            }
-            (OperandKind::R16Addr, OperandKind::R8) => {
-                match opcode {
-                    0x22 /* LD [HL+] A */ => {
-                        soc.clock_write(self.hl().inc(), self.a().get());
-                    }
-                    0x32 /* LD [HL-] A */ => {
-                        soc.clock_write(self.hl().dec(), self.a().get());
-                    }
-                    0x02 /* LD [BC] A */ => {
-                        soc.clock_write(self.bc().get(), self.a().get());
-                    }
-                    0x12 /* LD [DE] A */ => {
-                        soc.clock_write(self.de().get(), self.a().get());
-                    }
-                    /* LD [HL], r8 */ _ => {
-                        debug_assert!([0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77].contains(&opcode));
-
-                        let src_reg = opcode & 0x7;
-                        let val = self.read_r8(src_reg);
-
-                        // dst_reg will always be 0x6
-                        debug_assert!((opcode >> 3) & 0x7 == 0x6);
-                        debug_assert!(src_reg != 0x6);
-
-                        soc.clock_write(self.hl().get(), val);
-                    }
-                }
-            }
-            (OperandKind::Imm16Addr, OperandKind::R16) => {
-                debug_assert!(opcode == 0x08);
-
-                let lsb = self.clock_consume_byte_from_pc(soc);
-                let msb = self.clock_consume_byte_from_pc(soc);
-
-                let addr = util::value(msb, lsb);
-
-                let sp_lsb = util::get_low(self.sp().get());
-                let sp_msb = util::get_high(self.sp().get());
-
-                soc.clock_write(addr, sp_lsb);
-                soc.clock_write(addr + 1, sp_msb);
-            }
-            (OperandKind::R16Addr, OperandKind::Imm8) => {
-                debug_assert!(opcode == 0x36);
-
-                let val = self.clock_consume_byte_from_pc(soc);
-                self.clock_write_at_hl(soc, val);
-            }
-            (OperandKind::R8Addr, OperandKind::R8) => {
-                debug_assert!(opcode == 0xE2);
-
-                let addr = u16::from(self.c().get()) | 0xFF00;
-                soc.clock_write(addr, self.a().get());
-            }
-            (OperandKind::Imm16Addr, OperandKind::R8) => {
-                debug_assert!(opcode == 0xEA);
-
-                let lsb = self.clock_consume_byte_from_pc(soc);
-                let msb = self.clock_consume_byte_from_pc(soc);
-
-                let addr = util::value(msb, lsb);
-                soc.clock_write(addr, self.a().get());
-            }
-            (OperandKind::R8, OperandKind::R8Addr) => {
-                debug_assert!(opcode == 0xF2);
-
-                let addr = u16::from(self.c().get()) | 0xFF00;
-                let val = soc.clock_read(addr);
-
-                self.a().set(val);
-            }
-            _ => unreachable!(),
-        }
+        self.write_r8(dst_reg, val);
     }
 
-    pub fn opcode_inc(&mut self, soc: &mut SOC, instr: &Instruction, opcode: u8) {
-        match instr.dst {
-            OperandKind::R8 => {
-                let dst_reg = (opcode >> 3) & 0x7;
-                debug_assert!(dst_reg != 0x6);
+    pub fn opcode_ld_r8_imm8(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        let dst_reg = (opcode >> 3) & 0x7;
+        let n8 = self.clock_consume_byte_from_pc(soc);
 
-                let curr_val = self.read_r8(dst_reg);
+        debug_assert!(dst_reg != 0x6); // should only happen with 0x36
 
-                let sum = curr_val.wrapping_add(1);
-                self.set_flag(cpu::FLAG_Z, sum == 0);
-                self.set_flag(cpu::FLAG_N, false);
-                self.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
-
-                self.write_r8(dst_reg, sum);
-            }
-            OperandKind::R16 => {
-                let dst_reg = (opcode >> 4) & 0x3;
-                let curr_val = self.read_r16(dst_reg);
-                let sum = curr_val.wrapping_add(1);
-                self.write_r16(dst_reg, sum);
-
-                soc.clock();
-            }
-            OperandKind::R16Addr => {
-                debug_assert!(opcode == 0x34);
-
-                let curr_val = soc.clock_read(self.hl().get());
-
-                let sum = curr_val.wrapping_add(1);
-                self.set_flag(cpu::FLAG_Z, sum == 0);
-                self.set_flag(cpu::FLAG_N, false);
-                self.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
-
-                soc.clock_write(self.hl().get(), sum);
-            }
-            _ => unreachable!(),
-        }
+        self.write_r8(dst_reg, n8);
     }
 
-    pub fn opcode_dec(&mut self, soc: &mut SOC, instr: &Instruction, opcode: u8) {
-        match instr.dst {
-            OperandKind::R8 => {
-                let dst_reg = (opcode >> 3) & 0x7;
-                debug_assert!(dst_reg != 0x6);
+    pub fn opcode_ld_a_bcaddr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x0A);
+        let val = soc.clock_read(self.bc().get());
+        self.a().set(val);
+    }
 
-                let curr_val = self.read_r8(dst_reg);
+    pub fn opcode_ld_a_deaddr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x1A);
+        let val = soc.clock_read(self.de().get());
+        self.a().set(val);
+    }
 
-                let sum = curr_val.wrapping_sub(1);
-                self.set_flag(cpu::FLAG_Z, sum == 0);
-                self.set_flag(cpu::FLAG_N, true);
-                self.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
+    pub fn opcode_ld_a_hliaddr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x2A);
+        let val = soc.clock_read(self.hl().get());
+        self.a().set(val);
+        self.hl().inc();
+    }
 
-                self.write_r8(dst_reg, sum);
-            }
-            OperandKind::R16 => {
-                let dst_reg = (opcode >> 4) & 0x3;
-                let curr_val = self.read_r16(dst_reg);
-                let sum = curr_val.wrapping_sub(1);
-                self.write_r16(dst_reg, sum);
+    pub fn opcode_ld_a_hldaddr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x3A);
+        let val = soc.clock_read(self.hl().get());
+        self.a().set(val);
+        self.hl().dec();
+    }
 
-                soc.clock();
-            }
-            OperandKind::R16Addr => {
-                debug_assert!(opcode == 0x35);
+    pub fn opcode_ld_r8_hladdr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!([0x46, 0x4E, 0x56, 0x5E, 0x66, 0x6E, 0x7E].contains(&opcode));
+        // src_reg is always 0x6 e.g [HL]
+        debug_assert!(opcode & 0x7 == 0x6);
 
-                let curr_val = soc.clock_read(self.hl().get());
+        let dst_reg = (opcode >> 3) & 0x7;
+        let val = self.clock_read_at_hl(soc);
 
-                let sum = curr_val.wrapping_sub(1);
-                self.set_flag(cpu::FLAG_Z, sum == 0);
-                self.set_flag(cpu::FLAG_N, true);
-                self.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
+        // note: r16addr2r8 will never trigger 0x6 write to [hl]
+        debug_assert!(dst_reg != 0x6);
 
-                soc.clock_write(self.hl().get(), sum);
-            }
-            _ => unreachable!(),
-        }
+        self.write_r8(dst_reg, val);
+    }
+
+    pub fn opcode_ld_a_imm16addr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xFA /* LD A [a16] */);
+
+        let lsb = self.clock_consume_byte_from_pc(soc);
+        let msb = self.clock_consume_byte_from_pc(soc);
+
+        let val = soc.clock_read(util::value(msb, lsb));
+        self.a().set(val);
+    }
+
+    pub fn opcode_ld_hl_spi(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xF8);
+        let e = self.clock_consume_byte_from_pc(soc) as i8;
+
+        let sp_val = self.sp().get();
+        let sum = i32::from(sp_val) + i32::from(e);
+
+        self.set_flag(cpu::FLAG_Z, false);
+        self.set_flag(cpu::FLAG_N, false);
+        self.set_flag(
+            cpu::FLAG_H,
+            (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10,
+        );
+        self.set_flag(
+            cpu::FLAG_C,
+            (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100,
+        );
+
+        // Note: technically h & l are set separately on different machine cycles
+        self.hl().set(sum as u16);
+        soc.clock();
+    }
+
+    pub fn opcode_ld_sp_hl(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xF9);
+        let hl_val = self.hl().get();
+        self.sp().set(hl_val);
+
+        soc.clock();
+    }
+
+    pub fn opcode_ld_r16_imm16(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!([0x01, 0x11, 0x21, 0x31].contains(&opcode));
+        let dst_reg = (opcode >> 4) & 0x3;
+
+        let lsb = self.clock_consume_byte_from_pc(soc);
+        let msb = self.clock_consume_byte_from_pc(soc);
+
+        self.write_r16(dst_reg, util::value(msb, lsb));
+    }
+
+    pub fn opcode_ld_hliaddr_a(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x22);
+        soc.clock_write(self.hl().inc(), self.a().get());
+    }
+
+    pub fn opcode_ld_hldaddr_a(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x32);
+        soc.clock_write(self.hl().dec(), self.a().get());
+    }
+
+    pub fn opcode_ld_bcaddr_a(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x02);
+        soc.clock_write(self.bc().get(), self.a().get());
+    }
+
+    pub fn opcode_ld_deaddr_a(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x12);
+        soc.clock_write(self.de().get(), self.a().get());
+    }
+
+    pub fn opcode_hladdr_r8(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!([0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77].contains(&opcode));
+
+        let src_reg = opcode & 0x7;
+        let val = self.read_r8(src_reg);
+
+        // dst_reg will always be 0x6
+        debug_assert!((opcode >> 3) & 0x7 == 0x6);
+        debug_assert!(src_reg != 0x6);
+
+        soc.clock_write(self.hl().get(), val);
+    }
+
+    pub fn opcode_imm16addr_r16(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x08);
+
+        let lsb = self.clock_consume_byte_from_pc(soc);
+        let msb = self.clock_consume_byte_from_pc(soc);
+
+        let addr = util::value(msb, lsb);
+
+        let sp_lsb = util::get_low(self.sp().get());
+        let sp_msb = util::get_high(self.sp().get());
+
+        soc.clock_write(addr, sp_lsb);
+        soc.clock_write(addr + 1, sp_msb);
+    }
+
+    pub fn opcode_hladdr_imm8(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x36);
+
+        let val = self.clock_consume_byte_from_pc(soc);
+        self.clock_write_at_hl(soc, val);
+    }
+
+    pub fn opcode_r8addr_a(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xE2);
+
+        let addr = u16::from(self.c().get()) | 0xFF00;
+        soc.clock_write(addr, self.a().get());
+    }
+
+    pub fn opcode_imm16addr_a(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xEA);
+
+        let lsb = self.clock_consume_byte_from_pc(soc);
+        let msb = self.clock_consume_byte_from_pc(soc);
+
+        let addr = util::value(msb, lsb);
+        soc.clock_write(addr, self.a().get());
+    }
+
+    pub fn opcode_r8_c(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xF2);
+
+        let addr = u16::from(self.c().get()) | 0xFF00;
+        let val = soc.clock_read(addr);
+
+        self.a().set(val);
+    }
+
+    pub fn opcode_inc_r8(&mut self, _soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        let dst_reg = (opcode >> 3) & 0x7;
+        debug_assert!(dst_reg != 0x6);
+
+        let curr_val = self.read_r8(dst_reg);
+
+        let sum = curr_val.wrapping_add(1);
+        self.set_flag(cpu::FLAG_Z, sum == 0);
+        self.set_flag(cpu::FLAG_N, false);
+        self.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
+
+        self.write_r8(dst_reg, sum);
+    }
+
+    pub fn opcode_inc_r16(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        let dst_reg = (opcode >> 4) & 0x3;
+        let curr_val = self.read_r16(dst_reg);
+        let sum = curr_val.wrapping_add(1);
+        self.write_r16(dst_reg, sum);
+
+        soc.clock();
+    }
+
+    pub fn opcode_inc_r16addr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x34);
+
+        let curr_val = soc.clock_read(self.hl().get());
+
+        let sum = curr_val.wrapping_add(1);
+        self.set_flag(cpu::FLAG_Z, sum == 0);
+        self.set_flag(cpu::FLAG_N, false);
+        self.set_flag(cpu::FLAG_H, (sum & 0xF) == 0);
+
+        soc.clock_write(self.hl().get(), sum);
+    }
+
+    pub fn opcode_dec_r8(&mut self, _soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        let dst_reg = (opcode >> 3) & 0x7;
+        debug_assert!(dst_reg != 0x6);
+
+        let curr_val = self.read_r8(dst_reg);
+
+        let sum = curr_val.wrapping_sub(1);
+        self.set_flag(cpu::FLAG_Z, sum == 0);
+        self.set_flag(cpu::FLAG_N, true);
+        self.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
+
+        self.write_r8(dst_reg, sum);
+    }
+
+    pub fn opcode_dec_r16(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        let dst_reg = (opcode >> 4) & 0x3;
+        let curr_val = self.read_r16(dst_reg);
+        let sum = curr_val.wrapping_sub(1);
+        self.write_r16(dst_reg, sum);
+
+        soc.clock();
+    }
+
+    pub fn opcode_dec_r16addr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0x35);
+
+        let curr_val = soc.clock_read(self.hl().get());
+
+        let sum = curr_val.wrapping_sub(1);
+        self.set_flag(cpu::FLAG_Z, sum == 0);
+        self.set_flag(cpu::FLAG_N, true);
+        self.set_flag(cpu::FLAG_H, (sum & 0x0F) == 0x0F);
+
+        soc.clock_write(self.hl().get(), sum);
     }
 
     pub fn opcode_rlca(&mut self, _soc: &mut SOC, _instr: &Instruction, opcode: u8) {
@@ -311,75 +319,52 @@ impl cpu::CPU {
         self.set_flag(cpu::FLAG_Z, false);
     }
 
-    pub fn opcode_add(&mut self, soc: &mut SOC, instr: &Instruction, opcode: u8) {
-        match (instr.dst, instr.src) {
-            (OperandKind::R8, OperandKind::R8) => {
-                // ADD A, r8
-                let src_reg = opcode & 0x7;
-                debug_assert!(src_reg != 0x6);
+    pub fn opcode_add_r8_imm8_hladdr(&mut self, soc: &mut SOC, instr: &Instruction, opcode: u8) {
+        let src_val = self.clock_consume_src_r8_imm8_hladdr(soc, instr.src, opcode);
+        self.add_a8(src_val, 0);
+    }
 
-                let src_val = self.read_r8(src_reg);
+    pub fn opcode_add_hl_r16(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        // ADD HL r16
+        let src_reg = (opcode >> 4) & 0x3;
+        let src_val = self.read_r16(src_reg);
+        let dst_val = self.hl().get();
 
-                self.add_a8(src_val, 0);
-            }
-            (OperandKind::R8, OperandKind::R16Addr) => {
-                // ADD A, [HL]
-                debug_assert!(opcode & 0x7 == 0x6);
+        let sum: u32 = u32::from(src_val) + u32::from(dst_val);
 
-                let src_val = self.clock_read_at_hl(soc);
+        self.set_flag(cpu::FLAG_N, false);
+        self.set_flag(cpu::FLAG_H, (dst_val & 0xFFF) + (src_val & 0xFFF) > 0xFFF);
+        self.set_flag(cpu::FLAG_C, sum > 0xFFFF);
 
-                self.add_a8(src_val, 0);
-            }
-            (OperandKind::R16, OperandKind::R16) => {
-                // ADD HL r16
-                let src_reg = (opcode >> 4) & 0x3;
-                let src_val = self.read_r16(src_reg);
-                let dst_val = self.hl().get();
+        // Note: technically h & l are set separately on different machine cycles
+        self.hl().set((sum & 0xFFFF) as u16);
 
-                let sum: u32 = u32::from(src_val) + u32::from(dst_val);
+        soc.clock();
+    }
 
-                self.set_flag(cpu::FLAG_N, false);
-                self.set_flag(cpu::FLAG_H, (dst_val & 0xFFF) + (src_val & 0xFFF) > 0xFFF);
-                self.set_flag(cpu::FLAG_C, sum > 0xFFFF);
+    pub fn opcode_add_sp_e8(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        // ADD SP e8
+        debug_assert!(opcode == 0xE8);
 
-                // Note: technically h & l are set separately on different machine cycles
-                self.hl().set((sum & 0xFFFF) as u16);
+        let e: i8 = self.clock_consume_byte_from_pc(soc) as i8;
+        let sp_val = self.sp().get();
+        let sum = i32::from(sp_val) + i32::from(e);
 
-                soc.clock();
-            }
-            (OperandKind::R8, OperandKind::Imm8) => {
-                debug_assert!(opcode == 0xC6);
+        self.set_flag(cpu::FLAG_Z, false);
+        self.set_flag(cpu::FLAG_N, false);
+        self.set_flag(
+            cpu::FLAG_H,
+            (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10,
+        );
+        self.set_flag(
+            cpu::FLAG_C,
+            (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100,
+        );
 
-                let src_val = self.clock_consume_byte_from_pc(soc);
+        soc.clock();
+        soc.clock();
 
-                self.add_a8(src_val, 0);
-            }
-            (OperandKind::R16, OperandKind::Imm8) => {
-                // ADD SP e8
-                debug_assert!(opcode == 0xE8);
-
-                let e: i8 = self.clock_consume_byte_from_pc(soc) as i8;
-                let sp_val = self.sp().get();
-                let sum = i32::from(sp_val) + i32::from(e);
-
-                self.set_flag(cpu::FLAG_Z, false);
-                self.set_flag(cpu::FLAG_N, false);
-                self.set_flag(
-                    cpu::FLAG_H,
-                    (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x10 == 0x10,
-                );
-                self.set_flag(
-                    cpu::FLAG_C,
-                    (i32::from(sp_val) ^ i32::from(e) ^ (i32::from(sum) & 0xFFFF)) & 0x100 == 0x100,
-                );
-
-                soc.clock();
-                soc.clock();
-
-                self.sp().set(sum as u16);
-            }
-            _ => unreachable!(),
-        }
+        self.sp().set(sum as u16);
     }
 
     pub fn opcode_stop(&mut self, _soc: &mut SOC, _instr: &Instruction, opcode: u8) {
@@ -395,25 +380,23 @@ impl cpu::CPU {
         // @todo CGB: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
     }
 
-    pub fn opcode_jr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
-        let branch_taken = match opcode {
-            0x18 /* JR e8 */ => {
-                true
-            }
-            _ => {
-                debug_assert!([0x20, 0x28, 0x30, 0x38].contains(&opcode));
-                let flag = (opcode >> 3) & 0x3;
+    pub fn opcode_jr_e8(&mut self, soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        let e: i8 = self.clock_consume_byte_from_pc(soc) as i8;
+        let pc_val = self.pc().get();
+        self.pc().set(pc_val.wrapping_add_signed(e.into()));
+        soc.clock();
+    }
 
-                let cond = match flag {
-                    0x3 => self.get_flag(cpu::FLAG_C),
-                    0x2 => !self.get_flag(cpu::FLAG_C),
-                    0x1 => self.get_flag(cpu::FLAG_Z),
-                    0x0 => !self.get_flag(cpu::FLAG_Z),
-                    _ => unreachable!(),
-                };
+    pub fn opcode_jr_cc(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!([0x20, 0x28, 0x30, 0x38].contains(&opcode));
+        let flag = (opcode >> 3) & 0x3;
 
-                cond
-            }
+        let branch_taken = match flag {
+            0x3 => self.get_flag(cpu::FLAG_C),
+            0x2 => !self.get_flag(cpu::FLAG_C),
+            0x1 => self.get_flag(cpu::FLAG_Z),
+            0x0 => !self.get_flag(cpu::FLAG_Z),
+            _ => unreachable!(),
         };
 
         let e: i8 = self.clock_consume_byte_from_pc(soc) as i8;
@@ -477,12 +460,7 @@ impl cpu::CPU {
     }
 
     pub fn opcode_halt(&mut self, soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
-        if self.ime {
-            self.halted = true;
-            return;
-        }
-
-        if soc.active_interrupts() == 0 {
+        if self.ime || soc.active_interrupts() == 0 {
             self.halted = true;
             return;
         }
@@ -526,28 +504,25 @@ impl cpu::CPU {
         self.cp_a8(src_val);
     }
 
-    pub fn opcode_ret(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
-        let ret_taken = match opcode {
-            0xC9 /* RET */ => {
-                true
-            }
-            _ => {
-                debug_assert!([0xC0, 0xC8, 0xD0, 0xD8].contains(&opcode));
-                let flag = (opcode >> 3) & 0x3;
+    pub fn opcode_ret(&mut self, soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        let ret_val = self.clock_pop_u16(soc);
+        self.pc().set(ret_val);
+        soc.clock();
+    }
 
-                let cond = match flag {
-                    0x3 => self.get_flag(cpu::FLAG_C),
-                    0x2 => !self.get_flag(cpu::FLAG_C),
-                    0x1 => self.get_flag(cpu::FLAG_Z),
-                    0x0 => !self.get_flag(cpu::FLAG_Z),
-                    _ => unreachable!(),
-                };
+    pub fn opcode_ret_cc(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!([0xC0, 0xC8, 0xD0, 0xD8].contains(&opcode));
+        let flag = (opcode >> 3) & 0x3;
 
-                soc.clock();
-
-                cond
-            }
+        let ret_taken = match flag {
+            0x3 => self.get_flag(cpu::FLAG_C),
+            0x2 => !self.get_flag(cpu::FLAG_C),
+            0x1 => self.get_flag(cpu::FLAG_Z),
+            0x0 => !self.get_flag(cpu::FLAG_Z),
+            _ => unreachable!(),
         };
+
+        soc.clock();
 
         if ret_taken {
             let ret_val = self.clock_pop_u16(soc);
@@ -577,35 +552,30 @@ impl cpu::CPU {
         self.write_r16stk(reg, val);
     }
 
-    pub fn opcode_jp(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
-        if opcode == 0xE9
-        /* JP HL */
-        {
-            let hl_val = self.hl().get();
-            self.pc().set(hl_val);
-            return;
-        }
+    pub fn opcode_jp_hl(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        let hl_val = self.hl().get();
+        self.pc().set(hl_val);
+    }
 
+    pub fn opcode_jp_a16(&mut self, soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        let lsb = self.clock_consume_byte_from_pc(soc);
+        let msb = self.clock_consume_byte_from_pc(soc);
+        self.pc().set(util::value(msb, lsb));
+        soc.clock();
+    }
+
+    pub fn opcode_jp_cc(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
         let lsb = self.clock_consume_byte_from_pc(soc);
         let msb = self.clock_consume_byte_from_pc(soc);
 
-        let branch_taken = match opcode {
-            0xC3 /* JP a16 */ => {
-                true
-            }
-            _ => {
-                let flag = (opcode >> 3) & 0x3;
+        let flag = (opcode >> 3) & 0x3;
 
-                let cond = match flag {
-                    0x3 => self.get_flag(cpu::FLAG_C),
-                    0x2 => !self.get_flag(cpu::FLAG_C),
-                    0x1 => self.get_flag(cpu::FLAG_Z),
-                    0x0 => !self.get_flag(cpu::FLAG_Z),
-                    _ => unreachable!(),
-                };
-
-                cond
-            }
+        let branch_taken = match flag {
+            0x3 => self.get_flag(cpu::FLAG_C),
+            0x2 => !self.get_flag(cpu::FLAG_C),
+            0x1 => self.get_flag(cpu::FLAG_Z),
+            0x0 => !self.get_flag(cpu::FLAG_Z),
+            _ => unreachable!(),
         };
 
         if branch_taken {
@@ -616,40 +586,41 @@ impl cpu::CPU {
         }
     }
 
-    pub fn opcode_call(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+    fn call(&mut self, soc: &mut SOC, addr_msb: u8, addr_lsb: u8) {
+        soc.clock();
+
+        let pc_msb = util::get_high(self.pc().get());
+        self.clock_push_u8(soc, pc_msb);
+
+        let pc_lsb = util::get_low(self.pc().get());
+        self.clock_push_u8(soc, pc_lsb);
+
+        self.pc().set(util::value(addr_msb, addr_lsb));
+    }
+
+    pub fn opcode_call_a16(&mut self, soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        let lsb = self.clock_consume_byte_from_pc(soc);
+        let msb = self.clock_consume_byte_from_pc(soc);
+        self.call(soc, msb, lsb);
+    }
+
+    pub fn opcode_call_cc(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
         let lsb = self.clock_consume_byte_from_pc(soc);
         let msb = self.clock_consume_byte_from_pc(soc);
 
-        let branch_taken = match opcode {
-            0xCD /* CALL a16 */ => {
-                true
-            }
-            _ => {
-                debug_assert!([0xC4, 0xCC, 0xD4, 0xDC].contains(&opcode));
-                let flag = (opcode >> 3) & 0x3;
+        debug_assert!([0xC4, 0xCC, 0xD4, 0xDC].contains(&opcode));
+        let flag = (opcode >> 3) & 0x3;
 
-                let cond = match flag {
-                    0x3 => self.get_flag(cpu::FLAG_C),
-                    0x2 => !self.get_flag(cpu::FLAG_C),
-                    0x1 => self.get_flag(cpu::FLAG_Z),
-                    0x0 => !self.get_flag(cpu::FLAG_Z),
-                    _ => unreachable!(),
-                };
-
-                cond
-            }
+        let branch_taken = match flag {
+            0x3 => self.get_flag(cpu::FLAG_C),
+            0x2 => !self.get_flag(cpu::FLAG_C),
+            0x1 => self.get_flag(cpu::FLAG_Z),
+            0x0 => !self.get_flag(cpu::FLAG_Z),
+            _ => unreachable!(),
         };
 
         if branch_taken {
-            soc.clock();
-
-            let pc_msb = util::get_high(self.pc().get());
-            self.clock_push_u8(soc, pc_msb);
-
-            let pc_lsb = util::get_low(self.pc().get());
-            self.clock_push_u8(soc, pc_lsb);
-
-            self.pc().set(util::value(msb, lsb));
+            self.call(soc, msb, lsb);
         } else {
             self.branch_skipped = true;
         }
@@ -683,21 +654,19 @@ impl cpu::CPU {
         self.ime_next = true;
     }
 
-    pub fn opcode_ldh(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+    pub fn opcode_ldh_r8addr_a(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xE0);
         let addr_u8 = self.clock_consume_byte_from_pc(soc);
-
         let addr_full = u16::from(addr_u8) | 0xFF00;
+        soc.clock_write(addr_full, self.a().get());
+    }
 
-        match opcode {
-            0xE0 /* LDH [a8] A */ => {
-                soc.clock_write(addr_full, self.a().get());
-            }
-            0xF0 /* LDH A [a8] */ => {
-                let val = soc.clock_read(addr_full);
-                self.a().set(val);
-            }
-            _ => unreachable!(),
-        }
+    pub fn opcode_ldh_a_r8addr(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
+        debug_assert!(opcode == 0xF0);
+        let addr_u8 = self.clock_consume_byte_from_pc(soc);
+        let addr_full = u16::from(addr_u8) | 0xFF00;
+        let val = soc.clock_read(addr_full);
+        self.a().set(val);
     }
 
     pub fn opcode_prefix(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
