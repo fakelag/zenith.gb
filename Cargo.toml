@@ -19,7 +19,8 @@ bench = false
 name = "bench_main"
 harness = false
 
-# [profile.release]
+[profile.release]
+panic = "abort"
 # debug = true
 
 [dependencies]

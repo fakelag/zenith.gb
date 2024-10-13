@@ -192,6 +192,7 @@ impl APU {
             }
 
             chan.send(cvt_audio).unwrap();
+            // _ = chan.try_send(cvt_audio);
             self.sample_buffer.clear();
         }
     }

@@ -61,6 +61,7 @@ pub fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::vid
 
     let mut canvas = window
         .into_canvas()
+        .accelerated()
         .build()
         .expect("could not create canvas");
 
@@ -274,7 +275,8 @@ fn vsync_canvas(
     rt: &FrameBuffer,
     texture: &mut sdl2::render::Texture,
     canvas: &mut sdl2::render::WindowCanvas,
-    last_frame: &mut time::Instant, // @todo - Refactor into a system
+    num_frames: &mut u64,
+    last_fps_update: &mut time::Instant,
 ) {
     texture
         .with_lock(None, |buffer, size| {
@@ -297,22 +299,22 @@ fn vsync_canvas(
         })
         .unwrap();
 
-    canvas.clear();
     canvas.copy(&texture, None, None).unwrap();
     canvas.present();
 
-    let frame_time = last_frame.elapsed();
-    *last_frame = time::Instant::now();
-    canvas
-        .window_mut()
-        .set_title(
-            format!(
-                "fps={:?}",
-                (1000_000 / std::cmp::max(frame_time.as_micros(), 1))
-            )
-            .as_str(),
-        )
-        .unwrap();
+    let curtime = time::Instant::now();
+    let dur = curtime.duration_since(*last_fps_update).as_secs_f64();
+    if dur >= 4.0 {
+        canvas
+            .window_mut()
+            .set_title(format!("fps={:.1}", (*num_frames as f64) / dur).as_str())
+            .unwrap();
+
+        *num_frames = 1;
+        *last_fps_update = curtime;
+    } else {
+        *num_frames += 1;
+    }
 }
 
 pub fn run_state(
@@ -335,7 +337,9 @@ pub fn run_state(
             }
         },
         State::Running(ref mut gb) => {
-            let mut last_frame = time::Instant::now();
+            let mut num_frames = 0;
+            let mut last_fps_update = time::Instant::now();
+
             let texture_creator = canvas.texture_creator();
 
             let mut texture = texture_creator
@@ -363,7 +367,13 @@ pub fn run_state(
 
                     if vsync {
                         let rt = gb.get_framebuffer();
-                        vsync_canvas(rt, &mut texture, canvas, &mut last_frame);
+                        vsync_canvas(
+                            rt,
+                            &mut texture,
+                            canvas,
+                            &mut num_frames,
+                            &mut last_fps_update,
+                        );
                     }
 
                     cycles_left = cycles_left.saturating_sub(cycles_run);
@@ -377,9 +387,7 @@ pub fn run_state(
                 let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
                 let sleep_time = FRAME_TIME.saturating_sub(elapsed);
 
-                if sleep_time > 0 {
-                    spin_sleep::sleep(time::Duration::from_micros(sleep_time));
-                }
+                spin_sleep::sleep(time::Duration::from_micros(sleep_time));
             }
         }
         State::Exit => {
