@@ -133,9 +133,8 @@ impl Channel1 {
 
 impl Channel for Channel1 {
     fn clock(&mut self) {
-        self.freq_timer = self.freq_timer.saturating_sub(1);
-
-        if self.freq_timer != 0 {
+        if self.freq_timer > 1 {
+            self.freq_timer -= 1;
             return;
         }
 

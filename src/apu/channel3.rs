@@ -161,11 +161,12 @@ impl Channel3 {
 
 impl Channel for Channel3 {
     fn clock(&mut self) {
-        self.last_sample_step = self.last_sample_step.saturating_add(1);
+        if self.last_sample_step != 0xFF {
+            self.last_sample_step += 1;
+        }
 
-        self.freq_timer = self.freq_timer.saturating_sub(1);
-
-        if self.freq_timer != 0 {
+        if self.freq_timer > 1 {
+            self.freq_timer -= 1;
             return;
         }
 
