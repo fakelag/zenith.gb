@@ -96,9 +96,4 @@ impl Gameboy {
     pub fn get_cpu(&mut self) -> &mut cpu::CPU {
         &mut self.cpu
     }
-
-    #[cfg(test)]
-    pub fn is_supported_cart_type(&self) -> bool {
-        self.soc.is_supported_cart_type()
-    }
 }

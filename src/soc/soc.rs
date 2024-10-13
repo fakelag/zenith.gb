@@ -55,14 +55,9 @@ pub struct SOC {
     dma_request: Option<u8>,
     active_dma: Option<DmaTransfer>,
 
-    buttons: [bool; GbButton::GbButtonMax as usize],
+    buttons: [bool; 8],
 
     event_bits: u8,
-
-    #[cfg(test)]
-    supported_carttype: bool,
-    #[cfg(test)]
-    rom_path: String,
 }
 
 impl SOC {
@@ -80,11 +75,6 @@ impl SOC {
             timer: Timer::new(),
             ppu: ppu::PPU::new(),
             serial: serial::Serial::new(),
-
-            #[cfg(test)]
-            supported_carttype: true,
-            #[cfg(test)]
-            rom_path: cartridge.rom_path.clone(),
         };
 
         soc.load(&cartridge);
@@ -111,8 +101,6 @@ impl SOC {
                         "WARN: Unsupported cartridge/MBC: {}",
                         cartridge.header.cart_type
                     );
-
-                    self.supported_carttype = false;
                 }
                 Box::new(MbcRomOnly::new())
             }
@@ -483,15 +471,5 @@ impl SOC {
             };
             self.active_dma = Some(dma);
         }
-    }
-
-    #[cfg(test)]
-    pub fn is_supported_cart_type(&self) -> bool {
-        self.supported_carttype
-    }
-
-    #[cfg(test)]
-    pub fn get_rom_path(&self) -> &str {
-        &self.rom_path
     }
 }

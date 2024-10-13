@@ -404,11 +404,6 @@ mod tests {
         let cart = Cartridge::new(rom_path);
         let mut gb = Gameboy::new(cart);
 
-        if !gb.is_supported_cart_type() {
-            println!("Skipping {rom_path} due to unsupported cart type");
-            return None;
-        }
-
         gb.dmg_boot();
         Some(gb)
     }
