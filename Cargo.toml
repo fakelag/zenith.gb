@@ -19,6 +19,9 @@ bench = false
 name = "bench_main"
 harness = false
 
+# [profile.release]
+# debug = true
+
 [dependencies]
 bmp = "0.5.0"
 sdl2 = "0.37.0"
