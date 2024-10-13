@@ -121,69 +121,44 @@ impl SOC {
         self.mbc.load(cartridge);
     }
 
-    pub fn address_accessible(&self, address: u16) -> bool {
-        // @todo Optimise memory access checking
-        // @todo Bus conflicts - during DMA RAM/ROM should be inaccessible
-
-        // if self.active_dma.is_some() {
-        //     match address {
-        //         0x0000..=0x7FFF => return false,
-        //         0xA000..=0xBFFF => return false,
-        //         0xC000..=0xDFFF => return false,
-        //         _ => {}
-        //     }
-        // }
-
-        match address {
-            0xFE00..=0xFE9F => !self.active_dma.is_some(),
-            _ => true,
-        }
-    }
-
+    #[rustfmt::skip]
     pub fn clock_read(&mut self, address: u16) -> u8 {
-        if !self.address_accessible(address) {
-            self.clock();
-            return 0xFF;
-        }
+        let active_dma = self.active_dma.is_some();
+        self.clock();
 
         // https://gbdev.io/pandocs/Memory_Map.html
         return match address {
             0x0000..=0x7FFF => {
-                self.clock();
                 self.mbc.read(address)
             }
             0x8000..=0x9FFF => {
-                self.clock();
                 self.ppu.read_vram(address)
             }
             0xA000..=0xBFFF => {
-                self.clock();
                 self.mbc.read(address)
             }
             0xC000..=0xCFFF => {
-                self.clock();
                 self.memory[usize::from(address)]
             }
             0xD000..=0xDFFF => {
-                self.clock();
                 self.memory[usize::from(address)]
             }
             0xE000..=0xFDFF => {
                 // Echo RAM
-                self.clock();
                 self.memory[usize::from(address - 0x2000)]
             }
             0xFE00..=0xFE9F => {
-                self.clock();
+                if active_dma {
+                    // @todo OAM DMA Bus conflicts
+                    return 0xFF;
+                }
                 self.ppu.read_oam(address)
             }
             0xFEA0..=0xFEFF => {
                 // @todo - Prohibited memory, on DMG triggers OAM corruption
-                self.clock();
                 0
             }
             0xFF00..=0xFF7F => {
-                self.clock();
                 match address {
                     HWR_P1 => {
                         let p1 = self.memory[address as usize];
@@ -191,63 +166,61 @@ impl SOC {
                         let button_bits = util::calc_button_bits(&self.buttons, p1);
                         return button_bits | (p1 & 0xF0);
                     }
-                    HWR_SB => self.serial.read_sb(),
-                    HWR_SC => self.serial.read_sc(),
-                    HWR_DIV => self.timer.read_div(),
-                    HWR_TAC => self.timer.read_tac(),
-                    HWR_TIMA => self.timer.read_tima(),
-                    HWR_TMA => self.timer.read_tma(),
-                    HWR_DIV_LSB => 0xFF,
-                    0xFF08..=0xFF0E => 0xFF,
-                    0xFF15 => 0xFF,
-                    0xFF1F => 0xFF,
-                    0xFF27..=0xFF2F => 0xFF,
-                    0xFF4C => 0xFF,
-                    0xFF4D..=0xFF7F => 0xFF, // Non-dmg regs
-                    HWR_NR10 => self.apu.read_nr10(),
-                    HWR_NR11 => self.apu.read_nr11(),
-                    HWR_NR12 => self.apu.read_nr12(),
-                    HWR_NR13 => self.apu.read_nr13(),
-                    HWR_NR14 => self.apu.read_nr14(),
-                    HWR_NR21 => self.apu.read_nr21(),
-                    HWR_NR22 => self.apu.read_nr22(),
-                    HWR_NR23 => self.apu.read_nr23(),
-                    HWR_NR24 => self.apu.read_nr24(),
-                    0xFF30..=0xFF3F => self.apu.read_wave_ram(address),
-                    HWR_NR30 => self.apu.read_nr30(),
-                    HWR_NR31 => self.apu.read_nr31(),
-                    HWR_NR32 => self.apu.read_nr32(),
-                    HWR_NR33 => self.apu.read_nr33(),
-                    HWR_NR34 => self.apu.read_nr34(),
-                    HWR_NR41 => self.apu.read_nr41(),
-                    HWR_NR42 => self.apu.read_nr42(),
-                    HWR_NR43 => self.apu.read_nr43(),
-                    HWR_NR44 => self.apu.read_nr44(),
-                    HWR_NR50 => self.apu.read_nr50(),
-                    HWR_NR51 => self.apu.read_nr51(),
-                    HWR_NR52 => self.apu.read_nr52(),
-                    HWR_LCDC => self.ppu.read_lcdc(),
-                    HWR_STAT => self.ppu.read_stat(),
-                    HWR_LY => self.ppu.read_ly(),
-                    HWR_SCY => self.ppu.read_scy(),
-                    HWR_SCX => self.ppu.read_scx(),
-                    HWR_LYC => self.ppu.read_lyc(),
-                    HWR_BGP => self.ppu.read_bgp(),
-                    HWR_OBP0 => self.ppu.read_obp0(),
-                    HWR_OBP1 => self.ppu.read_obp1(),
-                    HWR_WY => self.ppu.read_wy(),
-                    HWR_WX => self.ppu.read_wx(),
-                    _ => self.memory[usize::from(address)],
+                    HWR_SB              => self.serial.read_sb(),
+                    HWR_SC              => self.serial.read_sc(),
+                    HWR_DIV             => self.timer.read_div(),
+                    HWR_TAC             => self.timer.read_tac(),
+                    HWR_TIMA            => self.timer.read_tima(),
+                    HWR_TMA             => self.timer.read_tma(),
+                    HWR_DIV_LSB         => 0xFF,
+                    0xFF08..=0xFF0E     => 0xFF,
+                    0xFF15              => 0xFF,
+                    0xFF1F              => 0xFF,
+                    0xFF27..=0xFF2F     => 0xFF,
+                    0xFF4C              => 0xFF,
+                    0xFF4D..=0xFF7F     => 0xFF, // Non-dmg regs
+                    HWR_NR10            => self.apu.read_nr10(),
+                    HWR_NR11            => self.apu.read_nr11(),
+                    HWR_NR12            => self.apu.read_nr12(),
+                    HWR_NR13            => self.apu.read_nr13(),
+                    HWR_NR14            => self.apu.read_nr14(),
+                    HWR_NR21            => self.apu.read_nr21(),
+                    HWR_NR22            => self.apu.read_nr22(),
+                    HWR_NR23            => self.apu.read_nr23(),
+                    HWR_NR24            => self.apu.read_nr24(),
+                    0xFF30..=0xFF3F     => self.apu.read_wave_ram(address),
+                    HWR_NR30            => self.apu.read_nr30(),
+                    HWR_NR31            => self.apu.read_nr31(),
+                    HWR_NR32            => self.apu.read_nr32(),
+                    HWR_NR33            => self.apu.read_nr33(),
+                    HWR_NR34            => self.apu.read_nr34(),
+                    HWR_NR41            => self.apu.read_nr41(),
+                    HWR_NR42            => self.apu.read_nr42(),
+                    HWR_NR43            => self.apu.read_nr43(),
+                    HWR_NR44            => self.apu.read_nr44(),
+                    HWR_NR50            => self.apu.read_nr50(),
+                    HWR_NR51            => self.apu.read_nr51(),
+                    HWR_NR52            => self.apu.read_nr52(),
+                    HWR_LCDC            => self.ppu.read_lcdc(),
+                    HWR_STAT            => self.ppu.read_stat(),
+                    HWR_LY              => self.ppu.read_ly(),
+                    HWR_SCY             => self.ppu.read_scy(),
+                    HWR_SCX             => self.ppu.read_scx(),
+                    HWR_LYC             => self.ppu.read_lyc(),
+                    HWR_BGP             => self.ppu.read_bgp(),
+                    HWR_OBP0            => self.ppu.read_obp0(),
+                    HWR_OBP1            => self.ppu.read_obp1(),
+                    HWR_WY              => self.ppu.read_wy(),
+                    HWR_WX              => self.ppu.read_wx(),
+                    _                   => self.memory[usize::from(address)],
                 }
             }
             0xFF80..=0xFFFE => {
                 // HRAM
-                self.clock();
                 self.memory[usize::from(address)]
             }
             0xFFFF => {
                 // IE
-                self.clock();
                 self.memory[usize::from(address)]
             }
         };
@@ -255,11 +228,6 @@ impl SOC {
 
     #[rustfmt::skip]
     pub fn clock_write(&mut self, address: u16, data: u8) {
-        if !self.address_accessible(address) {
-            self.clock();
-            return;
-        }
-
         match address {
             0x0000..=0x7FFF => {
                 self.clock();
@@ -286,7 +254,12 @@ impl SOC {
                 self.memory[usize::from(address - 0x2000)] = data;
             }
             0xFE00..=0xFE9F => {
+                let active_dma = self.active_dma.is_some();
                 self.clock();
+                if active_dma {
+                    // @todo OAM DMA Bus conflicts
+                    return;
+                }
                 self.ppu.write_oam(address, data);
             }
             0xFEA0..=0xFEFF => {
@@ -463,7 +436,6 @@ impl SOC {
     }
 
     fn clock_oam_dma(&mut self) {
-        // @todo - Precise timings
         // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
         // instead of the actual value at the given memory address,
         // the byte that is currently being transferred by the DMA transfer is returned.
