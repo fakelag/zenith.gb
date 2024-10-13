@@ -236,6 +236,7 @@ impl PPU {
 
                 if self.ly >= 154 {
                     self.ly = 0;
+                    self.mode_oam_scan();
                     self.stat_mode = PpuMode::PpuOamScan;
                     self.cycles_mode = CYCLES_PER_OAM_SCAN;
                 } else {
