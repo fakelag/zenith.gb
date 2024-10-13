@@ -22,10 +22,11 @@ pub fn value(high: u8, low: u8) -> u16 {
     (u16::from(high) << 8) | u16::from(low)
 }
 
-pub fn calc_button_bits(buttons: &[bool; GbButton::GbButtonMax as usize], p1_val: u8) -> u8 {
-    let select_buttons = (p1_val & (1 << 5)) == 0;
-    let select_dpad = (p1_val & (1 << 4)) == 0;
-
+pub fn calc_button_bits(
+    buttons: &[bool; GbButton::GbButtonMax as usize],
+    select_buttons: bool,
+    select_dpad: bool,
+) -> u8 {
     let button_bits: u8 = if select_buttons && select_dpad {
         0xF
     } else if select_buttons {

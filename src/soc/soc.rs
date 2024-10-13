@@ -48,7 +48,14 @@ pub struct SOC {
     ppu: ppu::PPU,
     serial: serial::Serial,
 
-    memory: Vec<u8>,
+    wram: Vec<u8>,
+    hram: Vec<u8>,
+
+    p1_select_buttons: bool,
+    p1_select_dpad: bool,
+    r#if: u8,
+    ie: u8,
+    dma: u8,
 
     mbc: Box<dyn MBC>,
 
@@ -64,12 +71,19 @@ impl SOC {
     pub fn new(cartridge: &Cartridge) -> SOC {
         let mut soc = Self {
             cycles: 0,
-            memory: vec![0; 0],
+            wram: vec![0; 0x4000],
+            hram: vec![0; 0x7F],
             mbc: Box::new(MbcRomOnly::new()),
             active_dma: None,
             dma_request: None,
             buttons: [false; GbButton::GbButtonMax as usize],
             event_bits: 0,
+
+            p1_select_buttons: false,
+            p1_select_dpad: false,
+            r#if: 0x1,
+            ie: 0x0,
+            dma: 0xFF,
 
             apu: apu::APU::new(),
             timer: Timer::new(),
@@ -82,13 +96,6 @@ impl SOC {
     }
 
     pub fn load(&mut self, cartridge: &Cartridge) {
-        self.memory = vec![0; 0x10000];
-
-        self.memory[0xFF50] = 0x1;
-        self.memory[HWR_P1 as usize] = 0xCF;
-        self.memory[HWR_IF as usize] = 0xE1;
-        self.memory[HWR_DMA as usize] = 0xFF;
-
         self.mbc = match cartridge.header.cart_type {
             0x1..=0x3 => Box::new(mbc1::MBC1::new()),
             0x5..=0x6 => Box::new(mbc2::MBC2::new()),
@@ -125,15 +132,12 @@ impl SOC {
             0xA000..=0xBFFF => {
                 self.mbc.read(address)
             }
-            0xC000..=0xCFFF => {
-                self.memory[usize::from(address)]
-            }
-            0xD000..=0xDFFF => {
-                self.memory[usize::from(address)]
+            0xC000..=0xDFFF => {
+                self.wram[usize::from(address - 0xC000)]
             }
             0xE000..=0xFDFF => {
                 // Echo RAM
-                self.memory[usize::from(address - 0x2000)]
+                self.wram[usize::from(address - 0xE000)]
             }
             0xFE00..=0xFE9F => {
                 if active_dma {
@@ -149,24 +153,23 @@ impl SOC {
             0xFF00..=0xFF7F => {
                 match address {
                     HWR_P1 => {
-                        let p1 = self.memory[address as usize];
-
-                        let button_bits = util::calc_button_bits(&self.buttons, p1);
-                        return button_bits | (p1 & 0xF0);
+                        let button_bits = util::calc_button_bits(
+                            &self.buttons,
+                            !self.p1_select_buttons,
+                            !self.p1_select_dpad,
+                        );
+                        return button_bits
+                            | ((self.p1_select_buttons as u8) << 5)
+                            | ((self.p1_select_dpad as u8) << 4)
+                            | 0xC0;
                     }
                     HWR_SB              => self.serial.read_sb(),
                     HWR_SC              => self.serial.read_sc(),
                     HWR_DIV             => self.timer.read_div(),
-                    HWR_TAC             => self.timer.read_tac(),
                     HWR_TIMA            => self.timer.read_tima(),
                     HWR_TMA             => self.timer.read_tma(),
-                    HWR_DIV_LSB         => 0xFF,
-                    0xFF08..=0xFF0E     => 0xFF,
-                    0xFF15              => 0xFF,
-                    0xFF1F              => 0xFF,
-                    0xFF27..=0xFF2F     => 0xFF,
-                    0xFF4C              => 0xFF,
-                    0xFF4D..=0xFF7F     => 0xFF, // Non-dmg regs
+                    HWR_TAC             => self.timer.read_tac(),
+                    HWR_IF              => self.r#if | 0xE0,
                     HWR_NR10            => self.apu.read_nr10(),
                     HWR_NR11            => self.apu.read_nr11(),
                     HWR_NR12            => self.apu.read_nr12(),
@@ -195,21 +198,20 @@ impl SOC {
                     HWR_SCY             => self.ppu.read_scy(),
                     HWR_SCX             => self.ppu.read_scx(),
                     HWR_LYC             => self.ppu.read_lyc(),
+                    HWR_DMA             => self.dma,
                     HWR_BGP             => self.ppu.read_bgp(),
                     HWR_OBP0            => self.ppu.read_obp0(),
                     HWR_OBP1            => self.ppu.read_obp1(),
                     HWR_WY              => self.ppu.read_wy(),
                     HWR_WX              => self.ppu.read_wx(),
-                    _                   => self.memory[usize::from(address)],
+                    _                   => 0xFF,
                 }
             }
             0xFF80..=0xFFFE => {
-                // HRAM
-                self.memory[usize::from(address)]
+                self.hram[usize::from(address) - 0xFF80]
             }
             0xFFFF => {
-                // IE
-                self.memory[usize::from(address)]
+                self.ie
             }
         };
     }
@@ -229,17 +231,14 @@ impl SOC {
                 self.clock();
                 self.mbc.write(address, data);
             }
-            0xC000..=0xCFFF => {
+            0xC000..=0xDFFF => {
                 self.clock();
-                self.memory[usize::from(address)] = data;
-            }
-            0xD000..=0xDFFF => {
-                self.clock();
-                self.memory[usize::from(address)] = data;
+                self.wram[usize::from(address - 0xC000)] = data;
             }
             0xE000..=0xFDFF => {
+                // Echo RAM
                 self.clock();
-                self.memory[usize::from(address - 0x2000)] = data;
+                self.wram[usize::from(address - 0xE000)] = data;
             }
             0xFE00..=0xFE9F => {
                 let active_dma = self.active_dma.is_some();
@@ -259,29 +258,24 @@ impl SOC {
                 match address {
                     HWR_P1 => {
                         self.clock();
-                        // Lower nibble RO
-                        let ro_bits = self.memory[usize::from(address)] & 0xCF;
-                        self.memory[usize::from(address)] = (data & 0x30) | ro_bits;
+                        self.p1_select_buttons = data & 0x20 != 0;
+                        self.p1_select_dpad = data & 0x10 != 0;
                     }
                     HWR_SB => { self.clock(); self.serial.write_sb(data) },
                     HWR_SC => { self.clock(); self.serial.write_sc(data) },
                     HWR_IF => {
                         self.clock();
-                        // Top 3 bits unused
-                        let ro_bits = self.memory[usize::from(address)] & 0xE0;
-                        self.memory[usize::from(address)] = (data & 0x1F) | ro_bits;
+                        self.r#if = data & 0x1F;
                     }
                     HWR_DMA => {
                         self.clock();
                         self.dma_request = Some(data);
-                        self.memory[usize::from(address)] = data;
+                        self.dma = data;
                     }
                     HWR_DIV                 => self.clock_timer_write(Timer::clock_write_div, data),
                     HWR_TAC                 => self.clock_timer_write(Timer::clock_write_tac, data),
                     HWR_TIMA                => self.clock_timer_write(Timer::clock_write_tima, data),
                     HWR_TMA                 => self.clock_timer_write(Timer::clock_write_tma, data),
-                    // 0xFF4F               => { todo!("select vram bank cgb"); } // @todo CGB: vram bank
-                    0xFF4D..=0xFF70         => { self.clock(); }
                     HWR_NR10                => { self.clock(); self.apu.write_nr10(data) }
                     HWR_NR11                => { self.clock(); self.apu.write_nr11(data) }
                     HWR_NR12                => { self.clock(); self.apu.write_nr12(data) }
@@ -315,18 +309,16 @@ impl SOC {
                     HWR_OBP1                => { self.clock(); self.ppu.write_obp1(data) },
                     HWR_WY                  => { self.clock(); self.ppu.write_wy(data) },
                     HWR_WX                  => { self.clock(); self.ppu.write_wx(data) },
-                    HWR_DIV_LSB             => { self.clock(); },
-                    _                       => { self.clock(); self.memory[usize::from(address)] = data },
+                    _                       => { self.clock(); /* unused */},
                 }
             }
             0xFF80..=0xFFFE => {
                 self.clock();
-                self.memory[usize::from(address)] = data;
+                self.hram[usize::from(address) - 0xFF80] = data;
             }
             0xFFFF => {
                 self.clock();
-                // @todo - IE flag top 3 bits are unused (still writable?)
-                self.memory[usize::from(address)] = data;
+                self.ie = data;
             }
         }
     }
@@ -335,7 +327,7 @@ impl SOC {
         self.clock_oam_dma();
 
         let mut ctx = ClockContext {
-            interrupts: &mut self.memory[HWR_IF as usize],
+            interrupts: &mut self.r#if,
             events: &mut self.event_bits,
             cycles: self.cycles,
         };
@@ -358,7 +350,7 @@ impl SOC {
         self.clock_oam_dma();
 
         let mut ctx = ClockContext {
-            interrupts: &mut self.memory[HWR_IF as usize],
+            interrupts: &mut self.r#if,
             events: &mut self.event_bits,
             cycles: self.cycles,
         };
@@ -374,18 +366,18 @@ impl SOC {
     }
 
     pub fn set_interrupt(&mut self, interrupt: u8) {
-        let flags_if = self.memory[HWR_IF as usize];
-        self.memory[HWR_IF as usize] = flags_if | interrupt;
+        let flags_if = self.r#if;
+        self.r#if = flags_if | interrupt;
     }
 
     pub fn clear_interrupt(&mut self, interrupt: u8) {
-        let if_flags = self.memory[HWR_IF as usize];
-        self.memory[HWR_IF as usize] = if_flags & !interrupt;
+        let if_flags = self.r#if;
+        self.r#if = if_flags & !interrupt;
     }
 
     pub fn active_interrupts(&mut self) -> u8 {
-        let ie_flags = self.memory[HWR_IE as usize];
-        let if_flags = self.memory[HWR_IF as usize];
+        let ie_flags = self.ie;
+        let if_flags = self.r#if;
 
         return ie_flags & if_flags;
     }
@@ -445,9 +437,8 @@ impl SOC {
                 0x0000..=0x7FFF => self.mbc.read(address),
                 0x8000..=0x9FFF => self.ppu.read_vram(address), // not clocked
                 0xA000..=0xBFFF => self.mbc.read(address),
-                0xC000..=0xCFFF => self.memory[usize::from(address)],
-                0xD000..=0xDFFF => self.memory[usize::from(address)],
-                0xE000..=0xFDFF => self.memory[usize::from(address - 0x2000)],
+                0xC000..=0xDFFF => self.wram[usize::from(address - 0xC000)],
+                0xE000..=0xFDFF => self.wram[usize::from(address - 0xE000)],
                 0xFE00..=0xFFFF => {
                     unreachable!()
                 }
