@@ -5,6 +5,8 @@ extern crate gbemu_lib;
 use gbemu_lib::*;
 
 fn main() {
+    let sync_va = true;
+
     let sdl_ctx = sdl2::init().unwrap();
     let mut canvas = sdl2_create_window(&sdl_ctx);
 
@@ -12,35 +14,52 @@ fn main() {
 
     let _controller = sdl2_enable_controller(&sdl_ctx);
 
+    let (mut frame_send, mut frame_recv) =
+        std::sync::mpsc::sync_channel::<ppu::ppu::FrameBuffer>(1);
+
     let mut event_pump = sdl_ctx.event_pump().unwrap();
     let mut state = State::Idle;
 
     if let Some(preload_rom) = std::env::args().nth(1) {
-        let mut emu = create_emulator(&preload_rom);
-        emu.enable_external_audio(sound_chan.clone());
-        state = State::Running(emu);
+        state = run_emulator(
+            &preload_rom,
+            Some(sound_chan.clone()),
+            Some(frame_send.clone()),
+            sync_va,
+        );
     }
 
     'eventloop: loop {
-        let mut next_state = run_state(&mut state, &mut canvas, &mut event_pump);
-
-        match state {
-            State::Running(ref mut gb) => {
-                gb.close();
+        let next_state = match state {
+            State::Idle => state_idle(&mut event_pump),
+            State::Running(ref ctx) => {
+                state_running(ctx, &mut canvas, &frame_recv, &mut event_pump, sync_va)
             }
-            _ => {}
-        }
+        };
 
         match next_state {
-            State::Exit => {
+            Some(NextState::LoadRom(rom_path)) => {
+                if let State::Running(ctx) = state {
+                    drop(frame_recv);
+                    _ = ctx.handle.join();
+                    (frame_send, frame_recv) =
+                        std::sync::mpsc::sync_channel::<ppu::ppu::FrameBuffer>(1);
+                }
+
+                state = run_emulator(
+                    &rom_path,
+                    Some(sound_chan.clone()),
+                    Some(frame_send.clone()),
+                    sync_va,
+                );
+            }
+            Some(NextState::Exit) => {
                 break 'eventloop;
             }
-            State::Running(ref mut gb) => {
-                gb.enable_external_audio(sound_chan.clone());
+            None => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
             _ => {}
         }
-
-        state = next_state;
     }
 }

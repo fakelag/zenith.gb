@@ -20,10 +20,19 @@ pub mod soc;
 pub mod timer;
 pub mod util;
 
+pub struct EmulatorContext {
+    pub handle: std::thread::JoinHandle<()>,
+    pub input_send: InputSender,
+}
+
 pub enum State {
-    Exit,
     Idle,
-    Running(Gameboy),
+    Running(Box<EmulatorContext>),
+}
+
+pub enum NextState {
+    Exit,
+    LoadRom(String),
 }
 
 pub const GB_DEFAULT_FPS: f64 = 59.73;
@@ -149,11 +158,33 @@ pub fn sdl2_enable_controller(
     return Ok(controller);
 }
 
-pub fn create_emulator(rom_path: &str) -> Gameboy {
-    let cart = Cartridge::new(rom_path);
-    let mut gb = Gameboy::new(cart);
-    gb.dmg_boot();
-    gb
+pub fn run_emulator(
+    rom_path: &str,
+    sound_chan: Option<apu::apu::ApuSoundSender>,
+    frame_chan: Option<ppu::ppu::PpuFrameSender>,
+    sync_va: bool,
+) -> State {
+    let rom_path_string = rom_path.to_string();
+
+    let (input_send, input_recv) = std::sync::mpsc::sync_channel::<InputEvent>(10);
+
+    let config = EmulatorConfig {
+        input_recv: Some(input_recv),
+        frame_chan,
+        sound_chan,
+        enable_saving: true,
+        sync_audio: sync_va,
+        sync_video: sync_va,
+    };
+
+    let handle = std::thread::spawn(move || {
+        let cart = Cartridge::new(&rom_path_string);
+        let mut gb = Gameboy::new(cart, Box::new(config));
+        gb.dmg_boot();
+        gb.run();
+    });
+
+    State::Running(Box::new(EmulatorContext { handle, input_send }))
 }
 
 fn scancode_to_gb_btn(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
@@ -204,73 +235,6 @@ fn controller_axis_gb_btn(axis: sdl2::controller::Axis) -> Option<(GbButton, GbB
     }
 }
 
-fn poll_events(input_vec: &mut Vec<InputEvent>, event_pump: &mut sdl2::EventPump) -> Option<State> {
-    for event in event_pump.poll_iter() {
-        match event {
-            sdl2::event::Event::DropFile { filename, .. } => {
-                return Some(State::Running(create_emulator(&filename)));
-            }
-            sdl2::event::Event::Quit { .. } => {
-                return Some(State::Exit);
-            }
-            sdl2::event::Event::KeyDown {
-                scancode, repeat, ..
-            } => {
-                if repeat {
-                    continue;
-                }
-                if let Some(gb_button) = scancode_to_gb_btn(scancode) {
-                    input_vec.push(InputEvent {
-                        down: true,
-                        button: gb_button,
-                    });
-                }
-            }
-            sdl2::event::Event::KeyUp { scancode, .. } => {
-                if let Some(gb_button) = scancode_to_gb_btn(scancode) {
-                    input_vec.push(InputEvent {
-                        down: false,
-                        button: gb_button,
-                    });
-                }
-            }
-            sdl2::event::Event::ControllerButtonDown { which, button, .. } => {
-                if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
-                    input_vec.push(InputEvent {
-                        down: true,
-                        button: gb_button,
-                    });
-                }
-            }
-            sdl2::event::Event::ControllerButtonUp { which, button, .. } => {
-                if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
-                    input_vec.push(InputEvent {
-                        down: false,
-                        button: gb_button,
-                    });
-                }
-            }
-            sdl2::event::Event::ControllerAxisMotion { axis, value, .. } => {
-                let dead_zone = 10_000;
-
-                if let Some((btn_neg, btn_pos)) = controller_axis_gb_btn(axis) {
-                    input_vec.push(InputEvent {
-                        down: value < -dead_zone,
-                        button: btn_neg,
-                    });
-                    input_vec.push(InputEvent {
-                        down: value > dead_zone,
-                        button: btn_pos,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
-}
-
 fn vsync_canvas(
     rt: &FrameBuffer,
     texture: &mut sdl2::render::Texture,
@@ -299,6 +263,7 @@ fn vsync_canvas(
         })
         .unwrap();
 
+    canvas.clear();
     canvas.copy(&texture, None, None).unwrap();
     canvas.present();
 
@@ -317,81 +282,134 @@ fn vsync_canvas(
     }
 }
 
-pub fn run_state(
-    state: &mut State,
-    canvas: &mut sdl2::render::WindowCanvas,
-    event_pump: &mut sdl2::EventPump,
-) -> State {
-    match state {
-        State::Idle => loop {
-            for event in event_pump.wait_timeout_iter(100) {
-                match event {
-                    sdl2::event::Event::DropFile { filename, .. } => {
-                        return State::Running(create_emulator(&filename));
-                    }
-                    sdl2::event::Event::Quit { .. } => {
-                        return State::Exit;
-                    }
-                    _ => {}
-                }
+pub fn state_idle(event_pump: &mut sdl2::EventPump) -> Option<NextState> {
+    for event in event_pump.poll_iter() {
+        match event {
+            sdl2::event::Event::DropFile { filename, .. } => {
+                return Some(NextState::LoadRom(filename));
             }
-        },
-        State::Running(ref mut gb) => {
-            let mut num_frames = 0;
-            let mut last_fps_update = time::Instant::now();
+            sdl2::event::Event::Quit { .. } => {
+                return Some(NextState::Exit);
+            }
+            _ => {}
+        }
+    }
 
-            let texture_creator = canvas.texture_creator();
+    None
+}
 
-            let mut texture = texture_creator
-                .create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24, 160, 144)
-                .unwrap();
+pub fn state_running(
+    ctx: &Box<EmulatorContext>,
+    canvas: &mut sdl2::render::WindowCanvas,
+    frame_recv: &std::sync::mpsc::Receiver<FrameBuffer>,
+    event_pump: &mut sdl2::EventPump,
+    sync_va: bool,
+) -> Option<NextState> {
+    let mut num_frames = 0;
+    let mut last_fps_update = time::Instant::now();
 
-            let mut input_vec = Vec::new();
-            let mut saved_at = time::Instant::now();
+    let texture_creator = canvas.texture_creator();
 
-            loop {
-                let start_time = time::Instant::now();
+    let mut texture = texture_creator
+        .create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24, 160, 144)
+        .unwrap();
 
-                if let Some(next_state) = poll_events(&mut input_vec, event_pump) {
-                    return next_state;
+    loop {
+        let start_time = time::Instant::now();
+
+        for event in event_pump.poll_iter() {
+            match event {
+                sdl2::event::Event::DropFile { filename, .. } => {
+                    return Some(NextState::LoadRom(filename));
                 }
-
-                if input_vec.len() > 0 {
-                    gb.input_update(&input_vec);
-                    input_vec.clear();
+                sdl2::event::Event::Quit { .. } => {
+                    return Some(NextState::Exit);
                 }
-
-                let mut cycles_left = M_CYCLES_PER_FRAME;
-                while cycles_left > 0 {
-                    let (cycles_run, vsync) = gb.run(cycles_left);
-
-                    if vsync {
-                        let rt = gb.get_framebuffer();
-                        vsync_canvas(
-                            rt,
-                            &mut texture,
-                            canvas,
-                            &mut num_frames,
-                            &mut last_fps_update,
-                        );
+                sdl2::event::Event::KeyDown {
+                    scancode, repeat, ..
+                } => {
+                    if repeat {
+                        continue;
                     }
-
-                    cycles_left = cycles_left.saturating_sub(cycles_run);
+                    if let Some(gb_button) = scancode_to_gb_btn(scancode) {
+                        ctx.input_send
+                            .send(InputEvent {
+                                down: true,
+                                button: gb_button,
+                            })
+                            .unwrap();
+                    }
                 }
-
-                if saved_at.elapsed() > time::Duration::from_secs(60) {
-                    gb.save();
-                    saved_at = time::Instant::now();
+                sdl2::event::Event::KeyUp { scancode, .. } => {
+                    if let Some(gb_button) = scancode_to_gb_btn(scancode) {
+                        ctx.input_send
+                            .send(InputEvent {
+                                down: false,
+                                button: gb_button,
+                            })
+                            .unwrap();
+                    }
                 }
+                sdl2::event::Event::ControllerButtonDown { which, button, .. } => {
+                    if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
+                        ctx.input_send
+                            .send(InputEvent {
+                                down: true,
+                                button: gb_button,
+                            })
+                            .unwrap();
+                    }
+                }
+                sdl2::event::Event::ControllerButtonUp { which, button, .. } => {
+                    if let Some(gb_button) = controller_btn_to_gb_btn(button, which) {
+                        ctx.input_send
+                            .send(InputEvent {
+                                down: false,
+                                button: gb_button,
+                            })
+                            .unwrap();
+                    }
+                }
+                sdl2::event::Event::ControllerAxisMotion { axis, value, .. } => {
+                    let dead_zone = 10_000;
 
-                let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
-                let sleep_time = FRAME_TIME.saturating_sub(elapsed);
-
-                spin_sleep::sleep(time::Duration::from_micros(sleep_time));
+                    if let Some((btn_neg, btn_pos)) = controller_axis_gb_btn(axis) {
+                        ctx.input_send
+                            .send(InputEvent {
+                                down: value < -dead_zone,
+                                button: btn_neg,
+                            })
+                            .unwrap();
+                        ctx.input_send
+                            .send(InputEvent {
+                                down: value > dead_zone,
+                                button: btn_pos,
+                            })
+                            .unwrap();
+                    }
+                }
+                _ => {}
             }
         }
-        State::Exit => {
-            return State::Exit;
+
+        match frame_recv.recv() {
+            Ok(rt) => {
+                vsync_canvas(
+                    &rt,
+                    &mut texture,
+                    canvas,
+                    &mut num_frames,
+                    &mut last_fps_update,
+                );
+            }
+            Err(_err) => panic!("error lol"),
+        }
+
+        let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
+        let sleep_time = FRAME_TIME.saturating_sub(elapsed);
+
+        if sync_va && sleep_time > 0 {
+            spin_sleep::sleep(time::Duration::from_micros(sleep_time));
         }
     }
 }
