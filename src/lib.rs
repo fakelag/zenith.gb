@@ -38,8 +38,7 @@ pub enum NextState {
 pub const GB_DEFAULT_FPS: f64 = 59.73;
 pub const TARGET_FPS: f64 = GB_DEFAULT_FPS;
 
-const T_CYCLES_PER_FRAME: u64 = (4_194_304.0 / GB_DEFAULT_FPS) as u64;
-const M_CYCLES_PER_FRAME: u64 = T_CYCLES_PER_FRAME / 4;
+const T_CYCLES_PER_SECOND: u64 = 4_194_304;
 const FRAME_TIME: u64 = ((1.0 / TARGET_FPS) * 1000_000.0) as u64;
 
 const GB_SCREEN_WIDTH: u32 = 160;
@@ -158,24 +157,12 @@ pub fn sdl2_enable_controller(
     return Ok(controller);
 }
 
-pub fn run_emulator(
-    rom_path: &str,
-    sound_chan: Option<apu::apu::ApuSoundSender>,
-    frame_chan: Option<ppu::ppu::PpuFrameSender>,
-    sync_va: bool,
-) -> State {
+pub fn run_emulator(rom_path: &str, mut config: EmulatorConfig) -> EmulatorContext {
     let rom_path_string = rom_path.to_string();
 
     let (input_send, input_recv) = std::sync::mpsc::sync_channel::<InputEvent>(10);
 
-    let config = EmulatorConfig {
-        input_recv: Some(input_recv),
-        frame_chan,
-        sound_chan,
-        enable_saving: true,
-        sync_audio: sync_va,
-        sync_video: sync_va,
-    };
+    config.input_recv = Some(input_recv);
 
     let handle = std::thread::spawn(move || {
         let cart = Cartridge::new(&rom_path_string);
@@ -184,7 +171,7 @@ pub fn run_emulator(
         gb.run();
     });
 
-    State::Running(Box::new(EmulatorContext { handle, input_send }))
+    EmulatorContext { handle, input_send }
 }
 
 fn scancode_to_gb_btn(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
@@ -418,93 +405,56 @@ pub fn state_running(
 mod tests {
     use super::*;
     use colored::Colorize;
-    use cpu::cpu::CPU;
     use rayon::prelude::*;
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::mpsc::{Receiver, SyncSender},
     };
+    use util::util;
 
-    pub fn create_test_emulator(rom_path: &str) -> Option<Gameboy> {
-        let cart = Cartridge::new(rom_path);
-        let mut gb = Gameboy::new(cart);
-
-        gb.dmg_boot();
-        Some(gb)
-    }
-
-    fn run_test_emulator<T>(
-        gb: &mut Gameboy,
-        break_chan: Receiver<T>,
-        input_chan: Option<&Receiver<InputEvent>>,
-        frame_chan: Option<&SyncSender<FrameBuffer>>,
-    ) -> Option<T> {
-        let mcycles_per_frame = T_CYCLES_PER_FRAME / 4;
-        let max_cycles = mcycles_per_frame * 120 * 60; // 120 seconds, 60 fps
-
-        let mut trigger: Option<T> = None;
-        let mut cycles_run = 0;
-
-        while cycles_run < max_cycles {
-            let (cycles_passed, vsync) = gb.run(mcycles_per_frame);
-
-            if vsync {
-                if let Some(fs) = frame_chan {
-                    if let Err(err) = fs.send(*gb.get_framebuffer()) {
-                        panic!("Frame sender error: {err}");
-                    }
-                }
-            }
-
-            if let Some(input) = input_chan {
-                if let Ok(next_input) = input.try_recv() {
-                    gb.input_update(&vec![next_input]);
-                }
-            }
-
-            if let Ok(val) = break_chan.try_recv() {
-                trigger = Some(val);
-                break;
-            }
-
-            cycles_run += cycles_passed;
-        }
-
-        return trigger;
-    }
-
-    fn mts_passed(cpu: &mut CPU) -> bool {
-        if cpu.b().get() != 3
-            || cpu.c().get() != 5
-            || cpu.d().get() != 8
-            || cpu.e().get() != 13
-            || cpu.h().get() != 21
-            || cpu.l().get() != 34
+    fn mts_passed(regs: (u16, u16, u16)) -> bool {
+        if util::get_high(regs.0) != 3
+            || util::get_low(regs.0) != 5
+            || util::get_high(regs.1) != 8
+            || util::get_low(regs.1) != 13
+            || util::get_high(regs.2) != 21
+            || util::get_low(regs.2) != 34
         {
             return false;
         }
-
         return true;
     }
 
     fn mts_runner(rom_path: &str, _inputs: Option<Vec<GbButton>>) -> Option<bool> {
-        let mut emu_res = create_test_emulator(rom_path);
+        let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<ppu::ppu::FrameBuffer>(1);
+        let (break_send, break_recv) = std::sync::mpsc::sync_channel::<(u16, u16, u16)>(1);
 
-        if let Some(gb) = &mut emu_res {
-            let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
+        let emu_ctx = run_emulator(
+            rom_path,
+            EmulatorConfig {
+                enable_saving: false,
+                sync_audio: false,
+                sync_video: false,
+                bp_chan: Some(break_send),
+                frame_chan: Some(frame_send),
+                sound_chan: None,
+                input_recv: None,
+                max_cycles: Some(T_CYCLES_PER_SECOND * 120),
+            },
+        );
 
-            gb.set_breakpoint(Some(break_send));
+        let test_passed = match break_recv.recv_timeout(time::Duration::from_secs(5)) {
+            Ok(regs) => mts_passed(regs),
+            Err(_) => false,
+        };
 
-            let bp_triggered = run_test_emulator(gb, break_recv, None, None);
-            let test_passed = bp_triggered.is_some() && mts_passed(gb.get_cpu());
-            return Some(test_passed);
-        } else {
-            None
-        }
+        drop(frame_recv);
+        emu_ctx.handle.join().unwrap();
+
+        return Some(test_passed);
     }
 
-    fn snapshot_runner(rom_path: &str, inputs: Option<Vec<GbButton>>) -> Option<bool> {
+    fn snapshot_runner(rom_path: &str, mut inputs: Option<Vec<GbButton>>) -> Option<bool> {
         let root_path = PathBuf::from(rom_path.strip_prefix("tests/roms/").unwrap_or("unnamed"));
 
         let snapshot_dir = root_path
@@ -514,154 +464,148 @@ mod tests {
             .unwrap_or("unnamed")
             .to_string();
 
-        return snapshot_test(rom_path, &snapshot_dir, inputs);
-    }
-
-    fn snapshot_test(
-        rom_path: &str,
-        snapshot_dir: &str,
-        mut inputs: Option<Vec<GbButton>>,
-    ) -> Option<bool> {
-        let (break_send, break_recv) = std::sync::mpsc::channel::<u8>();
-        let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<FrameBuffer>(1);
-        let (input_send, input_recv) = std::sync::mpsc::channel::<InputEvent>();
+        let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<FrameBuffer>(2);
 
         if let Some(input_list) = &mut inputs {
             input_list.reverse();
         }
 
-        let emu_result = create_test_emulator(rom_path);
-
-        if emu_result.is_none() {
-            return None;
-        }
-
-        let mut gb = emu_result.unwrap();
+        let emu_ctx = run_emulator(
+            rom_path,
+            EmulatorConfig {
+                enable_saving: false,
+                sync_audio: false,
+                // Note: sync video to guarantee receiving every frame for snapshot comparison
+                sync_video: true,
+                bp_chan: None,
+                frame_chan: Some(frame_send),
+                sound_chan: None,
+                input_recv: None,
+                max_cycles: Some(T_CYCLES_PER_SECOND * 120),
+            },
+        );
 
         let rom_path_string = rom_path.to_string();
         let snapshot_dir_string = snapshot_dir.to_string();
 
-        std::thread::spawn(move || {
-            let mut frame_count: u64 = 0;
-            let mut release_inputs: Vec<(u64, GbButton)> = Vec::new();
-            let mut last_frame: Option<[[u8; 160]; 144]> = None;
-            let rom_filepath = Path::new(&rom_path_string);
-            let rom_filename = rom_filepath
-                .file_name()
-                .expect("filename must exist")
-                .to_str()
-                .expect("filename must be valid utf-8");
+        let mut frame_count: u64 = 0;
+        let mut release_inputs: Vec<(u64, GbButton)> = Vec::new();
+        let mut last_frame: Option<[[u8; 160]; 144]> = None;
+        let rom_filepath = Path::new(&rom_path_string);
+        let rom_filename = rom_filepath
+            .file_name()
+            .expect("filename must exist")
+            .to_str()
+            .expect("filename must be valid utf-8");
 
-            let cmp_image = if let Ok(snapshot) = bmp::open(format!(
-                "tests/snapshots/{snapshot_dir_string}/{rom_filename}.bmp"
-            )) {
-                if snapshot.get_height() != 144 || snapshot.get_width() != 160 {
-                    eprintln!("Invalid image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
-                    None
-                } else {
-                    Some(snapshot)
-                }
-            } else {
-                eprintln!("No image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
+        let cmp_image = if let Ok(snapshot) = bmp::open(format!(
+            "tests/snapshots/{snapshot_dir_string}/{rom_filename}.bmp"
+        )) {
+            if snapshot.get_height() != 144 || snapshot.get_width() != 160 {
+                eprintln!("Invalid image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
                 None
-            };
+            } else {
+                Some(snapshot)
+            }
+        } else {
+            eprintln!("No image snapshot found for {rom_filename}. Image from tests will be written to the verify directory");
+            None
+        };
 
-            loop {
-                match frame_recv.recv() {
-                    Ok(rt) => {
-                        last_frame = Some(rt);
-                        frame_count += 1;
+        let passed = loop {
+            match frame_recv.recv_timeout(time::Duration::from_secs(5)) {
+                Ok(rt) => {
+                    last_frame = Some(rt);
+                    frame_count += 1;
 
-                        if let Some(input_vector) = &mut inputs {
-                            if frame_count > 60 && frame_count % 20 == 0 {
-                                if let Some(press_next) = input_vector.pop() {
-                                    input_send
-                                        .send(InputEvent {
-                                            button: press_next,
-                                            down: true,
-                                        })
-                                        .unwrap();
-                                    release_inputs.push((frame_count + 10, press_next));
-                                }
-                            }
-                        }
-
-                        release_inputs.retain(|release_next| {
-                            if release_next.0 > frame_count {
-                                return true;
-                            }
-
-                            input_send
-                                .send(InputEvent {
-                                    button: release_next.1,
-                                    down: false,
-                                })
-                                .unwrap();
-                            return false;
-                        });
-
-                        if let Some(img) = &cmp_image {
-                            let mut match_snapshot = true;
-
-                            'img_check: for x in 0..160 {
-                                for y in 0..144 {
-                                    let gb_color = rt[y][x];
-                                    let palette_color = PALETTE[gb_color as usize];
-
-                                    let snapshot_pixel = img.get_pixel(x as u32, y as u32);
-                                    if snapshot_pixel.r != palette_color.r
-                                        || snapshot_pixel.g != palette_color.g
-                                        || snapshot_pixel.b != palette_color.b
-                                    {
-                                        match_snapshot = false;
-                                        break 'img_check;
-                                    }
-                                }
-                            }
-
-                            if match_snapshot {
-                                _ = break_send.send(0);
-                                // break;
+                    if let Some(input_vector) = &mut inputs {
+                        if frame_count > 60 && frame_count % 20 == 0 {
+                            if let Some(press_next) = input_vector.pop() {
+                                emu_ctx
+                                    .input_send
+                                    .send(InputEvent {
+                                        button: press_next,
+                                        down: true,
+                                    })
+                                    .unwrap();
+                                release_inputs.push((frame_count + 10, press_next));
                             }
                         }
                     }
-                    Err(_) => {
-                        if cmp_image.is_none() {
-                            if let Some(frame) = last_frame {
-                                let mut bmp_img = bmp::Image::new(160, 144);
 
-                                for x in 0..160 {
-                                    for y in 0..144 {
-                                        let gb_color = frame[y][x];
-                                        let palette_color = PALETTE[gb_color as usize];
-                                        bmp_img.set_pixel(
-                                            x as u32,
-                                            y as u32,
-                                            bmp::Pixel {
-                                                r: palette_color.r,
-                                                g: palette_color.g,
-                                                b: palette_color.b,
-                                            },
-                                        );
-                                    }
+                    release_inputs.retain(|release_next| {
+                        if release_next.0 > frame_count {
+                            return true;
+                        }
+
+                        emu_ctx
+                            .input_send
+                            .send(InputEvent {
+                                button: release_next.1,
+                                down: false,
+                            })
+                            .unwrap();
+                        return false;
+                    });
+
+                    if let Some(img) = &cmp_image {
+                        let mut match_snapshot = true;
+
+                        'img_check: for x in 0..160 {
+                            for y in 0..144 {
+                                let gb_color = rt[y][x];
+                                let palette_color = PALETTE[gb_color as usize];
+
+                                let snapshot_pixel = img.get_pixel(x as u32, y as u32);
+                                if snapshot_pixel.r != palette_color.r
+                                    || snapshot_pixel.g != palette_color.g
+                                    || snapshot_pixel.b != palette_color.b
+                                {
+                                    match_snapshot = false;
+                                    break 'img_check;
                                 }
-
-                                _ = bmp_img
-                                    .save(format!("tests/snapshots/verify/{rom_filename}.bmp"));
                             }
                         }
 
-                        drop(break_send);
-                        break;
+                        if match_snapshot {
+                            break true;
+                        }
                     }
+                }
+                Err(_) => {
+                    break false;
                 }
             }
-        });
+        };
 
-        let frame_check_passed =
-            run_test_emulator(&mut gb, break_recv, Some(&input_recv), Some(&frame_send));
-        let test_passed = frame_check_passed.is_some();
-        return Some(test_passed);
+        if !passed && cmp_image.is_none() {
+            if let Some(frame) = last_frame {
+                let mut bmp_img = bmp::Image::new(160, 144);
+
+                for x in 0..160 {
+                    for y in 0..144 {
+                        let gb_color = frame[y][x];
+                        let palette_color = PALETTE[gb_color as usize];
+                        bmp_img.set_pixel(
+                            x as u32,
+                            y as u32,
+                            bmp::Pixel {
+                                r: palette_color.r,
+                                g: palette_color.g,
+                                b: palette_color.b,
+                            },
+                        );
+                    }
+                }
+
+                _ = bmp_img.save(format!("tests/snapshots/verify/{rom_filename}.bmp"));
+            }
+        }
+
+        drop(frame_recv);
+        emu_ctx.handle.join().unwrap();
+
+        return Some(passed);
     }
 
     fn find_roms(rom_or_dir: &str) -> Vec<String> {

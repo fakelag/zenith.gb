@@ -72,11 +72,25 @@ pub struct SOC {
 
     enable_saving: bool,
     last_saved_at: std::time::Instant,
+
+    run_for_cycles: Option<u64>,
 }
 
 impl SOC {
-    pub fn new(cartridge: &Cartridge, config: Box<EmulatorConfig>) -> SOC {
+    pub fn new(
+        cartridge: &Cartridge,
+        input_recv: Option<InputReceiver>,
+        sound_chan: Option<apu::ApuSoundSender>,
+        frame_chan: Option<ppu::PpuFrameSender>,
+        enable_saving: bool,
+        sync_audio: bool,
+        sync_video: bool,
+        run_for_cycles: Option<u64>,
+    ) -> SOC {
         let mut soc = Self {
+            input_recv,
+            enable_saving,
+            run_for_cycles,
             cycles: 0,
             wram: vec![0; 0x4000],
             hram: vec![0; 0x7F],
@@ -84,7 +98,6 @@ impl SOC {
             active_dma: None,
             dma_request: None,
 
-            input_recv: config.input_recv,
             buttons: [false; GbButton::GbButtonMax as usize],
             event_bits: 0,
 
@@ -94,12 +107,11 @@ impl SOC {
             ie: 0x0,
             dma: 0xFF,
 
-            apu: apu::APU::new(config.sound_chan, config.sync_audio),
-            ppu: ppu::PPU::new(config.frame_chan, config.sync_video),
+            apu: apu::APU::new(sound_chan, sync_audio),
+            ppu: ppu::PPU::new(frame_chan, sync_video),
             timer: Timer::new(),
             serial: serial::Serial::new(),
 
-            enable_saving: config.enable_saving,
             last_saved_at: time::Instant::now(),
         };
 
@@ -441,7 +453,12 @@ impl SOC {
             return false;
         }
 
-        let exit = self.event_bits & SocEventBits::SocEventsExit as u8 != 0;
+        let exit = self.event_bits & SocEventBits::SocEventsExit as u8 != 0
+            || if let Some(max_cycles) = self.run_for_cycles {
+                self.cycles > max_cycles
+            } else {
+                false
+            };
 
         self.input_update();
 

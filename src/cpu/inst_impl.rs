@@ -8,8 +8,12 @@ impl cpu::CPU {
     pub fn opcode_nop(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {}
 
     pub fn opcode_ld_b_b(&mut self, _soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
+        let bc = self.bc().get();
+        let de = self.de().get();
+        let hl = self.hl().get();
+
         if let Some(bp) = &self.ld_bb_breakpoint {
-            _ = bp.send(0);
+            _ = bp.send((bc, de, hl));
         }
     }
 

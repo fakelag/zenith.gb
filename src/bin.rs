@@ -2,10 +2,13 @@
 
 extern crate gbemu_lib;
 
+use gameboy::gameboy::EmulatorConfig;
 use gbemu_lib::*;
 
 fn main() {
-    let sync_va = true;
+    let enable_saving = true;
+    let sync_video = true;
+    let sync_audio = true;
 
     let sdl_ctx = sdl2::init().unwrap();
     let mut canvas = sdl2_create_window(&sdl_ctx);
@@ -21,19 +24,26 @@ fn main() {
     let mut state = State::Idle;
 
     if let Some(preload_rom) = std::env::args().nth(1) {
-        state = run_emulator(
+        state = State::Running(Box::new(run_emulator(
             &preload_rom,
-            Some(sound_chan.clone()),
-            Some(frame_send.clone()),
-            sync_va,
-        );
+            EmulatorConfig {
+                bp_chan: None,
+                sound_chan: Some(sound_chan.clone()),
+                frame_chan: Some(frame_send.clone()),
+                input_recv: None,
+                max_cycles: None,
+                enable_saving,
+                sync_audio,
+                sync_video,
+            },
+        )));
     }
 
     'eventloop: loop {
         let next_state = match state {
             State::Idle => state_idle(&mut event_pump),
             State::Running(ref ctx) => {
-                state_running(ctx, &mut canvas, &frame_recv, &mut event_pump, sync_va)
+                state_running(ctx, &mut canvas, &frame_recv, &mut event_pump, sync_video)
             }
         };
 
@@ -46,12 +56,19 @@ fn main() {
                         std::sync::mpsc::sync_channel::<ppu::ppu::FrameBuffer>(1);
                 }
 
-                state = run_emulator(
+                state = State::Running(Box::new(run_emulator(
                     &rom_path,
-                    Some(sound_chan.clone()),
-                    Some(frame_send.clone()),
-                    sync_va,
-                );
+                    EmulatorConfig {
+                        bp_chan: None,
+                        sound_chan: Some(sound_chan.clone()),
+                        frame_chan: Some(frame_send.clone()),
+                        input_recv: None,
+                        max_cycles: None,
+                        enable_saving,
+                        sync_audio,
+                        sync_video,
+                    },
+                )));
             }
             Some(NextState::Exit) => {
                 break 'eventloop;

@@ -1,8 +1,5 @@
 use std::fmt::{self, Display};
 
-#[cfg(test)]
-use std::sync::mpsc::Sender;
-
 use crate::{
     apu::apu,
     cartridge::cartridge::*,
@@ -35,11 +32,13 @@ pub type InputSender = std::sync::mpsc::SyncSender<InputEvent>;
 pub struct EmulatorConfig {
     pub sound_chan: Option<apu::ApuSoundSender>,
     pub frame_chan: Option<ppu::PpuFrameSender>,
+    pub bp_chan: Option<cpu::BpSender>,
     pub input_recv: Option<InputReceiver>,
 
     pub enable_saving: bool,
     pub sync_audio: bool,
     pub sync_video: bool,
+    pub max_cycles: Option<u64>,
 }
 
 pub struct Gameboy {
@@ -58,8 +57,17 @@ impl Display for Gameboy {
 impl Gameboy {
     pub fn new(cartridge: Cartridge, config: Box<EmulatorConfig>) -> Gameboy {
         let gb = Self {
-            soc: soc::SOC::new(&cartridge, config),
-            cpu: cpu::CPU::new(),
+            soc: soc::SOC::new(
+                &cartridge,
+                config.input_recv,
+                config.sound_chan,
+                config.frame_chan,
+                config.enable_saving,
+                config.sync_audio,
+                config.sync_video,
+                config.max_cycles,
+            ),
+            cpu: cpu::CPU::new(config.bp_chan),
             cartridge,
         };
 
@@ -89,11 +97,6 @@ impl Gameboy {
 
     pub fn get_framebuffer(&self) -> &FrameBuffer {
         self.soc.get_framebuffer()
-    }
-
-    #[cfg(test)]
-    pub fn set_breakpoint(&mut self, bp_send: Option<Sender<u8>>) {
-        self.cpu.set_breakpoint(bp_send);
     }
 
     #[cfg(test)]
