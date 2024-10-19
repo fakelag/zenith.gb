@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Display},
-    sync::mpsc::Sender,
+    sync::mpsc::SyncSender,
 };
 
 use super::{
@@ -12,6 +12,8 @@ use crate::{
     soc::{interrupt::*, soc::SOC},
     util::*,
 };
+
+pub type BpSender = SyncSender<(u16, u16, u16)>;
 
 pub const FLAG_C: u8 = 1 << 4;
 pub const FLAG_H: u8 = 1 << 5;
@@ -56,7 +58,7 @@ pub struct CPU {
     pub ime: bool,
     pub halted: bool,
 
-    pub ld_bb_breakpoint: Option<Sender<u8>>,
+    pub ld_bb_breakpoint: Option<BpSender>,
 }
 
 impl Display for CPU {
@@ -105,7 +107,7 @@ impl Display for CPU {
 }
 
 impl CPU {
-    pub fn new() -> CPU {
+    pub fn new(ld_bb_breakpoint: Option<BpSender>) -> CPU {
         Self {
             opcode: 0x0,
             reg_af: 0,
@@ -118,7 +120,7 @@ impl CPU {
             ime: false,
             ime_next: false,
             halted: false,
-            ld_bb_breakpoint: None,
+            ld_bb_breakpoint,
         }
     }
 
@@ -421,10 +423,5 @@ impl CPU {
     }
     pub fn pc(&mut self) -> Reg16b {
         Reg16b::new(&mut self.reg_pc)
-    }
-
-    #[cfg(test)]
-    pub fn set_breakpoint(&mut self, bp_send: Option<Sender<u8>>) {
-        self.ld_bb_breakpoint = bp_send;
     }
 }

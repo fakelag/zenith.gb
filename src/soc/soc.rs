@@ -1,3 +1,5 @@
+use std::time;
+
 use crate::{
     apu::apu,
     cartridge::cartridge::Cartridge,
@@ -9,7 +11,7 @@ use crate::{
     serial::serial,
     timer::timer::Timer,
     util::util,
-    GbButton, InputEvent,
+    EmulatorConfig, GbButton, InputReceiver,
 };
 
 use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
@@ -17,6 +19,7 @@ use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
 pub enum SocEventBits {
     SocEventNone = 0,
     SocEventVSync = 1 << 0,
+    SocEventsExit = 1 << 1,
 }
 
 struct DmaTransfer {
@@ -65,17 +68,36 @@ pub struct SOC {
     buttons: [bool; 8],
 
     event_bits: u8,
+    input_recv: Option<InputReceiver>,
+
+    enable_saving: bool,
+    last_saved_at: std::time::Instant,
+
+    run_for_cycles: Option<u64>,
 }
 
 impl SOC {
-    pub fn new(cartridge: &Cartridge) -> SOC {
+    pub fn new(
+        cartridge: &Cartridge,
+        input_recv: Option<InputReceiver>,
+        sound_chan: Option<apu::ApuSoundSender>,
+        frame_chan: Option<ppu::PpuFrameSender>,
+        enable_saving: bool,
+        sync_audio: bool,
+        sync_video: bool,
+        run_for_cycles: Option<u64>,
+    ) -> SOC {
         let mut soc = Self {
+            input_recv,
+            enable_saving,
+            run_for_cycles,
             cycles: 0,
             wram: vec![0; 0x4000],
             hram: vec![0; 0x7F],
             mbc: Box::new(MbcRomOnly::new()),
             active_dma: None,
             dma_request: None,
+
             buttons: [false; GbButton::GbButtonMax as usize],
             event_bits: 0,
 
@@ -85,10 +107,12 @@ impl SOC {
             ie: 0x0,
             dma: 0xFF,
 
-            apu: apu::APU::new(),
+            apu: apu::APU::new(sound_chan, sync_audio),
+            ppu: ppu::PPU::new(frame_chan, sync_video),
             timer: Timer::new(),
-            ppu: ppu::PPU::new(),
             serial: serial::Serial::new(),
+
+            last_saved_at: time::Instant::now(),
         };
 
         soc.load(&cartridge);
@@ -382,16 +406,14 @@ impl SOC {
         return ie_flags & if_flags;
     }
 
-    pub fn enable_external_audio(&mut self, sound_chan: apu::ApuSoundSender) {
-        self.apu.enable_external_audio(sound_chan);
-    }
-
     pub fn get_framebuffer(&self) -> &FrameBuffer {
         self.ppu.get_framebuffer()
     }
 
     pub fn close(&mut self) {
-        self.mbc.save();
+        if self.enable_saving {
+            self.save();
+        }
         self.apu.close();
     }
 
@@ -399,20 +421,58 @@ impl SOC {
         self.mbc.save();
     }
 
-    pub fn input_update(&mut self, input_event: &InputEvent) {
-        let was_down = self.buttons[input_event.button as usize];
+    pub fn input_update(&mut self) {
+        let mut interrupt = false;
 
-        self.buttons[input_event.button as usize] = input_event.down;
+        match &self.input_recv {
+            Some(input_recv) => loop {
+                match input_recv.try_recv() {
+                    Ok(input_event) => {
+                        let was_down = self.buttons[input_event.button as usize];
 
-        if !was_down && input_event.down {
+                        self.buttons[input_event.button as usize] = input_event.down;
+
+                        if !was_down && input_event.down {
+                            interrupt = true;
+                        }
+                    }
+                    Err(_err) => break,
+                }
+            },
+            None => {}
+        }
+
+        if interrupt {
             self.set_interrupt(INTERRUPT_BIT_JOYPAD);
         }
     }
 
-    pub fn flush_events(&mut self) -> u8 {
-        let events = self.event_bits;
+    pub fn process_events(&mut self) -> bool {
+        if self.event_bits & SocEventBits::SocEventVSync as u8 == 0 {
+            self.event_bits = 0;
+            return false;
+        }
+
+        let exit = self.event_bits & SocEventBits::SocEventsExit as u8 != 0
+            || if let Some(max_cycles) = self.run_for_cycles {
+                self.cycles > max_cycles
+            } else {
+                false
+            };
+
+        self.input_update();
+
+        if self.enable_saving && self.last_saved_at.elapsed() > time::Duration::from_secs(60) {
+            self.save();
+            self.last_saved_at = time::Instant::now();
+        }
+
+        if exit {
+            self.close();
+        }
+
         self.event_bits = 0;
-        events
+        exit
     }
 
     fn clock_oam_dma(&mut self) {

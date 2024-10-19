@@ -1,9 +1,12 @@
 use std::fmt::{self, Display};
 
-#[cfg(test)]
-use std::sync::mpsc::Sender;
-
-use crate::{apu::apu, cartridge::cartridge::*, cpu::cpu, ppu::ppu::FrameBuffer, soc::soc};
+use crate::{
+    apu::apu,
+    cartridge::cartridge::*,
+    cpu::cpu,
+    ppu::ppu::{self, FrameBuffer},
+    soc::soc,
+};
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum GbButton {
@@ -23,6 +26,21 @@ pub struct InputEvent {
     pub button: GbButton,
 }
 
+pub type InputReceiver = std::sync::mpsc::Receiver<InputEvent>;
+pub type InputSender = std::sync::mpsc::SyncSender<InputEvent>;
+
+pub struct EmulatorConfig {
+    pub sound_chan: Option<apu::ApuSoundSender>,
+    pub frame_chan: Option<ppu::PpuFrameSender>,
+    pub bp_chan: Option<cpu::BpSender>,
+    pub input_recv: Option<InputReceiver>,
+
+    pub enable_saving: bool,
+    pub sync_audio: bool,
+    pub sync_video: bool,
+    pub max_cycles: Option<u64>,
+}
+
 pub struct Gameboy {
     cartridge: Cartridge,
     cpu: cpu::CPU,
@@ -37,36 +55,36 @@ impl Display for Gameboy {
 }
 
 impl Gameboy {
-    pub fn new(cartridge: Cartridge) -> Gameboy {
-        Self {
-            soc: soc::SOC::new(&cartridge),
-            cpu: cpu::CPU::new(),
+    pub fn new(cartridge: Cartridge, config: Box<EmulatorConfig>) -> Gameboy {
+        let gb = Self {
+            soc: soc::SOC::new(
+                &cartridge,
+                config.input_recv,
+                config.sound_chan,
+                config.frame_chan,
+                config.enable_saving,
+                config.sync_audio,
+                config.sync_video,
+                config.max_cycles,
+            ),
+            cpu: cpu::CPU::new(config.bp_chan),
             cartridge,
-        }
+        };
+
+        gb
     }
 
-    pub fn run(&mut self, num_cycles: u64) -> (u64, bool) {
-        let mut cycles_run: u64 = 0;
-
-        while cycles_run < num_cycles {
-            let cycles = self.cpu.step(&mut self.soc);
-
-            cycles_run += u64::from(cycles);
-
-            if self.soc.flush_events() & soc::SocEventBits::SocEventVSync as u8 != 0 {
-                return (cycles_run, true);
+    pub fn run(&mut self) {
+        loop {
+            let _cycles = self.cpu.step(&mut self.soc);
+            if self.soc.process_events() {
+                break;
             }
         }
-
-        return (cycles_run, false);
     }
 
     pub fn dmg_boot(&mut self) {
         self.cpu.init(&mut self.soc, &self.cartridge);
-    }
-
-    pub fn enable_external_audio(&mut self, sound_chan: apu::ApuSoundSender) {
-        self.soc.enable_external_audio(sound_chan);
     }
 
     pub fn close(&mut self) {
@@ -77,19 +95,8 @@ impl Gameboy {
         self.soc.save();
     }
 
-    pub fn input_update(&mut self, input_vec: &Vec<InputEvent>) {
-        for input_event in input_vec.iter() {
-            self.soc.input_update(input_event);
-        }
-    }
-
     pub fn get_framebuffer(&self) -> &FrameBuffer {
         self.soc.get_framebuffer()
-    }
-
-    #[cfg(test)]
-    pub fn set_breakpoint(&mut self, bp_send: Option<Sender<u8>>) {
-        self.cpu.set_breakpoint(bp_send);
     }
 
     #[cfg(test)]

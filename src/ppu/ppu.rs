@@ -1,8 +1,12 @@
-use std::fmt::{self, Display};
+use std::{
+    fmt::{self, Display},
+    sync::mpsc::TrySendError,
+};
 
 use crate::soc::{interrupt, soc};
 
 pub type FrameBuffer = [[u8; 160]; 144];
+pub type PpuFrameSender = std::sync::mpsc::SyncSender<FrameBuffer>;
 
 const CYCLES_PER_OAM_SCAN: u16 = 20;
 const CYCLES_PER_DRAW: u16 = 43;
@@ -59,7 +63,6 @@ pub struct PPU {
     cycles_frame: u32,
 
     draw_length: u16,
-
     stat_interrupt: bool,
 
     vram: Box<[u8; 0x2000]>,
@@ -70,13 +73,14 @@ pub struct PPU {
     // (checked at the start of Mode 2)
     draw_window: bool,
     window_line_counter: u16,
-
     fetcher_x: u16,
-
     bg_scanline_mask: [u8; 160],
 
     // @todo - 160*144=23040, allocate on the heaps
     rt: FrameBuffer,
+    frame_chan: Option<PpuFrameSender>,
+
+    sync_video: bool,
 
     lcdc_enable: bool,
     lcdc_wnd_tilemap: bool,
@@ -114,8 +118,10 @@ impl Display for PPU {
 }
 
 impl PPU {
-    pub fn new() -> Self {
+    pub fn new(frame_chan: Option<PpuFrameSender>, sync_video: bool) -> Self {
         Self {
+            frame_chan,
+            sync_video,
             draw_window: false,
             bg_scanline_mask: [0; 160],
             window_line_counter: 0,
@@ -217,6 +223,23 @@ impl PPU {
                 self.update_lyc_eq_ly();
 
                 self.stat_mode = if self.ly >= 144 {
+                    if let Some(frame_chan) = &self.frame_chan {
+                        if self.sync_video {
+                            match frame_chan.send(self.rt) {
+                                Ok(_) => {}
+                                Err(_err) => {
+                                    ctx.set_events(soc::SocEventBits::SocEventsExit);
+                                }
+                            }
+                        } else {
+                            match frame_chan.try_send(self.rt) {
+                                Ok(_) | Err(TrySendError::Full(_)) => {}
+                                Err(TrySendError::Disconnected(_)) => {
+                                    ctx.set_events(soc::SocEventBits::SocEventsExit)
+                                }
+                            }
+                        }
+                    }
                     ctx.set_interrupt(interrupt::INTERRUPT_BIT_VBLANK);
                     ctx.set_events(soc::SocEventBits::SocEventVSync);
 

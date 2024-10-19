@@ -30,6 +30,7 @@ pub struct APU {
 
     sample_counter: u16,
     sample_output: Option<(ApuSoundSender, AudioCVT)>,
+    sync_audio: bool,
 
     wav_data: Vec<i16>,
     sample_buffer: AudioBuffer,
@@ -46,8 +47,9 @@ pub struct APU {
 }
 
 impl APU {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(sound_chan: Option<ApuSoundSender>, sync_audio: bool) -> Self {
+        let mut apu = Self {
+            sync_audio,
             sample_output: None,
             channel1: Channel1::new(),
             channel2: Channel2::new(),
@@ -65,11 +67,13 @@ impl APU {
             left_vol: 7,
             left_vin: false,
             right_vin: false,
-        }
-    }
+        };
 
-    pub fn enable_external_audio(&mut self, sound_chan: ApuSoundSender) {
-        self.sample_output = Some((sound_chan, AudioCVT::new()));
+        if let Some(channel) = sound_chan {
+            apu.sample_output = Some((channel, AudioCVT::new()));
+        }
+
+        apu
     }
 
     pub fn close(&mut self) {
@@ -191,8 +195,11 @@ impl APU {
                 }
             }
 
-            chan.send(cvt_audio).unwrap();
-            // _ = chan.try_send(cvt_audio);
+            if self.sync_audio {
+                chan.send(cvt_audio).unwrap();
+            } else {
+                _ = chan.try_send(cvt_audio);
+            }
             self.sample_buffer.clear();
         }
     }
