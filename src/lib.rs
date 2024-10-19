@@ -389,7 +389,7 @@ pub fn state_running(
                     &mut last_fps_update,
                 );
             }
-            Err(_err) => panic!("error lol"),
+            Err(_err) => panic!("frame channel should not get dropped"),
         }
 
         let elapsed = start_time.elapsed().as_micros().try_into().unwrap();
