@@ -31,7 +31,6 @@ struct DmaTransfer {
 pub struct ClockContext<'a> {
     interrupts: &'a mut u8,
     events: &'a mut u8,
-    pub cycles: u64,
 }
 
 impl ClockContext<'_> {
@@ -353,7 +352,6 @@ impl SOC {
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
             events: &mut self.event_bits,
-            cycles: self.cycles,
         };
 
         self.ppu.clock(&mut ctx);
@@ -376,7 +374,6 @@ impl SOC {
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
             events: &mut self.event_bits,
-            cycles: self.cycles,
         };
 
         self.ppu.clock(&mut ctx);
@@ -399,7 +396,6 @@ impl SOC {
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
             events: &mut self.event_bits,
-            cycles: self.cycles,
         };
 
         clock_cb(&mut self.ppu, data, &mut ctx);
