@@ -7,11 +7,11 @@ use crate::{
         mbc::{MbcRomOnly, MBC},
         mbc1, mbc2, mbc3, mbc5,
     },
-    ppu::ppu::{self, FrameBuffer},
+    ppu::ppu::{self, FrameBuffer, PPU},
     serial::serial,
     timer::timer::Timer,
     util::util,
-    EmulatorConfig, GbButton, InputReceiver,
+    GbButton, InputReceiver,
 };
 
 use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
@@ -322,17 +322,17 @@ impl SOC {
                     HWR_NR50                => { self.clock(); self.apu.write_nr50(data) },
                     HWR_NR51                => { self.clock(); self.apu.write_nr51(data) },
                     HWR_NR52                => { self.clock(); self.apu.write_nr52(data) },
-                    HWR_LCDC                => { self.clock(); self.ppu.write_lcdc(data) },
-                    HWR_STAT                => { self.clock(); self.ppu.write_stat(data) },
-                    HWR_LY                  => { self.clock(); self.ppu.write_ly(data) },
-                    HWR_SCY                 => { self.clock(); self.ppu.write_scy(data) },
-                    HWR_SCX                 => { self.clock(); self.ppu.write_scx(data) },
-                    HWR_LYC                 => { self.clock(); self.ppu.write_lyc(data) },
-                    HWR_BGP                 => { self.clock(); self.ppu.write_bgp(data) },
-                    HWR_OBP0                => { self.clock(); self.ppu.write_obp0(data) },
-                    HWR_OBP1                => { self.clock(); self.ppu.write_obp1(data) },
-                    HWR_WY                  => { self.clock(); self.ppu.write_wy(data) },
-                    HWR_WX                  => { self.clock(); self.ppu.write_wx(data) },
+                    HWR_LCDC                => self.clock_ppu_write(PPU::clock_write_lcdc, data),
+                    HWR_STAT                => self.clock_ppu_write(PPU::clock_write_stat, data),
+                    HWR_LY                  => self.clock_ppu_write(PPU::clock_write_ly, data),
+                    HWR_SCY                 => self.clock_ppu_write(PPU::clock_write_scy, data),
+                    HWR_SCX                 => self.clock_ppu_write(PPU::clock_write_scx, data),
+                    HWR_LYC                 => self.clock_ppu_write(PPU::clock_write_lyc, data),
+                    HWR_BGP                 => self.clock_ppu_write(PPU::clock_write_bgp, data),
+                    HWR_OBP0                => self.clock_ppu_write(PPU::clock_write_obp0, data),
+                    HWR_OBP1                => self.clock_ppu_write(PPU::clock_write_obp1, data),
+                    HWR_WY                  => self.clock_ppu_write(PPU::clock_write_wy, data),
+                    HWR_WX                  => self.clock_ppu_write(PPU::clock_write_wx, data),
                     _                       => { self.clock(); /* unused */},
                 }
             }
@@ -368,7 +368,7 @@ impl SOC {
 
     pub fn clock_timer_write(
         &mut self,
-        clock_timer_cb: fn(&mut Timer, data: u8, ctx: &mut ClockContext),
+        clock_cb: fn(&mut Timer, data: u8, ctx: &mut ClockContext),
         data: u8,
     ) {
         self.clock_oam_dma();
@@ -380,7 +380,30 @@ impl SOC {
         };
 
         self.ppu.clock(&mut ctx);
-        clock_timer_cb(&mut self.timer, data, &mut ctx);
+        clock_cb(&mut self.timer, data, &mut ctx);
+
+        self.mbc.clock();
+        self.apu.clock();
+        self.serial.clock(&mut ctx);
+
+        self.cycles += 1;
+    }
+
+    pub fn clock_ppu_write(
+        &mut self,
+        clock_cb: fn(&mut PPU, data: u8, ctx: &mut ClockContext),
+        data: u8,
+    ) {
+        self.clock_oam_dma();
+
+        let mut ctx = ClockContext {
+            interrupts: &mut self.r#if,
+            events: &mut self.event_bits,
+            cycles: self.cycles,
+        };
+
+        clock_cb(&mut self.ppu, data, &mut ctx);
+        self.timer.clock(&mut ctx);
 
         self.mbc.clock();
         self.apu.clock();

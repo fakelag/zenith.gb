@@ -3,7 +3,10 @@ use std::{
     sync::mpsc::TrySendError,
 };
 
-use crate::soc::{interrupt, soc};
+use crate::soc::{
+    interrupt,
+    soc::{self, ClockContext},
+};
 
 pub type FrameBuffer = [[u8; 160]; 144];
 pub type PpuFrameSender = std::sync::mpsc::SyncSender<FrameBuffer>;
@@ -29,7 +32,8 @@ macro_rules! read_write {
             self.$var_name
         }
 
-        pub fn $write_name(&mut self, data: u8) {
+        pub fn $write_name(&mut self, data: u8, ctx: &mut soc::ClockContext) {
+            self.clock(ctx);
             self.$var_name = data;
         }
     };
@@ -188,7 +192,6 @@ impl PPU {
         self.cycles_mode -= 1;
 
         if self.cycles_mode > 0 {
-            self.handle_stat_interrupt(ctx);
             return;
         }
 
@@ -284,13 +287,17 @@ impl PPU {
             | (self.lcdc_bg_wnd_enable as u8)
     }
 
-    pub fn write_lcdc(&mut self, data: u8) {
+    pub fn clock_write_lcdc(&mut self, data: u8, ctx: &mut ClockContext) {
+        self.clock(ctx);
+
         let enable_next = data & (1 << 7) != 0;
 
         if self.lcdc_enable && !enable_next {
             self.reset();
+            self.handle_stat_interrupt(ctx);
         } else if !self.lcdc_enable && enable_next {
             self.update_lyc_eq_ly();
+            self.handle_stat_interrupt(ctx);
         }
 
         self.lcdc_enable = enable_next;
@@ -313,30 +320,38 @@ impl PPU {
             | 0x80
     }
 
-    pub fn write_stat(&mut self, data: u8) {
+    pub fn clock_write_stat(&mut self, data: u8, ctx: &mut ClockContext) {
+        self.clock(ctx);
+
         self.stat_lyc_select = data & (1 << 6) != 0;
         self.stat_mode2_select = data & (1 << 5) != 0;
         self.stat_mode1_select = data & (1 << 4) != 0;
         self.stat_mode0_select = data & (1 << 3) != 0;
+
+        self.handle_stat_interrupt(ctx);
     }
 
     pub fn read_ly(&self) -> u8 {
         self.ly
     }
 
-    pub fn write_ly(&mut self, _data: u8) {
+    pub fn clock_write_ly(&mut self, _data: u8, ctx: &mut ClockContext) {
         // noop
         // self.ly = 0;
+        self.clock(ctx);
     }
 
     pub fn read_lyc(&self) -> u8 {
         self.lyc
     }
 
-    pub fn write_lyc(&mut self, data: u8) {
+    pub fn clock_write_lyc(&mut self, data: u8, ctx: &mut ClockContext) {
+        self.clock(ctx);
+
         self.lyc = data;
         if self.lcdc_enable {
             self.update_lyc_eq_ly();
+            self.handle_stat_interrupt(ctx);
         }
     }
 
@@ -372,13 +387,13 @@ impl PPU {
         }
     }
 
-    read_write!(read_scy, write_scy, scy);
-    read_write!(read_scx, write_scx, scx);
-    read_write!(read_wy, write_wy, wy);
-    read_write!(read_wx, write_wx, wx);
-    read_write!(read_bgp, write_bgp, bgp);
-    read_write!(read_obp0, write_obp0, obp0);
-    read_write!(read_obp1, write_obp1, obp1);
+    read_write!(read_scy, clock_write_scy, scy);
+    read_write!(read_scx, clock_write_scx, scx);
+    read_write!(read_wy, clock_write_wy, wy);
+    read_write!(read_wx, clock_write_wx, wx);
+    read_write!(read_bgp, clock_write_bgp, bgp);
+    read_write!(read_obp0, clock_write_obp0, obp0);
+    read_write!(read_obp1, clock_write_obp1, obp1);
 
     fn update_lyc_eq_ly(&mut self) {
         self.stat_lyc_eq_ly = self.ly == self.lyc;
@@ -391,10 +406,6 @@ impl PPU {
         self.sprite_buffer.clear();
 
         for oam_cursor in 0..40 {
-            if self.sprite_buffer.len() >= 10 {
-                break;
-            }
-
             let obj_addr = oam_cursor * 4;
             let x_coord = self.oam[obj_addr + 1];
             let y_coord = self.oam[obj_addr];
@@ -406,6 +417,10 @@ impl PPU {
                     tile: self.oam[obj_addr + 2],
                     attr: self.oam[obj_addr + 3],
                 });
+
+                if self.sprite_buffer.len() >= 10 {
+                    break;
+                }
             }
         }
     }
@@ -642,11 +657,9 @@ impl PPU {
 
     fn calc_mode3_len(&self, window_pos: Option<u8>, sprite_pos: Option<Vec<u8>>) -> u16 {
         // @todo Check timing when window and a sprite fetch overlap
-        let mut scx_penalty = u16::from(self.scx % 8);
-        scx_penalty /= 4; // convert to M-cycles
+        let scx_penalty = u16::from(self.scx % 8);
 
-        let mut window_penalty: u16 = if window_pos.is_some() { 6 } else { 0 };
-        window_penalty /= 4; // convert to M-cycles
+        let window_penalty: u16 = if window_pos.is_some() { 6 } else { 0 };
 
         let mut sprite_penalty: u16 = 0;
         if let Some(sprite_vec) = sprite_pos {
@@ -685,12 +698,10 @@ impl PPU {
                 sprite_penalty += 6; // Sprite fetch cycles
                 did_sprite_fetch = true;
             }
-
-            sprite_penalty /= 4; // convert to M-cycles
         }
 
-        let mode3_length = CYCLES_PER_DRAW + scx_penalty + window_penalty + sprite_penalty;
-        return mode3_length;
+        let mode3_penalties = scx_penalty + window_penalty + sprite_penalty;
+        return CYCLES_PER_DRAW + mode3_penalties / 4;
     }
 
     fn mode_draw(&mut self) -> u16 {
