@@ -423,6 +423,9 @@ impl PPU {
                 }
             }
         }
+
+        self.sprite_buffer.reverse();
+        self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
     }
 
     fn fetch_bg_tile_number(&mut self, is_window: bool) -> u8 {
@@ -470,7 +473,6 @@ impl PPU {
         let line_offset = u16::from((y_with_flip & obj_mask) * 2);
 
         let tile_base = ((u16::from(sprite_oam.tile) * 16) + line_offset) as usize;
-
         return (self.vram[tile_base], self.vram[tile_base + 1]);
     }
 
@@ -584,28 +586,13 @@ impl PPU {
         return Some(wx_sub7);
     }
 
-    fn draw_sprites(&mut self) -> Option<Vec<u8>> {
+    fn draw_sprites(&mut self) {
         if !self.lcdc_obj_enable {
-            return None;
+            return;
         }
 
-        self.sprite_buffer.reverse();
-        self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
-        let sprites_with_tiles: Vec<SpriteWithTile> = self
-            .sprite_buffer
-            .iter()
-            .map(|oam_entry| {
-                let (tile_lsb, tile_msb) = self.fetch_sprite_tile_tuple(oam_entry);
-                SpriteWithTile {
-                    oam_entry: *oam_entry,
-                    tile_lsb,
-                    tile_msb,
-                }
-            })
-            .collect();
-
-        for sprite in sprites_with_tiles.iter() {
-            let sprite_screen_x: i16 = i16::from(sprite.oam_entry.x) - 8;
+        for sprite in self.sprite_buffer.iter() {
+            let sprite_screen_x: i16 = i16::from(sprite.x) - 8;
 
             for bit_idx in 0..8 {
                 let x: i16 = sprite_screen_x + (7 - bit_idx);
@@ -614,12 +601,14 @@ impl PPU {
                     continue;
                 }
 
-                let x_flip = sprite.oam_entry.attr & OAM_BIT_X_FLIP != 0;
+                let (tile_lsb, tile_msb) = self.fetch_sprite_tile_tuple(sprite);
+
+                let x_flip = sprite.attr & OAM_BIT_X_FLIP != 0;
 
                 let bit_idx_flip = if x_flip { 7 - bit_idx } else { bit_idx };
 
-                let hb = (sprite.tile_msb >> bit_idx_flip) & 0x1;
-                let lb = (sprite.tile_lsb >> bit_idx_flip) & 0x1;
+                let hb = (tile_msb >> bit_idx_flip) & 0x1;
+                let lb = (tile_lsb >> bit_idx_flip) & 0x1;
                 let sprite_color = lb | (hb << 1);
 
                 if sprite_color == 0 {
@@ -627,8 +616,8 @@ impl PPU {
                     continue;
                 }
 
-                let sprite_palette = sprite.oam_entry.attr & (1 << 4);
-                let sprite_bgpriority = sprite.oam_entry.attr & (1 << 7);
+                let sprite_palette = sprite.attr & (1 << 4);
+                let sprite_bgpriority = sprite.attr & (1 << 7);
 
                 let sprite_palette = if sprite_palette == 0 {
                     self.obp0
@@ -651,33 +640,48 @@ impl PPU {
                 self.rt[self.ly as usize][x as usize] = sprite_pixel;
             }
         }
-
-        let sprite_positions = sprites_with_tiles.iter().map(|sp| sp.oam_entry.x).collect();
-
-        return Some(sprite_positions);
     }
 
-    fn calc_mode3_len(&self, window_pos: Option<u8>, sprite_pos: Option<Vec<u8>>) -> u16 {
+    fn calc_mode3_len(&self, window_pos: Option<u8>) -> u16 {
         // @todo Check timing when window and a sprite fetch overlap
         let scx_penalty = u16::from(self.scx & 0x7);
 
         let window_penalty: u16 = if window_pos.is_some() { 6 } else { 0 };
 
         let mut sprite_penalty: u16 = 0;
-        if let Some(sprite_vec) = sprite_pos {
-            let mut remaining_sprites = sprite_vec.iter().rev().copied().collect::<Vec<u8>>();
-
+        if self.lcdc_obj_enable {
             let mut bg_fifo_count: u8 = 8;
 
             let mut did_sprite_fetch = false;
             let mut x = 0;
-            while x < 160 {
-                let sprite_opt = remaining_sprites
-                    .iter()
-                    .enumerate()
-                    .find(|(_i, sp_x)| **sp_x < x + 8);
 
-                if sprite_opt.is_none() {
+            let mut sprite_mask: u16 = 0;
+            while x < 160 {
+                let sprite_opt = self
+                    .sprite_buffer
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .find_map(|(i, sp)| {
+                        let sprite_bit = 1 << i;
+                        if sprite_mask & sprite_bit == 0 && sp.x < x + 8 {
+                            Some(sprite_bit)
+                        } else {
+                            None
+                        }
+                    });
+
+                if let Some(sprite_bit) = sprite_opt {
+                    // println!("{} [fifo {bg_fifo_count}] - sprite idx {} at {}", x, sprite.0, sprite.1);
+                    sprite_mask |= sprite_bit;
+
+                    // if sprite_penalty == 0 {
+                    //     sprite_penalty += 2;
+                    // }
+
+                    sprite_penalty += 6; // Sprite fetch cycles
+                    did_sprite_fetch = true;
+                } else {
                     if did_sprite_fetch {
                         did_sprite_fetch = false;
                         sprite_penalty += u16::from((6 as u8).saturating_sub(bg_fifo_count));
@@ -685,20 +689,7 @@ impl PPU {
                     }
                     bg_fifo_count = 8 - (x & 0x7);
                     x += 1;
-                    continue;
                 }
-
-                let sprite = sprite_opt.unwrap();
-
-                // println!("{} [fifo {bg_fifo_count}] - sprite idx {} at {}", x, sprite.0, sprite.1);
-                remaining_sprites.remove(sprite.0);
-
-                // if sprite_penalty == 0 {
-                //     sprite_penalty += 2;
-                // }
-
-                sprite_penalty += 6; // Sprite fetch cycles
-                did_sprite_fetch = true;
             }
         }
 
@@ -709,9 +700,9 @@ impl PPU {
     fn mode_draw(&mut self) -> u16 {
         self.draw_background();
         let window_pos = self.draw_window();
-        let sprite_pos = self.draw_sprites();
+        self.draw_sprites();
 
-        self.calc_mode3_len(window_pos, sprite_pos)
+        self.calc_mode3_len(window_pos)
     }
 
     fn handle_stat_interrupt(&mut self, ctx: &mut soc::ClockContext) {
