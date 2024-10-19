@@ -456,17 +456,18 @@ impl PPU {
 
     fn fetch_sprite_tile_tuple(&self, sprite_oam: &Sprite) -> (u8, u8) {
         let ly = self.ly;
-        let obj_height: u8 = if self.lcdc_obj_size { 16 } else { 8 };
+        let obj_mask: u8 = if self.lcdc_obj_size { 0xF } else { 0x7 };
 
         let y_with_flip = if sprite_oam.attr & OAM_BIT_Y_FLIP == 0 {
             ly.wrapping_sub(sprite_oam.y)
         } else {
+            let obj_height = obj_mask + 1;
             obj_height
                 .wrapping_sub(ly.wrapping_sub(sprite_oam.y))
                 .wrapping_sub(1)
         };
 
-        let line_offset = u16::from((y_with_flip % obj_height) * 2);
+        let line_offset = u16::from((y_with_flip & obj_mask) * 2);
 
         let tile_base = ((u16::from(sprite_oam.tile) * 16) + line_offset) as usize;
 
@@ -477,9 +478,9 @@ impl PPU {
         let addressing_mode_8000 = self.lcdc_bg_wnd_tiles;
 
         let line_offset = if is_window {
-            u16::from(2 * (self.window_line_counter % 8))
+            u16::from(2 * (self.window_line_counter & 0x7))
         } else {
-            u16::from(2 * (self.ly.wrapping_add(self.scy) % 8))
+            u16::from(2 * (self.ly.wrapping_add(self.scy) & 0x7))
         };
 
         let (tile_lsb, tile_msb) = if addressing_mode_8000 {
@@ -500,12 +501,13 @@ impl PPU {
 
         if !self.lcdc_bg_wnd_enable {
             for x in 0..160 {
+                self.bg_scanline_mask[x] = 0;
                 self.rt[self.ly as usize][x as usize] = 0;
             }
             return;
         }
 
-        let mut skip_pixels = self.scx % 8;
+        let mut skip_pixels = self.scx & 0x7;
         let mut x: u8 = 0;
 
         'outer: loop {
@@ -657,7 +659,7 @@ impl PPU {
 
     fn calc_mode3_len(&self, window_pos: Option<u8>, sprite_pos: Option<Vec<u8>>) -> u16 {
         // @todo Check timing when window and a sprite fetch overlap
-        let scx_penalty = u16::from(self.scx % 8);
+        let scx_penalty = u16::from(self.scx & 0x7);
 
         let window_penalty: u16 = if window_pos.is_some() { 6 } else { 0 };
 
@@ -681,7 +683,7 @@ impl PPU {
                         sprite_penalty += u16::from((6 as u8).saturating_sub(bg_fifo_count));
                         // println!("{} remaining pixel penalty {}", x, 6 - bg_fifo_count);
                     }
-                    bg_fifo_count = 8 - (x % 8);
+                    bg_fifo_count = 8 - (x & 0x7);
                     x += 1;
                     continue;
                 }
@@ -705,10 +707,6 @@ impl PPU {
     }
 
     fn mode_draw(&mut self) -> u16 {
-        for x in 0..160 {
-            self.bg_scanline_mask[x] = 0;
-        }
-
         self.draw_background();
         let window_pos = self.draw_window();
         let sprite_pos = self.draw_sprites();
