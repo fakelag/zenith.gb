@@ -56,12 +56,6 @@ struct Sprite {
     attr: u8,
 }
 
-struct SpriteWithTile {
-    oam_entry: Sprite,
-    tile_lsb: u8,
-    tile_msb: u8,
-}
-
 pub struct PPU {
     cycles_mode: u16,
     cycles_frame: u32,
@@ -181,6 +175,30 @@ impl PPU {
         self.stat_mode = PpuMode::PpuHBlank;
     }
 
+    // vsync can have a big stack frame due to copying over framebuffer
+    // never inline to avoid paying stack probes unless necessary
+    #[inline(never)]
+    pub fn vsync(&self) -> bool {
+        if let Some(frame_chan) = &self.frame_chan {
+            if self.sync_video {
+                match frame_chan.send(self.rt) {
+                    Ok(_) => {}
+                    Err(_err) => {
+                        return true;
+                    }
+                }
+            } else {
+                match frame_chan.try_send(self.rt) {
+                    Ok(_) | Err(TrySendError::Full(_)) => {}
+                    Err(TrySendError::Disconnected(_)) => {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     pub fn clock(&mut self, ctx: &mut soc::ClockContext) {
         if !self.lcdc_enable {
             return;
@@ -226,23 +244,10 @@ impl PPU {
                 self.update_lyc_eq_ly();
 
                 self.stat_mode = if self.ly >= 144 {
-                    if let Some(frame_chan) = &self.frame_chan {
-                        if self.sync_video {
-                            match frame_chan.send(self.rt) {
-                                Ok(_) => {}
-                                Err(_err) => {
-                                    ctx.set_events(soc::SocEventBits::SocEventsExit);
-                                }
-                            }
-                        } else {
-                            match frame_chan.try_send(self.rt) {
-                                Ok(_) | Err(TrySendError::Full(_)) => {}
-                                Err(TrySendError::Disconnected(_)) => {
-                                    ctx.set_events(soc::SocEventBits::SocEventsExit)
-                                }
-                            }
-                        }
+                    if self.vsync() {
+                        ctx.set_events(soc::SocEventBits::SocEventsVSyncAndExit);
                     }
+
                     ctx.set_interrupt(interrupt::INTERRUPT_BIT_VBLANK);
                     ctx.set_events(soc::SocEventBits::SocEventVSync);
 
@@ -509,13 +514,21 @@ impl PPU {
             return;
         }
 
-        let mut skip_pixels = self.scx & 0x7;
-        let mut x: u8 = 0;
+        let skip_pixels: usize = (self.scx & 0x7) as usize;
+        let mut scx_max = 8 - skip_pixels;
+        let ly = self.ly as usize;
+
+        let mut x: usize = 0;
+
+        assert!(ly < 144);
 
         'outer: loop {
             let tile = self.fetch_bg_tile_number(false);
             let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(tile, false);
-            let scx_max = 8 - skip_pixels;
+
+            let rt_scanline = &mut self.rt[ly];
+
+            assert!(x < 160);
 
             for bit_idx in (0..scx_max).rev() {
                 let hb = (tile_msb >> bit_idx) & 0x1;
@@ -524,8 +537,8 @@ impl PPU {
 
                 let palette_color = (self.bgp >> (bg_pixel * 2)) & 0x3;
 
-                self.bg_scanline_mask[x as usize] = bg_pixel;
-                self.rt[self.ly as usize][x as usize] = palette_color;
+                self.bg_scanline_mask[x] = bg_pixel;
+                rt_scanline[x] = palette_color;
                 x += 1;
 
                 if x == 160 {
@@ -533,7 +546,7 @@ impl PPU {
                 }
             }
 
-            skip_pixels = 0;
+            scx_max = 8;
         }
     }
 
@@ -554,16 +567,23 @@ impl PPU {
 
         let wx_sub7 = self.wx.saturating_sub(7);
 
-        let mut x: u8 = wx_sub7;
+        let mut x = wx_sub7 as usize;
         let mut skip_pixels = 7 - std::cmp::min(self.wx, 7);
 
         if x >= 160 {
             return None;
         }
 
+        let ly = self.ly as usize;
+        assert!(ly < 144);
+
         'outer: loop {
             let tile = self.fetch_bg_tile_number(true);
             let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(tile, true);
+
+            let rt_scanline = &mut self.rt[ly];
+
+            assert!(x < 160);
 
             for bit_idx in (skip_pixels..8).rev() {
                 let hb = (tile_msb >> bit_idx) & 0x1;
@@ -572,8 +592,8 @@ impl PPU {
 
                 let palette_color = (self.bgp >> (win_pixel * 2)) & 0x3;
 
-                self.bg_scanline_mask[x as usize] = win_pixel;
-                self.rt[self.ly as usize][x as usize] = palette_color;
+                self.bg_scanline_mask[x] = win_pixel;
+                rt_scanline[x] = palette_color;
                 x += 1;
 
                 if x == 160 {

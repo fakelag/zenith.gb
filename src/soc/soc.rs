@@ -19,7 +19,7 @@ use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
 pub enum SocEventBits {
     SocEventNone = 0,
     SocEventVSync = 1 << 0,
-    SocEventsExit = 1 << 1,
+    SocEventsVSyncAndExit = 1 << 1,
 }
 
 struct DmaTransfer {
@@ -472,7 +472,7 @@ impl SOC {
             return false;
         }
 
-        let exit = self.event_bits & SocEventBits::SocEventsExit as u8 != 0
+        let exit = self.event_bits & SocEventBits::SocEventsVSyncAndExit as u8 != 0
             || if let Some(max_cycles) = self.run_for_cycles {
                 self.cycles > max_cycles
             } else {
