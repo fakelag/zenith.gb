@@ -1,16 +1,16 @@
 [package]
-name = "gbemu-rs"
+name = "zenith-gb"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "gbemu_lib"
+name = "zenith_lib"
 path = "src/lib.rs"
 doctest = false
 bench = false
 
 [[bin]]
-name = "gbemu_bin"
+name = "zenith_bin"
 path = "src/bin.rs"
 test = false
 bench = false

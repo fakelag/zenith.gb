@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use gbemu_lib::{gameboy::gameboy::EmulatorConfig, ppu::ppu, run_emulator};
 use std::hint::black_box;
+use zenith_lib::{gameboy::gameboy::EmulatorConfig, ppu::ppu, run_emulator};
 
 pub fn run_bench(rom_path: &str, num_cycles: u64) {
     let (sound_send, sound_recv) = std::sync::mpsc::sync_channel::<Vec<i16>>(1);

@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::mpsc::{self},
     time,
 };
@@ -23,6 +24,7 @@ pub mod util;
 pub struct EmulatorContext {
     pub handle: std::thread::JoinHandle<()>,
     pub input_send: InputSender,
+    pub rom_filename: String,
 }
 
 pub enum State {
@@ -57,7 +59,7 @@ pub fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::vid
 
     let window = video_subsystem
         .window(
-            "Gameboy",
+            "Zenith",
             GB_SCREEN_WIDTH * WINDOW_SIZE_MULT,
             GB_SCREEN_HEIGHT * WINDOW_SIZE_MULT,
         )
@@ -171,7 +173,17 @@ pub fn run_emulator(rom_path: &str, mut config: EmulatorConfig) -> EmulatorConte
         gb.run();
     });
 
-    EmulatorContext { handle, input_send }
+    let rom_filename = Path::new(&rom_path)
+        .file_name()
+        .expect("filename must exist")
+        .to_str()
+        .expect("filename must be valid utf-8");
+
+    EmulatorContext {
+        handle,
+        input_send,
+        rom_filename: rom_filename.to_string(),
+    }
 }
 
 fn scancode_to_gb_btn(scancode: Option<sdl2::keyboard::Scancode>) -> Option<GbButton> {
@@ -228,6 +240,7 @@ fn vsync_canvas(
     canvas: &mut sdl2::render::WindowCanvas,
     num_frames: &mut u64,
     last_fps_update: &mut time::Instant,
+    rom_filename: &str,
 ) {
     texture
         .with_lock(None, |buffer, size| {
@@ -259,7 +272,14 @@ fn vsync_canvas(
     if dur >= 4.0 {
         canvas
             .window_mut()
-            .set_title(format!("fps={:.1}", (*num_frames as f64) / dur).as_str())
+            .set_title(
+                format!(
+                    "Zenith ({:.1} fps) - {}",
+                    (*num_frames as f64) / dur,
+                    rom_filename
+                )
+                .as_str(),
+            )
             .unwrap();
 
         *num_frames = 1;
@@ -387,6 +407,7 @@ pub fn state_running(
                     canvas,
                     &mut num_frames,
                     &mut last_fps_update,
+                    &ctx.rom_filename,
                 );
             }
             Err(_err) => panic!("frame channel should not get dropped"),

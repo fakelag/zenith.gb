@@ -1,9 +1,9 @@
 #![cfg_attr(not(any(test, debug_assertions)), windows_subsystem = "windows")]
 
-extern crate gbemu_lib;
+extern crate zenith_lib;
 
 use gameboy::gameboy::EmulatorConfig;
-use gbemu_lib::*;
+use zenith_lib::*;
 
 fn main() {
     let enable_saving = true;
