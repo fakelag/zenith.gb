@@ -6,3 +6,4 @@
 /tests/roms/**/*.sym
 /tests/roms/**/*.tmp
 *.bat
+/screenshots
