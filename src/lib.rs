@@ -289,6 +289,38 @@ fn vsync_canvas(
     }
 }
 
+fn screenshot(rt: &FrameBuffer, rom_filename: &str) {
+    if let Err(err) = std::fs::create_dir_all("screenshots") {
+        eprintln!("Unable to create screenshot directory: {}", err);
+        return;
+    }
+
+    let mut bmp_img = bmp::Image::new(160, 144);
+
+    for x in 0..160 {
+        for y in 0..144 {
+            let gb_color = rt[y][x];
+            let palette_color = PALETTE[gb_color as usize];
+            bmp_img.set_pixel(
+                x as u32,
+                y as u32,
+                bmp::Pixel {
+                    r: palette_color.r,
+                    g: palette_color.g,
+                    b: palette_color.b,
+                },
+            );
+        }
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("current time > UNIX_EPOCH")
+        .as_millis();
+
+    _ = bmp_img.save(format!("screenshots/{timestamp}-{rom_filename}.bmp"));
+}
+
 pub fn state_idle(event_pump: &mut sdl2::EventPump) -> Option<NextState> {
     for event in event_pump.poll_iter() {
         match event {
@@ -314,6 +346,7 @@ pub fn state_running(
 ) -> Option<NextState> {
     let mut num_frames = 0;
     let mut last_fps_update = time::Instant::now();
+    let mut take_ss = false;
 
     let texture_creator = canvas.texture_creator();
 
@@ -345,6 +378,8 @@ pub fn state_running(
                                 button: gb_button,
                             })
                             .unwrap();
+                    } else if scancode == Some(sdl2::keyboard::Scancode::F12) {
+                        take_ss = true;
                     }
                 }
                 sdl2::event::Event::KeyUp { scancode, .. } => {
@@ -409,6 +444,10 @@ pub fn state_running(
                     &mut last_fps_update,
                     &ctx.rom_filename,
                 );
+                if take_ss {
+                    take_ss = false;
+                    screenshot(&rt, &ctx.rom_filename);
+                }
             }
             Err(_err) => panic!("frame channel should not get dropped"),
         }
