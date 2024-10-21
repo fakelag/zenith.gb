@@ -2,6 +2,7 @@
 /rom
 /dev
 *.dll
-/tests/roms
 /tests/snapshots/verify
+/tests/roms/**/*.sym
+/tests/roms/**/*.tmp
 *.bat
