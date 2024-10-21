@@ -23,9 +23,6 @@ harness = false
 panic = "abort"
 # debug = true
 
-[toolchain]
-channel = "nightly"
-
 [dependencies]
 bmp = "0.5.0"
 sdl2 = "0.37.0"
