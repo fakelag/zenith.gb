@@ -169,7 +169,7 @@ pub fn run_emulator(rom_path: &str, mut config: EmulatorConfig) -> EmulatorConte
     let handle = std::thread::spawn(move || {
         let cart = Cartridge::new(&rom_path_string);
         let mut gb = Gameboy::new(cart, Box::new(config));
-        gb.dmg_boot();
+        gb.boot();
         gb.run();
     });
 
@@ -467,6 +467,7 @@ mod tests {
     use colored::Colorize;
     use rayon::prelude::*;
     use std::{
+        collections::HashSet,
         fs,
         path::{Path, PathBuf},
     };
@@ -485,7 +486,11 @@ mod tests {
         return true;
     }
 
-    fn mts_runner(rom_path: &str, _inputs: Option<Vec<GbButton>>) -> Option<bool> {
+    fn mts_runner(
+        rom_path: &str,
+        _inputs: Option<Vec<GbButton>>,
+        comp_mode: Option<CompatibilityMode>,
+    ) -> Option<bool> {
         let (frame_send, frame_recv) = std::sync::mpsc::sync_channel::<ppu::ppu::FrameBuffer>(1);
         let (break_send, break_recv) = std::sync::mpsc::sync_channel::<(u16, u16, u16)>(1);
 
@@ -500,6 +505,7 @@ mod tests {
                 sound_chan: None,
                 input_recv: None,
                 max_cycles: Some(T_CYCLES_PER_SECOND * 120),
+                comp_mode,
             },
         );
 
@@ -514,7 +520,11 @@ mod tests {
         return Some(test_passed);
     }
 
-    fn snapshot_runner(rom_path: &str, mut inputs: Option<Vec<GbButton>>) -> Option<bool> {
+    fn snapshot_runner(
+        rom_path: &str,
+        mut inputs: Option<Vec<GbButton>>,
+        comp_mode: Option<CompatibilityMode>,
+    ) -> Option<bool> {
         let root_path = PathBuf::from(rom_path.strip_prefix("tests/roms/").unwrap_or("unnamed"));
 
         let snapshot_dir = root_path
@@ -533,6 +543,7 @@ mod tests {
         let emu_ctx = run_emulator(
             rom_path,
             EmulatorConfig {
+                comp_mode,
                 enable_saving: false,
                 sync_audio: false,
                 // Note: sync video to guarantee receiving every frame for snapshot comparison
@@ -701,51 +712,87 @@ mod tests {
 
     #[test]
     fn mts() {
-        type RunnerFn = fn(path: &str, Option<Vec<GbButton>>) -> Option<bool>;
+        type RunnerFn =
+            fn(path: &str, Option<Vec<GbButton>>, Option<CompatibilityMode>) -> Option<bool>;
+        type RunnerWithArgs = (
+            RunnerFn,
+            String,
+            Option<Vec<GbButton>>,
+            Option<CompatibilityMode>,
+        );
+
+        fn submenu(item_index: usize) -> Option<Vec<GbButton>> {
+            let mut input_vec = vec![];
+            for _i in 0..item_index {
+                input_vec.push(GbButton::GbButtonDown);
+            }
+            input_vec.push(GbButton::GbButtonA);
+            Some(input_vec)
+        }
 
         #[rustfmt::skip]
-        let test_roms: Vec<(RunnerFn, &str, Option<Vec<GbButton>>)>  = vec!(
-            (snapshot_runner, "tests/roms/blargg/cpu_instrs/", None),
-            (snapshot_runner, "tests/roms/rtc3test/rtc3test.0.gb", Some(vec![GbButton::GbButtonA])),
-            (snapshot_runner, "tests/roms/rtc3test/rtc3test.1.gb", Some(vec![GbButton::GbButtonDown, GbButton::GbButtonA])),
-            (snapshot_runner, "tests/roms/rtc3test/rtc3test.2.gb", Some(vec![GbButton::GbButtonDown, GbButton::GbButtonDown, GbButton::GbButtonA])),
-            (snapshot_runner, "tests/roms/blargg/instr_timing/", None),
-            (snapshot_runner, "tests/roms/blargg/dmg_sound/", None),
-            (snapshot_runner, "tests/roms/blargg/mem_timing/", None),
-            (snapshot_runner, "tests/roms/blargg/mem_timing-2/", None),
-            (snapshot_runner, "tests/roms/mts/manual-only/sprite_priority.gb", None),
-            (mts_runner, "tests/roms/mts/acceptance/bits/", None),
-            (mts_runner, "tests/roms/mts/acceptance/instr/", None),
-            (mts_runner, "tests/roms/mts/acceptance/interrupts/", None),
-            (mts_runner, "tests/roms/mts/acceptance/oam_dma/", None),
-            (mts_runner, "tests/roms/mts/acceptance/ppu/", None),
-            (mts_runner, "tests/roms/mts/acceptance/timer/", None),
-            (mts_runner, "tests/roms/mts/acceptance/", None),
-            (mts_runner, "tests/roms/mts/emulator-only/mbc1/", None),
-            (mts_runner, "tests/roms/mts/emulator-only/mbc2/", None),
-            (mts_runner, "tests/roms/mts/emulator-only/mbc5/", None),
-            (mts_runner, "tests/roms/mts/misc/bits/", None),
-            (mts_runner, "tests/roms/mts/misc/ppu/", None),
-            (mts_runner, "tests/roms/mts/misc/", None),
+        let test_roms: Vec<(RunnerFn, &str, Option<Vec<GbButton>>, Option<CompatibilityMode>)>  = vec!(
+            // @todo - CGB double speed (used by cpu_instrs.gb multirom),
+            // compatibility mode can be removed once this is done
+            (snapshot_runner,   "tests/roms/blargg/cpu_instrs/",                    None,           Some(CompatibilityMode::CompDmg)),
+            (snapshot_runner,   "tests/roms/rtc3test/rtc3test.0.gb",                submenu(0),     None),
+            (snapshot_runner,   "tests/roms/rtc3test/rtc3test.1.gb",                submenu(1),     None),
+            (snapshot_runner,   "tests/roms/rtc3test/rtc3test.2.gb",                submenu(2),     None),
+            (snapshot_runner,   "tests/roms/blargg/instr_timing/",                  None,           None),
+            (snapshot_runner,   "tests/roms/blargg/dmg_sound/",                     None,           None),
+            (snapshot_runner,   "tests/roms/blargg/mem_timing/",                    None,           None),
+            (snapshot_runner,   "tests/roms/blargg/mem_timing-2/",                  None,           None),
+            (snapshot_runner,   "tests/roms/mts/manual-only/sprite_priority.gb",    None,           None),
+            (mts_runner,        "tests/roms/mts/acceptance/boot_regs-dmgABC.gb",    None,           Some(CompatibilityMode::CompDmg)),
+            (mts_runner,        "tests/roms/mts/acceptance/bits/",                  None,           None),
+            (mts_runner,        "tests/roms/mts/acceptance/instr/",                 None,           None),
+            (mts_runner,        "tests/roms/mts/acceptance/interrupts/",            None,           None),
+            (mts_runner,        "tests/roms/mts/acceptance/oam_dma/",               None,           None),
+            (mts_runner,        "tests/roms/mts/acceptance/ppu/",                   None,           None),
+            (mts_runner,        "tests/roms/mts/acceptance/timer/",                 None,           None),
+            (mts_runner,        "tests/roms/mts/acceptance/",                       None,           None),
+            (mts_runner,        "tests/roms/mts/emulator-only/mbc1/",               None,           None),
+            (mts_runner,        "tests/roms/mts/emulator-only/mbc2/",               None,           None),
+            (mts_runner,        "tests/roms/mts/emulator-only/mbc5/",               None,           None),
+            (mts_runner,        "tests/roms/mts/misc/bits/",                        None,           None),
+            (mts_runner,        "tests/roms/mts/misc/ppu/",                         None,           None),
+            (mts_runner,        "tests/roms/mts/misc/boot_hwio-C.gb",               None,           Some(CompatibilityMode::CompCgb)),
+            (mts_runner,        "tests/roms/mts/misc/boot_regs-cgb.gb",             None,           Some(CompatibilityMode::CompCgbDmg)),
 
             // (mts_runner, "tests/roms/mts/acceptance/serial/", None),
         );
 
-        let rom_files = test_roms
-            .par_iter()
-            .flat_map(|(runner, rom_or_dir, inputs)| {
+        let mut rom_files: Vec<RunnerWithArgs> = test_roms
+            .iter()
+            .flat_map(|(runner, rom_or_dir, inputs, comp_mode)| {
                 let roms_with_runners = find_roms(rom_or_dir)
                     .iter()
-                    .map(|path: &String| (runner.clone(), path.clone(), inputs.clone()))
-                    .collect::<Vec<(RunnerFn, String, Option<Vec<GbButton>>)>>();
+                    .map(|path: &String| {
+                        (runner.clone(), path.to_string(), inputs.clone(), *comp_mode)
+                    })
+                    .collect::<Vec<RunnerWithArgs>>();
 
                 return roms_with_runners;
             })
-            .collect::<Vec<(RunnerFn, String, Option<Vec<GbButton>>)>>();
+            .collect::<Vec<RunnerWithArgs>>();
+
+        // Remove duplicates
+        {
+            let mut roms_set = HashSet::new();
+            rom_files.retain(|(_, path, _, _)| {
+                if roms_set.contains(path) {
+                    return false;
+                }
+                roms_set.insert(path.clone());
+                return true;
+            });
+        }
 
         let results = rom_files
             .par_iter()
-            .map(|(runner, rom_path, inputs)| (rom_path, runner(rom_path, inputs.clone())))
+            .map(|(runner, rom_path, inputs, comp_mode)| {
+                (rom_path, runner(rom_path, inputs.clone(), *comp_mode))
+            })
             .collect::<Vec<(&String, Option<bool>)>>();
 
         results.iter().for_each(|(path, pass_opt)| {

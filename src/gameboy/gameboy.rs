@@ -1,4 +1,7 @@
-use std::fmt::{self, Display};
+use std::{
+    fmt::{self, Display},
+    rc::Rc,
+};
 
 use crate::{
     apu::apu,
@@ -7,6 +10,13 @@ use crate::{
     ppu::ppu::{self, FrameBuffer},
     soc::soc,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CompatibilityMode {
+    CompCgb,
+    CompCgbDmg,
+    CompDmg,
+}
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum GbButton {
@@ -39,12 +49,21 @@ pub struct EmulatorConfig {
     pub sync_audio: bool,
     pub sync_video: bool,
     pub max_cycles: Option<u64>,
+
+    pub comp_mode: Option<CompatibilityMode>,
+}
+
+pub struct GbCtx {
+    pub cgb: bool,
+    pub comp_mode: CompatibilityMode,
+    pub rom_path: String,
 }
 
 pub struct Gameboy {
     cartridge: Cartridge,
     cpu: cpu::CPU,
     soc: soc::SOC,
+    ctx: Rc<GbCtx>,
 }
 
 impl Display for Gameboy {
@@ -56,6 +75,20 @@ impl Display for Gameboy {
 
 impl Gameboy {
     pub fn new(cartridge: Cartridge, config: Box<EmulatorConfig>) -> Gameboy {
+        let comp_mode = if let Some(mode) = config.comp_mode {
+            mode
+        } else if cartridge.header.is_cgb() {
+            CompatibilityMode::CompCgb
+        } else {
+            CompatibilityMode::CompCgbDmg
+        };
+
+        let ctx = Rc::new(GbCtx {
+            cgb: comp_mode == CompatibilityMode::CompCgb,
+            rom_path: cartridge.rom_path.clone(),
+            comp_mode,
+        });
+
         let gb = Self {
             soc: soc::SOC::new(
                 &cartridge,
@@ -66,9 +99,11 @@ impl Gameboy {
                 config.sync_audio,
                 config.sync_video,
                 config.max_cycles,
+                ctx.clone(),
             ),
             cpu: cpu::CPU::new(config.bp_chan),
             cartridge,
+            ctx,
         };
 
         gb
@@ -83,8 +118,9 @@ impl Gameboy {
         }
     }
 
-    pub fn dmg_boot(&mut self) {
-        self.cpu.init(&mut self.soc, &self.cartridge);
+    pub fn boot(&mut self) {
+        self.cpu
+            .init(&mut self.soc, &self.cartridge, self.ctx.comp_mode);
     }
 
     pub fn close(&mut self) {

@@ -11,7 +11,7 @@ use crate::{
     serial::serial,
     timer::timer::Timer,
     util::util,
-    GbButton, InputReceiver,
+    GbButton, GbCtx, InputReceiver,
 };
 
 use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
@@ -73,6 +73,14 @@ pub struct SOC {
     last_saved_at: std::time::Instant,
 
     run_for_cycles: Option<u64>,
+
+    ctx: std::rc::Rc<GbCtx>,
+
+    // Undocumented registers
+    hwr_ff72: u8,
+    hwr_ff73: u8,
+    hwr_ff74: u8,
+    hwr_ff75: u8,
 }
 
 impl SOC {
@@ -85,8 +93,10 @@ impl SOC {
         sync_audio: bool,
         sync_video: bool,
         run_for_cycles: Option<u64>,
+        ctx: std::rc::Rc<GbCtx>,
     ) -> SOC {
         let mut soc = Self {
+            ctx: ctx.clone(),
             input_recv,
             enable_saving,
             run_for_cycles,
@@ -107,12 +117,23 @@ impl SOC {
             dma: 0xFF,
 
             apu: apu::APU::new(sound_chan, sync_audio),
-            ppu: ppu::PPU::new(frame_chan, sync_video),
+            ppu: ppu::PPU::new(frame_chan, sync_video, ctx),
             timer: Timer::new(),
             serial: serial::Serial::new(),
 
             last_saved_at: time::Instant::now(),
+
+            hwr_ff72: 0,
+            hwr_ff73: 0,
+            // @todo techically should be 0, but mts expects ff
+            hwr_ff74: 0xFF,
+            hwr_ff75: 0,
         };
+
+        if soc.ctx.cgb {
+            soc.p1_select_buttons = true;
+            soc.p1_select_dpad = true;
+        }
 
         soc.load(&cartridge);
         soc
@@ -227,6 +248,15 @@ impl SOC {
                     HWR_OBP1            => self.ppu.read_obp1(),
                     HWR_WY              => self.ppu.read_wy(),
                     HWR_WX              => self.ppu.read_wx(),
+                    HWR_VBK             => self.ppu.read_vbk(),
+                    HWR_BCPS            => self.ppu.read_bcps(),
+                    HWR_OCPS            => self.ppu.read_ocps(),
+                    HWR_FF72            => if self.ctx.cgb { self.hwr_ff72 } else { 0xFF },
+                    HWR_FF73            => if self.ctx.cgb { self.hwr_ff73 } else { 0xFF },
+                    HWR_FF74            => if self.ctx.cgb { self.hwr_ff74 } else { 0xFF },
+                    HWR_FF75            => if self.ctx.cgb { self.hwr_ff75 | 0x8F } else { 0xFF },
+                    HWR_FF76            => if self.ctx.cgb { 0x00 } else { 0xFF },
+                    HWR_FF77            => if self.ctx.cgb { 0x00 } else { 0xFF },
                     _                   => 0xFF,
                 }
             }
@@ -332,6 +362,13 @@ impl SOC {
                     HWR_OBP1                => self.clock_ppu_write(PPU::clock_write_obp1, data),
                     HWR_WY                  => self.clock_ppu_write(PPU::clock_write_wy, data),
                     HWR_WX                  => self.clock_ppu_write(PPU::clock_write_wx, data),
+                    HWR_VBK                 => self.clock_ppu_write(PPU::clock_write_vbk, data),
+                    HWR_BCPS                => self.clock_ppu_write(PPU::clock_write_bcps, data),
+                    HWR_OCPS                => self.clock_ppu_write(PPU::clock_write_ocps, data),
+                    HWR_FF72                => { self.clock(); if self.ctx.cgb { self.hwr_ff72 = data } },
+                    HWR_FF73                => { self.clock(); if self.ctx.cgb { self.hwr_ff73 = data } },
+                    HWR_FF74                => { self.clock(); if self.ctx.cgb { self.hwr_ff74 = data } },
+                    HWR_FF75                => { self.clock(); if self.ctx.cgb { self.hwr_ff75 = data & 0x70 } },
                     _                       => { self.clock(); /* unused */},
                 }
             }
@@ -541,5 +578,9 @@ impl SOC {
             };
             self.active_dma = Some(dma);
         }
+    }
+
+    pub fn get_rom_path(&self) -> String {
+        self.ctx.rom_path.clone()
     }
 }

@@ -3,9 +3,12 @@ use std::{
     sync::mpsc::TrySendError,
 };
 
-use crate::soc::{
-    interrupt,
-    soc::{self, ClockContext},
+use crate::{
+    soc::{
+        interrupt,
+        soc::{self, ClockContext},
+    },
+    GbCtx,
 };
 
 pub type FrameBuffer = [[u8; 160]; 144];
@@ -60,10 +63,15 @@ pub struct PPU {
     cycles_mode: u16,
     cycles_frame: u32,
 
+    // @todo - Benchmark runtime cost of Rc. Some state (such as .cgb)
+    // could be replicated for performance
+    ctx: std::rc::Rc<GbCtx>,
+
     draw_length: u16,
     stat_interrupt: bool,
 
-    vram: Box<[u8; 0x2000]>,
+    vram_0: Box<[u8; 0x2000]>,
+    vram_1: Box<[u8; 0x2000]>,
     oam: Box<[u8; 0xA0]>,
     sprite_buffer: Vec<Sprite>,
 
@@ -106,6 +114,22 @@ pub struct PPU {
     bgp: u8,
     obp0: u8,
     obp1: u8,
+
+    // CGB palette memory
+    cgb_palettes: [u8; 0x40],
+
+    // CGB registers
+    vbk: bool,
+
+    /*
+        This register is used to address a byte in the CGB’s background palette RAM.
+        Since there are 8 palettes, 8 palettes × 4 colors/palette × 2 bytes/color = 64 bytes can be addressed.
+        First comes BGP0 color number 0, then BGP0 color number 1, BGP0 color number 2, BGP0 color number 3, BGP1 color number 0, and so on.
+        Thus, address $03 allows accessing the second (upper) byte of BGP0 color #1 via BCPD, which contains the color’s blue and upper green bits.
+        https://gbdev.io/pandocs/Palettes.html#ff68--bcpsbgpi-cgb-mode-only-background-color-palette-specification--background-palette-index
+    */
+    bcps: u8,
+    ocps: u8,
 }
 
 impl Display for PPU {
@@ -116,8 +140,13 @@ impl Display for PPU {
 }
 
 impl PPU {
-    pub fn new(frame_chan: Option<PpuFrameSender>, sync_video: bool) -> Self {
+    pub fn new(
+        frame_chan: Option<PpuFrameSender>,
+        sync_video: bool,
+        ctx: std::rc::Rc<GbCtx>,
+    ) -> Self {
         Self {
+            ctx,
             frame_chan,
             sync_video,
             draw_window: false,
@@ -128,7 +157,9 @@ impl PPU {
             cycles_frame: 0,
             draw_length: 0,
             stat_interrupt: false,
-            vram: vec![0; 0x2000].into_boxed_slice().try_into().unwrap(),
+            vbk: false,
+            vram_0: vec![0; 0x2000].into_boxed_slice().try_into().unwrap(),
+            vram_1: vec![0; 0x2000].into_boxed_slice().try_into().unwrap(),
             oam: vec![0; 0xA0].into_boxed_slice().try_into().unwrap(),
             sprite_buffer: Vec::with_capacity(10),
             rt: [[0; 160]; 144],
@@ -155,6 +186,9 @@ impl PPU {
             bgp: 0xFC,
             obp0: 0xFF,
             obp1: 0xFF,
+            cgb_palettes: [0; 0x40],
+            bcps: 0x88,
+            ocps: 0x90,
         }
     }
 
@@ -381,14 +415,62 @@ impl PPU {
     pub fn read_vram(&self, addr: u16) -> u8 {
         return match self.stat_mode {
             PpuMode::PpuDraw => 0xFF,
-            _ => self.vram[(addr & 0x1FFF) as usize],
+            _ => self.vram_0[(addr & 0x1FFF) as usize],
         };
     }
 
     pub fn write_vram(&mut self, addr: u16, data: u8) {
         match self.stat_mode {
             PpuMode::PpuDraw => {}
-            _ => self.vram[(addr & 0x1FFF) as usize] = data,
+            _ => self.vram_0[(addr & 0x1FFF) as usize] = data,
+        }
+    }
+
+    pub fn read_vbk(&self) -> u8 {
+        if self.ctx.cgb {
+            (self.vbk as u8) | 0xFE
+        } else {
+            0xFF
+        }
+    }
+
+    pub fn clock_write_vbk(&mut self, data: u8, ctx: &mut ClockContext) {
+        self.clock(ctx);
+
+        if self.ctx.cgb {
+            self.vbk = data & 0x1 != 0;
+        }
+    }
+
+    pub fn read_bcps(&self) -> u8 {
+        if self.ctx.cgb {
+            self.bcps | 0x40
+        } else {
+            0xFF
+        }
+    }
+
+    pub fn clock_write_bcps(&mut self, data: u8, ctx: &mut ClockContext) {
+        self.clock(ctx);
+
+        if self.ctx.cgb {
+            self.bcps = data & 0xBF;
+        }
+    }
+
+    pub fn read_ocps(&self) -> u8 {
+        if self.ctx.cgb {
+            self.ocps | 0x40
+        } else {
+            0xFF
+        }
+    }
+
+    pub fn clock_write_ocps(&mut self, data: u8, ctx: &mut ClockContext) {
+        self.clock(ctx);
+
+        if self.ctx.cgb {
+            self.ocps = data & 0xBF;
         }
     }
 
@@ -459,7 +541,7 @@ impl PPU {
 
         let tilemap_data_addr = tilemap_addr + current_tile_index;
 
-        return self.vram[tilemap_data_addr as usize];
+        return self.vram_0[tilemap_data_addr as usize];
     }
 
     fn fetch_sprite_tile_tuple(&self, sprite_oam: &Sprite) -> (u8, u8) {
@@ -478,7 +560,7 @@ impl PPU {
         let line_offset = u16::from((y_with_flip & obj_mask) * 2);
 
         let tile_base = ((u16::from(sprite_oam.tile) * 16) + line_offset) as usize;
-        return (self.vram[tile_base], self.vram[tile_base + 1]);
+        return (self.vram_0[tile_base], self.vram_0[tile_base + 1]);
     }
 
     fn fetch_bg_tile_tuple(&mut self, tile_number: u8, is_window: bool) -> (u8, u8) {
@@ -492,12 +574,12 @@ impl PPU {
 
         let (tile_lsb, tile_msb) = if addressing_mode_8000 {
             let tile_base = ((u16::from(tile_number) * 16) + line_offset) as usize;
-            (self.vram[tile_base], self.vram[tile_base + 1])
+            (self.vram_0[tile_base], self.vram_0[tile_base + 1])
         } else {
             let e: i8 = tile_number as i8;
             let tile_base =
                 (0x1000 as u16).wrapping_add_signed(e as i16 * 16 + line_offset as i16) as usize;
-            (self.vram[tile_base], self.vram[tile_base + 1])
+            (self.vram_0[tile_base], self.vram_0[tile_base + 1])
         };
 
         return (tile_lsb, tile_msb);

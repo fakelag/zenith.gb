@@ -9,6 +9,7 @@ fn main() {
     let enable_saving = true;
     let sync_video = true;
     let sync_audio = true;
+    let comp_mode = None;
 
     let sdl_ctx = sdl2::init().unwrap();
     let mut canvas = sdl2_create_window(&sdl_ctx);
@@ -27,6 +28,7 @@ fn main() {
         state = State::Running(Box::new(run_emulator(
             &preload_rom,
             EmulatorConfig {
+                comp_mode,
                 bp_chan: None,
                 sound_chan: Some(sound_chan.clone()),
                 frame_chan: Some(frame_send.clone()),
@@ -59,6 +61,7 @@ fn main() {
                 state = State::Running(Box::new(run_emulator(
                     &rom_path,
                     EmulatorConfig {
+                        comp_mode,
                         bp_chan: None,
                         sound_chan: Some(sound_chan.clone()),
                         frame_chan: Some(frame_send.clone()),

@@ -40,4 +40,20 @@ pub const HWR_OBP0: u16 = 0xFF48;
 pub const HWR_OBP1: u16 = 0xFF49;
 pub const HWR_WY: u16 = 0xFF4A;
 pub const HWR_WX: u16 = 0xFF4B;
+
+pub const HWR_VBK: u16 = 0xFF4F;
+
+pub const HWR_BCPS: u16 = 0xFF68;
+pub const HWR_BCPD: u16 = 0xFF69;
+pub const HWR_OCPS: u16 = 0xFF6A;
+pub const HWR_OCPD: u16 = 0xFF6B;
+
+// Undocumented registers
+pub const HWR_FF72: u16 = 0xFF72;
+pub const HWR_FF73: u16 = 0xFF73;
+pub const HWR_FF74: u16 = 0xFF74;
+pub const HWR_FF75: u16 = 0xFF75;
+pub const HWR_FF76: u16 = 0xFF76;
+pub const HWR_FF77: u16 = 0xFF77;
+
 pub const HWR_IE: u16 = 0xFFFF;

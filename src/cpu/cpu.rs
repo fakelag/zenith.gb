@@ -11,6 +11,7 @@ use crate::{
     cartridge::cartridge::Cartridge,
     soc::{interrupt::*, soc::SOC},
     util::*,
+    CompatibilityMode,
 };
 
 pub type BpSender = SyncSender<(u16, u16, u16)>;
@@ -124,43 +125,80 @@ impl CPU {
         }
     }
 
-    pub fn init(&mut self, _soc: &mut SOC, cartridge: &Cartridge) {
-        // https://gbdev.io/pandocs/Power_Up_Sequence.html#monochrome-models-dmg0-dmg-mgb
-        self.a().set(0x1);
-        self.b().set(0);
-        self.c().set(0x13);
-        self.d().set(0);
-        self.e().set(0xD8);
-        self.h().set(0x1);
-        self.l().set(0x4D);
+    pub fn init(&mut self, _soc: &mut SOC, cartridge: &Cartridge, mode: CompatibilityMode) {
+        match mode {
+            CompatibilityMode::CompCgb => {
+                self.a().set(0x11);
+                self.b().set(0x0);
+                self.c().set(0x0);
+                self.d().set(0xFF);
+                self.e().set(0x56);
+                self.h().set(0x0);
+                self.l().set(0x0D);
 
-        self.sp().set(0xFFFE);
-        self.pc().set(0x100);
+                self.sp().set(0xFFFE);
+                self.pc().set(0x100);
+
+                self.set_flag(FLAG_Z, true);
+                self.set_flag(FLAG_N, false);
+                self.set_flag(FLAG_H, false);
+                self.set_flag(FLAG_C, false);
+            }
+            CompatibilityMode::CompCgbDmg => {
+                self.a().set(0x11);
+                self.b().set(0x0);
+                self.c().set(0x0);
+                self.d().set(0x0);
+                self.e().set(0x08);
+                self.h().set(0x0);
+                self.l().set(0x7C);
+
+                self.sp().set(0xFFFE);
+                self.pc().set(0x100);
+
+                self.set_flag(FLAG_Z, true);
+                self.set_flag(FLAG_N, false);
+                self.set_flag(FLAG_H, false);
+                self.set_flag(FLAG_C, false);
+            }
+            CompatibilityMode::CompDmg => {
+                self.a().set(0x1);
+                self.b().set(0);
+                self.c().set(0x13);
+                self.d().set(0);
+                self.e().set(0xD8);
+                self.h().set(0x1);
+                self.l().set(0x4D);
+
+                self.sp().set(0xFFFE);
+                self.pc().set(0x100);
+
+                self.set_flag(FLAG_Z, true);
+                self.set_flag(FLAG_N, false);
+                self.set_flag(
+                    FLAG_H,
+                    if cartridge.header.header_checksum == 0x0 {
+                        false
+                    } else {
+                        true
+                    },
+                );
+                self.set_flag(
+                    FLAG_C,
+                    if cartridge.header.header_checksum == 0x0 {
+                        false
+                    } else {
+                        true
+                    },
+                );
+            }
+        }
 
         // Hack: next instruction fetch happens at the end of the previously executed instruction.
         // Prefetch first instruction from cartridge
         self.opcode = cartridge.data[0x100];
         self.pc().inc();
         // self.clock_fetch(soc);
-
-        self.set_flag(FLAG_Z, true);
-        self.set_flag(FLAG_N, false);
-        self.set_flag(
-            FLAG_H,
-            if cartridge.header.header_checksum == 0x0 {
-                false
-            } else {
-                true
-            },
-        );
-        self.set_flag(
-            FLAG_C,
-            if cartridge.header.header_checksum == 0x0 {
-                false
-            } else {
-                true
-            },
-        );
     }
 
     pub fn step(&mut self, soc: &mut SOC) -> u64 {
