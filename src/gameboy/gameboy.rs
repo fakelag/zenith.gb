@@ -13,9 +13,9 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CompatibilityMode {
-    CompCgb,
-    CompCgbDmg,
-    CompDmg,
+    ModeCgb,
+    ModeCgbDmg,
+    ModeDmg,
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -78,16 +78,19 @@ impl Gameboy {
         let comp_mode = if let Some(mode) = config.comp_mode {
             mode
         } else if cartridge.header.is_cgb() {
-            CompatibilityMode::CompCgb
+            CompatibilityMode::ModeCgb
         } else {
-            CompatibilityMode::CompCgbDmg
+            CompatibilityMode::ModeCgbDmg
         };
 
         let ctx = Rc::new(GbCtx {
-            cgb: comp_mode == CompatibilityMode::CompCgb,
+            cgb: comp_mode == CompatibilityMode::ModeCgb,
             rom_path: cartridge.rom_path.clone(),
             comp_mode,
         });
+
+        #[cfg(not(test))]
+        println!("starting in {:?}", comp_mode);
 
         let gb = Self {
             soc: soc::SOC::new(

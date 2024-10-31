@@ -734,7 +734,7 @@ mod tests {
         let test_roms: Vec<(RunnerFn, &str, Option<Vec<GbButton>>, Option<CompatibilityMode>)>  = vec!(
             // @todo - CGB double speed (used by cpu_instrs.gb multirom),
             // compatibility mode can be removed once this is done
-            (snapshot_runner,   "tests/roms/blargg/cpu_instrs/",                    None,           Some(CompatibilityMode::CompDmg)),
+            (snapshot_runner,   "tests/roms/blargg/cpu_instrs/",                    None,           Some(CompatibilityMode::ModeDmg)),
             (snapshot_runner,   "tests/roms/rtc3test/rtc3test.0.gb",                submenu(0),     None),
             (snapshot_runner,   "tests/roms/rtc3test/rtc3test.1.gb",                submenu(1),     None),
             (snapshot_runner,   "tests/roms/rtc3test/rtc3test.2.gb",                submenu(2),     None),
@@ -743,7 +743,7 @@ mod tests {
             (snapshot_runner,   "tests/roms/blargg/mem_timing/",                    None,           None),
             (snapshot_runner,   "tests/roms/blargg/mem_timing-2/",                  None,           None),
             (snapshot_runner,   "tests/roms/mts/manual-only/sprite_priority.gb",    None,           None),
-            (mts_runner,        "tests/roms/mts/acceptance/boot_regs-dmgABC.gb",    None,           Some(CompatibilityMode::CompDmg)),
+            (mts_runner,        "tests/roms/mts/acceptance/boot_regs-dmgABC.gb",    None,           Some(CompatibilityMode::ModeDmg)),
             (mts_runner,        "tests/roms/mts/acceptance/bits/",                  None,           None),
             (mts_runner,        "tests/roms/mts/acceptance/instr/",                 None,           None),
             (mts_runner,        "tests/roms/mts/acceptance/interrupts/",            None,           None),
@@ -756,8 +756,8 @@ mod tests {
             (mts_runner,        "tests/roms/mts/emulator-only/mbc5/",               None,           None),
             (mts_runner,        "tests/roms/mts/misc/bits/",                        None,           None),
             (mts_runner,        "tests/roms/mts/misc/ppu/",                         None,           None),
-            (mts_runner,        "tests/roms/mts/misc/boot_hwio-C.gb",               None,           Some(CompatibilityMode::CompCgb)),
-            (mts_runner,        "tests/roms/mts/misc/boot_regs-cgb.gb",             None,           Some(CompatibilityMode::CompCgbDmg)),
+            (mts_runner,        "tests/roms/mts/misc/boot_hwio-C.gb",               None,           Some(CompatibilityMode::ModeCgb)),
+            (mts_runner,        "tests/roms/mts/misc/boot_regs-cgb.gb",             None,           Some(CompatibilityMode::ModeCgbDmg)),
 
             // (mts_runner, "tests/roms/mts/acceptance/serial/", None),
         );

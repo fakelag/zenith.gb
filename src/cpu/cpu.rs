@@ -127,7 +127,7 @@ impl CPU {
 
     pub fn init(&mut self, _soc: &mut SOC, cartridge: &Cartridge, mode: CompatibilityMode) {
         match mode {
-            CompatibilityMode::CompCgb => {
+            CompatibilityMode::ModeCgb => {
                 self.a().set(0x11);
                 self.b().set(0x0);
                 self.c().set(0x0);
@@ -144,7 +144,7 @@ impl CPU {
                 self.set_flag(FLAG_H, false);
                 self.set_flag(FLAG_C, false);
             }
-            CompatibilityMode::CompCgbDmg => {
+            CompatibilityMode::ModeCgbDmg => {
                 self.a().set(0x11);
                 self.b().set(0x0);
                 self.c().set(0x0);
@@ -161,7 +161,7 @@ impl CPU {
                 self.set_flag(FLAG_H, false);
                 self.set_flag(FLAG_C, false);
             }
-            CompatibilityMode::CompDmg => {
+            CompatibilityMode::ModeDmg => {
                 self.a().set(0x1);
                 self.b().set(0);
                 self.c().set(0x13);
