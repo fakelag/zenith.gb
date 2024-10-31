@@ -28,6 +28,13 @@ struct DmaTransfer {
     cycles: u16, // 160 + 1
 }
 
+struct Hdma {
+    src: u16,
+    dst: u16,
+    remaining: u16,
+    hblank_dma: bool,
+}
+
 pub struct ClockContext<'a> {
     interrupts: &'a mut u8,
     events: &'a mut u8,
@@ -41,6 +48,21 @@ impl ClockContext<'_> {
     pub fn set_events(&mut self, event_bit: SocEventBits) {
         *self.events |= event_bit as u8;
     }
+}
+
+macro_rules! dma_read {
+    ($self:ident, $address:ident) => {
+        match $address {
+            0x0000..=0x7FFF => $self.mbc.read($address),
+            0x8000..=0x9FFF => $self.ppu.read_vram($address), // not clocked
+            0xA000..=0xBFFF => $self.mbc.read($address),
+            0xC000..=0xDFFF => $self.wram[usize::from($address - 0xC000)],
+            0xE000..=0xFDFF => $self.wram[usize::from($address - 0xE000)],
+            0xFE00..=0xFFFF => {
+                unreachable!()
+            }
+        }
+    };
 }
 
 pub struct SOC {
@@ -75,6 +97,11 @@ pub struct SOC {
     run_for_cycles: Option<u64>,
 
     ctx: std::rc::Rc<GbCtx>,
+
+    // vram dma
+    hdma_src: u16,
+    hdma_dst: u16,
+    hdma: Option<Box<Hdma>>,
 
     // Undocumented registers
     hwr_ff72: u8,
@@ -122,6 +149,10 @@ impl SOC {
             serial: serial::Serial::new(),
 
             last_saved_at: time::Instant::now(),
+
+            hdma_dst: 0,
+            hdma_src: 0,
+            hdma: None,
 
             hwr_ff72: 0,
             hwr_ff73: 0,
@@ -363,12 +394,27 @@ impl SOC {
                     HWR_WY                  => self.clock_ppu_write(PPU::clock_write_wy, data),
                     HWR_WX                  => self.clock_ppu_write(PPU::clock_write_wx, data),
                     HWR_VBK                 => self.clock_ppu_write(PPU::clock_write_vbk, data),
+                    HWR_HDMA1               => { self.clock(); util::set_high(&mut self.hdma_src, data); }
+                    HWR_HDMA2               => { self.clock(); util::set_low(&mut self.hdma_src, data); }
+                    HWR_HDMA3               => { self.clock(); util::set_high(&mut self.hdma_dst, data); }
+                    HWR_HDMA4               => { self.clock(); util::set_low(&mut self.hdma_dst, data); }
+                    HWR_HDMA5               => {
+                        self.clock();
+                        self.hdma = Some(Box::new(Hdma {
+                            dst: self.hdma_dst & 0x1FF0,
+                            src: self.hdma_src & 0xFFF0,
+                            remaining: (u16::from(data & 0x1F) * 16 + 1),
+                            hblank_dma: data & 0x80 != 0
+                        }));
+                        println!("start hdma: {} -> {} | {}", self.hdma_src, self.hdma_dst, data)
+                    }
                     HWR_BCPS                => self.clock_ppu_write(PPU::clock_write_bcps, data),
                     HWR_OCPS                => self.clock_ppu_write(PPU::clock_write_ocps, data),
                     HWR_FF72                => { self.clock(); if self.ctx.cgb { self.hwr_ff72 = data } },
                     HWR_FF73                => { self.clock(); if self.ctx.cgb { self.hwr_ff73 = data } },
                     HWR_FF74                => { self.clock(); if self.ctx.cgb { self.hwr_ff74 = data } },
                     HWR_FF75                => { self.clock(); if self.ctx.cgb { self.hwr_ff75 = data & 0x70 } },
+                    HWR_SVBK                => { self.clock(); todo!("svbk={data}"); }
                     _                       => { self.clock(); /* unused */},
                 }
             }
@@ -384,7 +430,7 @@ impl SOC {
     }
 
     pub fn clock(&mut self) {
-        self.clock_oam_dma();
+        self.clock_dma();
 
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
@@ -406,7 +452,7 @@ impl SOC {
         clock_cb: fn(&mut Timer, data: u8, ctx: &mut ClockContext),
         data: u8,
     ) {
-        self.clock_oam_dma();
+        self.clock_dma();
 
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
@@ -428,7 +474,7 @@ impl SOC {
         clock_cb: fn(&mut PPU, data: u8, ctx: &mut ClockContext),
         data: u8,
     ) {
-        self.clock_oam_dma();
+        self.clock_dma();
 
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
@@ -531,7 +577,7 @@ impl SOC {
         exit
     }
 
-    fn clock_oam_dma(&mut self) {
+    fn clock_dma(&mut self) {
         // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
         // instead of the actual value at the given memory address,
         // the byte that is currently being transferred by the DMA transfer is returned.
@@ -549,16 +595,7 @@ impl SOC {
 
             debug_assert!(address < 0xFE00 || address > 0xFE9F);
 
-            let byte = match address {
-                0x0000..=0x7FFF => self.mbc.read(address),
-                0x8000..=0x9FFF => self.ppu.read_vram(address), // not clocked
-                0xA000..=0xBFFF => self.mbc.read(address),
-                0xC000..=0xDFFF => self.wram[usize::from(address - 0xC000)],
-                0xE000..=0xFDFF => self.wram[usize::from(address - 0xE000)],
-                0xFE00..=0xFFFF => {
-                    unreachable!()
-                }
-            };
+            let byte = dma_read!(self, address);
 
             self.ppu.oam_dma(0xFE00 + c, byte);
 
@@ -577,6 +614,31 @@ impl SOC {
                 cycles: 1, // cycle 1 initialization delay
             };
             self.active_dma = Some(dma);
+        }
+
+        self.clock_hdma();
+    }
+
+    fn clock_hdma(&mut self) {
+        if let Some(active_hdma) = &self.hdma {
+            // 6BC0 -> 1800
+            // 6BC0 -> 1C00
+            // 0011 1111
+
+            if active_hdma.hblank_dma {
+                todo!("hblank transfer");
+            } else {
+                for offset in 0..active_hdma.remaining {
+                    let src_addr = active_hdma.src + offset;
+                    let dst_addr = active_hdma.dst + offset;
+
+                    let byte = dma_read!(self, src_addr);
+
+                    self.ppu.write_vram(dst_addr, byte);
+                }
+
+                self.hdma = None;
+            }
         }
     }
 

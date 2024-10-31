@@ -43,10 +43,18 @@ pub const HWR_WX: u16 = 0xFF4B;
 
 pub const HWR_VBK: u16 = 0xFF4F;
 
+pub const HWR_HDMA1: u16 = 0xFF51;
+pub const HWR_HDMA2: u16 = 0xFF52;
+pub const HWR_HDMA3: u16 = 0xFF53;
+pub const HWR_HDMA4: u16 = 0xFF54;
+pub const HWR_HDMA5: u16 = 0xFF55;
+
 pub const HWR_BCPS: u16 = 0xFF68;
 pub const HWR_BCPD: u16 = 0xFF69;
 pub const HWR_OCPS: u16 = 0xFF6A;
 pub const HWR_OCPD: u16 = 0xFF6B;
+
+pub const HWR_SVBK: u16 = 0xFF70;
 
 // Undocumented registers
 pub const HWR_FF72: u16 = 0xFF72;

@@ -415,14 +415,21 @@ impl PPU {
     pub fn read_vram(&self, addr: u16) -> u8 {
         return match self.stat_mode {
             PpuMode::PpuDraw => 0xFF,
-            _ => self.vram_0[(addr & 0x1FFF) as usize],
+            _ => self.read_vram_banked(addr & 0x1FFF),
         };
     }
 
     pub fn write_vram(&mut self, addr: u16, data: u8) {
         match self.stat_mode {
             PpuMode::PpuDraw => {}
-            _ => self.vram_0[(addr & 0x1FFF) as usize] = data,
+            _ => {
+                let vram_addr = (addr & 0x1FFF) as usize;
+                if self.vbk {
+                    self.vram_1[vram_addr] = data;
+                } else {
+                    self.vram_0[vram_addr] = data;
+                }
+            }
         }
     }
 
@@ -482,6 +489,14 @@ impl PPU {
     read_write!(read_obp0, clock_write_obp0, obp0);
     read_write!(read_obp1, clock_write_obp1, obp1);
 
+    fn read_vram_banked(&self, addr: u16) -> u8 {
+        if self.vbk {
+            self.vram_1[addr as usize]
+        } else {
+            self.vram_0[addr as usize]
+        }
+    }
+
     fn update_lyc_eq_ly(&mut self) {
         self.stat_lyc_eq_ly = self.ly == self.lyc;
     }
@@ -515,7 +530,7 @@ impl PPU {
         self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
     }
 
-    fn fetch_bg_tile_number(&mut self, is_window: bool) -> u8 {
+    fn fetch_bg_tile_number(&mut self, is_window: bool) -> (u8, u8) {
         let current_tile_index: u16 = if is_window {
             let line_count = self.window_line_counter;
             (u16::from(self.fetcher_x) + 32 * (line_count / 8)) & 0x3FF
@@ -541,7 +556,10 @@ impl PPU {
 
         let tilemap_data_addr = tilemap_addr + current_tile_index;
 
-        return self.vram_0[tilemap_data_addr as usize];
+        // @todo CGB ONLY STUF
+        let bg_attr = self.vram_1[tilemap_data_addr as usize];
+
+        return (bg_attr, self.vram_0[tilemap_data_addr as usize]);
     }
 
     fn fetch_sprite_tile_tuple(&self, sprite_oam: &Sprite) -> (u8, u8) {
@@ -559,8 +577,11 @@ impl PPU {
 
         let line_offset = u16::from((y_with_flip & obj_mask) * 2);
 
-        let tile_base = ((u16::from(sprite_oam.tile) * 16) + line_offset) as usize;
-        return (self.vram_0[tile_base], self.vram_0[tile_base + 1]);
+        let tile_base = (u16::from(sprite_oam.tile) * 16) + line_offset;
+        return (
+            self.read_vram_banked(tile_base),
+            self.read_vram_banked(tile_base + 1),
+        );
     }
 
     fn fetch_bg_tile_tuple(&mut self, tile_number: u8, is_window: bool) -> (u8, u8) {
@@ -573,13 +594,18 @@ impl PPU {
         };
 
         let (tile_lsb, tile_msb) = if addressing_mode_8000 {
-            let tile_base = ((u16::from(tile_number) * 16) + line_offset) as usize;
-            (self.vram_0[tile_base], self.vram_0[tile_base + 1])
+            let tile_base = (u16::from(tile_number) * 16) + line_offset;
+            (
+                self.read_vram_banked(tile_base),
+                self.read_vram_banked(tile_base + 1),
+            )
         } else {
             let e: i8 = tile_number as i8;
-            let tile_base =
-                (0x1000 as u16).wrapping_add_signed(e as i16 * 16 + line_offset as i16) as usize;
-            (self.vram_0[tile_base], self.vram_0[tile_base + 1])
+            let tile_base = (0x1000 as u16).wrapping_add_signed(e as i16 * 16 + line_offset as i16);
+            (
+                self.read_vram_banked(tile_base),
+                self.read_vram_banked(tile_base + 1),
+            )
         };
 
         return (tile_lsb, tile_msb);
@@ -605,8 +631,15 @@ impl PPU {
         assert!(ly < 144);
 
         'outer: loop {
-            let tile = self.fetch_bg_tile_number(false);
+            let (attrs, tile) = self.fetch_bg_tile_number(false);
+
+            // Hack to use correct bank for bg tiles
+            let vbk_backup = self.vbk;
+            self.vbk = attrs & 0x8 != 0;
+
             let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(tile, false);
+
+            self.vbk = vbk_backup;
 
             let rt_scanline = &mut self.rt[ly];
 
@@ -660,7 +693,7 @@ impl PPU {
         assert!(ly < 144);
 
         'outer: loop {
-            let tile = self.fetch_bg_tile_number(true);
+            let (_attrs, tile) = self.fetch_bg_tile_number(true); // @TODO CGB
             let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(tile, true);
 
             let rt_scanline = &mut self.rt[ly];
