@@ -281,7 +281,9 @@ impl SOC {
                     HWR_WX              => self.ppu.read_wx(),
                     HWR_VBK             => self.ppu.read_vbk(),
                     HWR_BCPS            => self.ppu.read_bcps(),
+                    HWR_BCPD            => self.ppu.read_bcpd(),
                     HWR_OCPS            => self.ppu.read_ocps(),
+                    HWR_OCPD            => self.ppu.read_ocpd(),
                     HWR_FF72            => if self.ctx.cgb { self.hwr_ff72 } else { 0xFF },
                     HWR_FF73            => if self.ctx.cgb { self.hwr_ff73 } else { 0xFF },
                     HWR_FF74            => if self.ctx.cgb { self.hwr_ff74 } else { 0xFF },
@@ -408,8 +410,10 @@ impl SOC {
                         }));
                         println!("start hdma: {} -> {} | {}", self.hdma_src, self.hdma_dst, data)
                     }
-                    HWR_BCPS                => self.clock_ppu_write(PPU::clock_write_bcps, data),
-                    HWR_OCPS                => self.clock_ppu_write(PPU::clock_write_ocps, data),
+                    HWR_BCPS                => { self.clock(); self.ppu.write_bcps(data); },
+                    HWR_BCPD                => { self.clock(); self.ppu.write_bcpd(data); },
+                    HWR_OCPS                => { self.clock(); self.ppu.write_ocps(data); },
+                    HWR_OCPD                => { self.clock(); self.ppu.write_ocpd(data); },
                     HWR_FF72                => { self.clock(); if self.ctx.cgb { self.hwr_ff72 = data } },
                     HWR_FF73                => { self.clock(); if self.ctx.cgb { self.hwr_ff73 = data } },
                     HWR_FF74                => { self.clock(); if self.ctx.cgb { self.hwr_ff74 = data } },

@@ -247,17 +247,26 @@ fn vsync_canvas(
             for x in 0..160 {
                 for y in 0..144 {
                     let color = rt[y][x];
-
                     let index = y * size + x * 3;
-                    match color {
-                        0..=3 => {
-                            let c = PALETTE[color as usize];
-                            buffer[index] = c.r;
-                            buffer[index + 1] = c.g;
-                            buffer[index + 2] = c.b;
-                        }
-                        _ => unreachable!(),
-                    }
+
+                    let red_intensity = color & 0x1F;
+                    let green_intensity = (color & 0x3E0) >> 5;
+                    let blue_intensity = (color & 0x7C00) >> 10;
+
+                    const INTENSITY: f64 = 8.22580;
+
+                    buffer[index] = (INTENSITY * f64::from(red_intensity as u8)) as u8;
+                    buffer[index + 1] = (INTENSITY * f64::from(green_intensity as u8)) as u8;
+                    buffer[index + 2] = (INTENSITY * f64::from(blue_intensity as u8)) as u8;
+                    // match color {
+                    //     0..=3 => {
+                    //         let c = PALETTE[color as usize];
+                    //         buffer[index] = c.r;
+                    //         buffer[index + 1] = c.g;
+                    //         buffer[index + 2] = c.b;
+                    //     }
+                    //     _ => unreachable!(),
+                    // }
                 }
             }
         })

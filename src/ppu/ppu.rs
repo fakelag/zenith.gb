@@ -8,10 +8,11 @@ use crate::{
         interrupt,
         soc::{self, ClockContext},
     },
+    util::util,
     GbCtx,
 };
 
-pub type FrameBuffer = [[u8; 160]; 144];
+pub type FrameBuffer = [[u16; 160]; 144];
 pub type PpuFrameSender = std::sync::mpsc::SyncSender<FrameBuffer>;
 
 const CYCLES_PER_OAM_SCAN: u16 = 20;
@@ -28,6 +29,9 @@ const STAT_SELECT_MODE0_BIT: u8 = 3;
 
 const OAM_BIT_Y_FLIP: u8 = 1 << 6;
 const OAM_BIT_X_FLIP: u8 = 1 << 5;
+const OAM_BIT_CGB_BANK: u8 = 1 << 3;
+
+const CGB_BG_PRIO_BIT: u8 = 0x80;
 
 macro_rules! read_write {
     ( $read_name:ident, $write_name:ident, $var_name:ident ) => {
@@ -95,7 +99,7 @@ pub struct PPU {
     lcdc_bg_tilemap: bool,
     lcdc_obj_size: bool,
     lcdc_obj_enable: bool,
-    lcdc_bg_wnd_enable: bool,
+    lcdc_bit_0: bool,
 
     stat_lyc_select: bool,
     stat_mode2_select: bool,
@@ -116,7 +120,8 @@ pub struct PPU {
     obp1: u8,
 
     // CGB palette memory
-    cgb_palettes: [u8; 0x40],
+    cgb_bg_palettes: [u8; 0x40],
+    cgb_ob_palettes: [u8; 0x40],
 
     // CGB registers
     vbk: bool,
@@ -170,7 +175,7 @@ impl PPU {
             lcdc_bg_tilemap: false,
             lcdc_obj_size: false,
             lcdc_obj_enable: false,
-            lcdc_bg_wnd_enable: true,
+            lcdc_bit_0: true,
             stat_lyc_select: false,
             stat_mode2_select: false,
             stat_mode1_select: false,
@@ -186,7 +191,8 @@ impl PPU {
             bgp: 0xFC,
             obp0: 0xFF,
             obp1: 0xFF,
-            cgb_palettes: [0; 0x40],
+            cgb_bg_palettes: [0; 0x40],
+            cgb_ob_palettes: [0; 0x40],
             bcps: 0x88,
             ocps: 0x90,
         }
@@ -323,7 +329,7 @@ impl PPU {
             | (self.lcdc_bg_tilemap as u8) << 3
             | (self.lcdc_obj_size as u8) << 2
             | (self.lcdc_obj_enable as u8) << 1
-            | (self.lcdc_bg_wnd_enable as u8)
+            | (self.lcdc_bit_0 as u8)
     }
 
     pub fn clock_write_lcdc(&mut self, data: u8, ctx: &mut ClockContext) {
@@ -346,7 +352,7 @@ impl PPU {
         self.lcdc_bg_tilemap = data & (1 << 3) != 0;
         self.lcdc_obj_size = data & (1 << 2) != 0;
         self.lcdc_obj_enable = data & (1 << 1) != 0;
-        self.lcdc_bg_wnd_enable = data & (1 << 0) != 0;
+        self.lcdc_bit_0 = data & (1 << 0) != 0;
     }
 
     pub fn read_stat(&self) -> u8 {
@@ -415,7 +421,7 @@ impl PPU {
     pub fn read_vram(&self, addr: u16) -> u8 {
         return match self.stat_mode {
             PpuMode::PpuDraw => 0xFF,
-            _ => self.read_vram_banked(addr & 0x1FFF),
+            _ => self.read_vram_banked(self.vbk, addr & 0x1FFF),
         };
     }
 
@@ -450,34 +456,90 @@ impl PPU {
     }
 
     pub fn read_bcps(&self) -> u8 {
-        if self.ctx.cgb {
-            self.bcps | 0x40
-        } else {
-            0xFF
+        if !self.ctx.cgb {
+            return 0xFF;
         }
+        return self.bcps | 0x40;
     }
 
-    pub fn clock_write_bcps(&mut self, data: u8, ctx: &mut ClockContext) {
-        self.clock(ctx);
+    pub fn write_bcps(&mut self, data: u8) {
+        if !self.ctx.cgb {
+            return;
+        }
+        self.bcps = data & 0xBF;
+    }
 
-        if self.ctx.cgb {
-            self.bcps = data & 0xBF;
+    pub fn read_bcpd(&self) -> u8 {
+        if !self.ctx.cgb {
+            return 0xFF;
+        }
+
+        if self.stat_mode == PpuMode::PpuDraw {
+            return 0xFF;
+        }
+
+        let addr = self.bcps & 0x3F;
+        return self.cgb_bg_palettes[addr as usize];
+    }
+
+    pub fn write_bcpd(&mut self, data: u8) {
+        if !self.ctx.cgb {
+            return;
+        }
+
+        if self.stat_mode == PpuMode::PpuDraw {
+            return;
+        }
+
+        let addr = self.bcps & 0x3F;
+        self.cgb_bg_palettes[addr as usize] = data;
+
+        if self.bcps & 0x80 != 0 {
+            self.bcps = (self.bcps & 0x80) | ((addr + 1) & 0x3F);
         }
     }
 
     pub fn read_ocps(&self) -> u8 {
-        if self.ctx.cgb {
-            self.ocps | 0x40
-        } else {
-            0xFF
+        if !self.ctx.cgb {
+            return 0xFF;
         }
+        return self.ocps | 0x40;
     }
 
-    pub fn clock_write_ocps(&mut self, data: u8, ctx: &mut ClockContext) {
-        self.clock(ctx);
+    pub fn write_ocps(&mut self, data: u8) {
+        if !self.ctx.cgb {
+            return;
+        }
+        self.ocps = data & 0xBF;
+    }
 
-        if self.ctx.cgb {
-            self.ocps = data & 0xBF;
+    pub fn read_ocpd(&self) -> u8 {
+        if !self.ctx.cgb {
+            return 0xFF;
+        }
+
+        if self.stat_mode == PpuMode::PpuDraw {
+            return 0xFF;
+        }
+
+        let addr = self.ocps & 0x3F;
+        return self.cgb_ob_palettes[addr as usize];
+    }
+
+    pub fn write_ocpd(&mut self, data: u8) {
+        if !self.ctx.cgb {
+            return;
+        }
+
+        if self.stat_mode == PpuMode::PpuDraw {
+            return;
+        }
+
+        let addr = self.ocps & 0x3F;
+        self.cgb_ob_palettes[addr as usize] = data;
+
+        if self.ocps & 0x80 != 0 {
+            self.ocps = (self.ocps & 0x80) | ((addr + 1) & 0x3F);
         }
     }
 
@@ -489,8 +551,8 @@ impl PPU {
     read_write!(read_obp0, clock_write_obp0, obp0);
     read_write!(read_obp1, clock_write_obp1, obp1);
 
-    fn read_vram_banked(&self, addr: u16) -> u8 {
-        if self.vbk {
+    fn read_vram_banked(&self, bank_1: bool, addr: u16) -> u8 {
+        if bank_1 {
             self.vram_1[addr as usize]
         } else {
             self.vram_0[addr as usize]
@@ -556,10 +618,10 @@ impl PPU {
 
         let tilemap_data_addr = tilemap_addr + current_tile_index;
 
-        // @todo CGB ONLY STUF
-        let bg_attr = self.vram_1[tilemap_data_addr as usize];
-
-        return (bg_attr, self.vram_0[tilemap_data_addr as usize]);
+        return (
+            self.read_vram_banked(true, tilemap_data_addr),
+            self.read_vram_banked(false, tilemap_data_addr),
+        );
     }
 
     fn fetch_sprite_tile_tuple(&self, sprite_oam: &Sprite) -> (u8, u8) {
@@ -576,45 +638,65 @@ impl PPU {
         };
 
         let line_offset = u16::from((y_with_flip & obj_mask) * 2);
-
         let tile_base = (u16::from(sprite_oam.tile) * 16) + line_offset;
+
+        let bank_1 = self.ctx.cgb && sprite_oam.attr & OAM_BIT_CGB_BANK != 0;
+
         return (
-            self.read_vram_banked(tile_base),
-            self.read_vram_banked(tile_base + 1),
+            self.read_vram_banked(bank_1, tile_base),
+            self.read_vram_banked(bank_1, tile_base + 1),
         );
     }
 
-    fn fetch_bg_tile_tuple(&mut self, tile_number: u8, is_window: bool) -> (u8, u8) {
+    fn fetch_bg_tile_tuple(&mut self, tile_attr: u8, tile_number: u8, is_window: bool) -> (u8, u8) {
         let addressing_mode_8000 = self.lcdc_bg_wnd_tiles;
 
-        let line_offset = if is_window {
-            u16::from(2 * (self.window_line_counter & 0x7))
+        let y_base = if is_window {
+            self.window_line_counter
         } else {
-            u16::from(2 * (self.ly.wrapping_add(self.scy) & 0x7))
+            self.ly.wrapping_add(self.scy) as u16
         };
+
+        let y_with_flip = if self.ctx.cgb && tile_attr & 0x40 != 0 {
+            (8 as u16).wrapping_sub(y_base).wrapping_sub(1)
+        } else {
+            y_base
+        };
+
+        let line_offset = u16::from(y_with_flip & 0x7) * 2;
+
+        let bank_1 = self.ctx.cgb && tile_attr & 0x8 != 0;
 
         let (tile_lsb, tile_msb) = if addressing_mode_8000 {
             let tile_base = (u16::from(tile_number) * 16) + line_offset;
             (
-                self.read_vram_banked(tile_base),
-                self.read_vram_banked(tile_base + 1),
+                self.read_vram_banked(bank_1, tile_base),
+                self.read_vram_banked(bank_1, tile_base + 1),
             )
         } else {
             let e: i8 = tile_number as i8;
             let tile_base = (0x1000 as u16).wrapping_add_signed(e as i16 * 16 + line_offset as i16);
             (
-                self.read_vram_banked(tile_base),
-                self.read_vram_banked(tile_base + 1),
+                self.read_vram_banked(bank_1, tile_base),
+                self.read_vram_banked(bank_1, tile_base + 1),
             )
         };
 
         return (tile_lsb, tile_msb);
     }
 
+    fn get_cgb_color(palettes: &[u8; 64], palette: u8, pixel_color: u8) -> u16 {
+        let palette_index = (usize::from(palette) * 4 * 2) + (pixel_color * 2) as usize;
+
+        let palette_color = util::value(palettes[palette_index + 1], palettes[palette_index]);
+
+        palette_color
+    }
+
     fn draw_background(&mut self) {
         self.fetcher_x = 0;
 
-        if !self.lcdc_bg_wnd_enable {
+        if !self.ctx.cgb && !self.lcdc_bit_0 {
             for x in 0..160 {
                 self.bg_scanline_mask[x] = 0;
                 self.rt[self.ly as usize][x as usize] = 0;
@@ -631,29 +713,42 @@ impl PPU {
         assert!(ly < 144);
 
         'outer: loop {
-            let (attrs, tile) = self.fetch_bg_tile_number(false);
-
-            // Hack to use correct bank for bg tiles
-            let vbk_backup = self.vbk;
-            self.vbk = attrs & 0x8 != 0;
-
-            let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(tile, false);
-
-            self.vbk = vbk_backup;
+            let (cgb_attrs, tile) = self.fetch_bg_tile_number(false);
+            let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(cgb_attrs, tile, false);
 
             let rt_scanline = &mut self.rt[ly];
+            let cgb_bg_priority = self.ctx.cgb && cgb_attrs & 0x80 != 0;
 
             assert!(x < 160);
 
             for bit_idx in (0..scx_max).rev() {
-                let hb = (tile_msb >> bit_idx) & 0x1;
-                let lb = (tile_lsb >> bit_idx) & 0x1;
+                let bit_index_xflip = if self.ctx.cgb {
+                    let x_flip = cgb_attrs & 0x20 != 0;
+                    let bit_idx_flip = if x_flip { 7 - bit_idx } else { bit_idx };
+                    bit_idx_flip
+                } else {
+                    bit_idx
+                };
+
+                let hb = (tile_msb >> bit_index_xflip) & 0x1;
+                let lb = (tile_lsb >> bit_index_xflip) & 0x1;
                 let bg_pixel = lb | (hb << 1);
 
-                let palette_color = (self.bgp >> (bg_pixel * 2)) & 0x3;
+                self.bg_scanline_mask[x] = bg_pixel & 0x3;
 
-                self.bg_scanline_mask[x] = bg_pixel;
-                rt_scanline[x] = palette_color;
+                if cgb_bg_priority {
+                    self.bg_scanline_mask[x] |= CGB_BG_PRIO_BIT;
+                }
+
+                if self.ctx.cgb {
+                    rt_scanline[x] =
+                        PPU::get_cgb_color(&self.cgb_bg_palettes, cgb_attrs & 0x7, bg_pixel);
+                } else {
+                    // @todo CGB: dmg 2 bit colors w/ cgb 15 bit colors
+                    let palette_color = (self.bgp >> (bg_pixel * 2)) & 0x3;
+                    rt_scanline[x] = palette_color as u16;
+                }
+
                 x += 1;
 
                 if x == 160 {
@@ -672,7 +767,7 @@ impl PPU {
             return None;
         }
 
-        if !self.lcdc_bg_wnd_enable {
+        if !self.ctx.cgb && !self.lcdc_bit_0 {
             return None;
         }
 
@@ -693,22 +788,42 @@ impl PPU {
         assert!(ly < 144);
 
         'outer: loop {
-            let (_attrs, tile) = self.fetch_bg_tile_number(true); // @TODO CGB
-            let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(tile, true);
+            let (cgb_attrs, tile) = self.fetch_bg_tile_number(true);
+            let (tile_lsb, tile_msb) = self.fetch_bg_tile_tuple(cgb_attrs, tile, true);
 
             let rt_scanline = &mut self.rt[ly];
+            let cgb_bg_priority = self.ctx.cgb && cgb_attrs & 0x80 != 0;
 
             assert!(x < 160);
 
             for bit_idx in (skip_pixels..8).rev() {
-                let hb = (tile_msb >> bit_idx) & 0x1;
-                let lb = (tile_lsb >> bit_idx) & 0x1;
+                let bit_index_xflip = if self.ctx.cgb {
+                    let x_flip = cgb_attrs & 0x20 != 0;
+                    let bit_idx_flip = if x_flip { 7 - bit_idx } else { bit_idx };
+                    bit_idx_flip
+                } else {
+                    bit_idx
+                };
+
+                let hb = (tile_msb >> bit_index_xflip) & 0x1;
+                let lb = (tile_lsb >> bit_index_xflip) & 0x1;
                 let win_pixel = lb | (hb << 1);
 
-                let palette_color = (self.bgp >> (win_pixel * 2)) & 0x3;
+                self.bg_scanline_mask[x] = win_pixel & 0x3;
 
-                self.bg_scanline_mask[x] = win_pixel;
-                rt_scanline[x] = palette_color;
+                if cgb_bg_priority {
+                    self.bg_scanline_mask[x] |= CGB_BG_PRIO_BIT;
+                }
+
+                if self.ctx.cgb {
+                    rt_scanline[x] =
+                        PPU::get_cgb_color(&self.cgb_bg_palettes, cgb_attrs & 0x7, win_pixel);
+                } else {
+                    // @todo CGB: dmg 2 bit colors w/ cgb 15 bit colors
+                    let palette_color = (self.bgp >> (win_pixel * 2)) & 0x3;
+                    rt_scanline[x] = palette_color as u16;
+                }
+
                 x += 1;
 
                 if x == 160 {
@@ -726,6 +841,10 @@ impl PPU {
             return;
         }
 
+        // @todo CGB: Test bg wnd priority master toggle
+        // https://gbdev.io/pandocs/LCDC.html#cgb-mode-bg-and-window-master-priority
+        let cgb_bg_wnd_prio_master_disable = self.ctx.cgb && !self.lcdc_bit_0;
+
         for sprite in self.sprite_buffer.iter() {
             let sprite_screen_x: i16 = i16::from(sprite.x) - 8;
 
@@ -734,6 +853,15 @@ impl PPU {
 
                 if x >= 160 || x < 0 {
                     continue;
+                }
+
+                if !cgb_bg_wnd_prio_master_disable {
+                    if self.bg_scanline_mask[x as usize] & CGB_BG_PRIO_BIT != 0 {
+                        // On CGB, if bg map attr bit 7 is set, BG always has priority
+                        // https://gbdev.io/pandocs/Tile_Maps.html#bg-map-attributes-cgb-mode-only
+                        // @todo CGB: Test CGB_BG_PRIO_BIT
+                        continue;
+                    }
                 }
 
                 let (tile_lsb, tile_msb) = self.fetch_sprite_tile_tuple(sprite);
@@ -751,28 +879,41 @@ impl PPU {
                     continue;
                 }
 
-                let sprite_palette = sprite.attr & (1 << 4);
                 let sprite_bgpriority = sprite.attr & (1 << 7);
 
-                let sprite_palette = if sprite_palette == 0 {
-                    self.obp0
-                } else {
-                    self.obp1
-                };
-
-                if sprite_bgpriority != 0 && self.bg_scanline_mask[x as usize] != 0 {
+                if !cgb_bg_wnd_prio_master_disable
+                    && sprite_bgpriority != 0
+                    && self.bg_scanline_mask[x as usize] != 0
+                {
                     // According to pandocs, sprites with higher priority sprite but bg-over-obj
                     // will "mask" lower priority sprites, and draw background over them. Copy background pixel
                     // back to the framebuffer to emulate this
                     // @todo - Check this
-                    let bg_pixel = (self.bgp >> (self.bg_scanline_mask[x as usize] * 2)) & 0x3;
-                    self.rt[self.ly as usize][x as usize] = bg_pixel;
+                    if !self.ctx.cgb {
+                        let bg_clr = self.bg_scanline_mask[x as usize] & 0x7;
+                        let bg_pixel = (self.bgp >> (bg_clr * 2)) & 0x3;
+                        self.rt[self.ly as usize][x as usize] = bg_pixel as u16;
+                    } else {
+                        // @todo CGB: bg-over-obj masking
+                    }
+
                     continue;
                 }
 
-                let sprite_pixel = (sprite_palette >> (sprite_color * 2)) & 0x3;
+                if self.ctx.cgb {
+                    self.rt[self.ly as usize][x as usize] =
+                        PPU::get_cgb_color(&self.cgb_ob_palettes, sprite.attr & 0x7, sprite_color);
+                } else {
+                    let sprite_palette = if sprite.attr & (1 << 4) == 0 {
+                        self.obp0
+                    } else {
+                        self.obp1
+                    };
 
-                self.rt[self.ly as usize][x as usize] = sprite_pixel;
+                    // @todo CGB: dmg 2 bit colors w/ cgb 15 bit colors
+                    let palette_color = (sprite_palette >> (sprite_color * 2)) & 0x3;
+                    self.rt[self.ly as usize][x as usize] = palette_color as u16;
+                }
             }
         }
     }
