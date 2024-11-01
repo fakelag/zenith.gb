@@ -67,7 +67,7 @@ pub fn save_file_from_rom_path(rom_path: &str) -> std::io::Result<String> {
     }
 
     if let Some(ext) = path.extension() {
-        if ext != "gb" {
+        if ext != "gb" && ext != "gbc" {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "Rom path is not a valid gb file",
