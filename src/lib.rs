@@ -229,8 +229,8 @@ fn controller_axis_gb_btn(axis: sdl2::controller::Axis) -> Option<(GbButton, GbB
 
 fn rgb_from_gb_color(gb_color: u16) -> (u8, u8, u8) {
     let red_intensity = gb_color & 0x1F;
-    let green_intensity = (gb_color & 0x3E0) >> 5;
-    let blue_intensity = (gb_color & 0x7C00) >> 10;
+    let green_intensity = (gb_color >> 5) & 0x1F;
+    let blue_intensity = (gb_color >> 10) & 0x1F;
 
     const INTENSITY: f64 = 8.22580;
 

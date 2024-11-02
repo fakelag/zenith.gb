@@ -194,8 +194,8 @@ impl PPU {
             bgp: 0xFC,
             obp0: 0xFF,
             obp1: 0xFF,
-            cgb_bg_palettes: [0; 0x40],
-            cgb_ob_palettes: [0; 0x40],
+            cgb_bg_palettes: [0xFF; 0x40],
+            cgb_ob_palettes: [0xFF; 0x40],
             bcps: 0x88,
             ocps: 0x90,
             hblank_cycle: false,
@@ -799,11 +799,11 @@ impl PPU {
             return None;
         }
 
-        if !self.ctx.cgb && !self.lcdc_bit_0 {
+        if self.draw_window == false {
             return None;
         }
 
-        if self.draw_window == false {
+        if !self.ctx.cgb && !self.lcdc_bit_0 {
             return None;
         }
 
