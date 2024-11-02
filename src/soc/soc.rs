@@ -31,7 +31,8 @@ struct DmaTransfer {
 struct Hdma {
     src: u16,
     dst: u16,
-    remaining: u16,
+    initial: u16,
+    count: u16,
     hblank_dma: bool,
 }
 
@@ -108,6 +109,8 @@ pub struct SOC {
     hwr_ff73: u8,
     hwr_ff74: u8,
     hwr_ff75: u8,
+
+    cpu_halted: bool,
 }
 
 impl SOC {
@@ -159,6 +162,8 @@ impl SOC {
             // @todo techically should be 0, but mts expects ff
             hwr_ff74: 0xFF,
             hwr_ff75: 0,
+
+            cpu_halted: false,
         };
 
         if soc.ctx.comp_mode != CompatibilityMode::ModeDmg {
@@ -280,6 +285,15 @@ impl SOC {
                     HWR_WY              => self.ppu.read_wy(),
                     HWR_WX              => self.ppu.read_wx(),
                     HWR_VBK             => self.ppu.read_vbk(),
+                    HWR_HDMA5           => {
+                        if let Some(active_hdma) = &self.hdma {
+                            if active_hdma.hblank_dma {
+                                let blocks_left = (active_hdma.initial - active_hdma.count - 1) / 0x10;
+                                return (blocks_left as u8) & 0x7F;
+                            }
+                        }
+                        return 0xFF;
+                    }
                     HWR_BCPS            => self.ppu.read_bcps(),
                     HWR_BCPD            => self.ppu.read_bcpd(),
                     HWR_OCPS            => self.ppu.read_ocps(),
@@ -407,13 +421,14 @@ impl SOC {
                             return;
                         }
 
+                        let count = u16::from(data & 0x7F + 1) * 0x10;
                         self.hdma = Some(Box::new(Hdma {
                             dst: self.hdma_dst & 0x1FF0,
                             src: self.hdma_src & 0xFFF0,
-                            remaining: (u16::from(data & 0x1F) * 16 + 1),
+                            initial: count,
+                            count: 0,
                             hblank_dma: data & 0x80 != 0
                         }));
-                        println!("[{}] start hdma: {} -> {} | {}", self.get_rom_path(), self.hdma_src, self.hdma_dst, data)
                     }
                     HWR_BCPS                => { self.clock(); self.ppu.write_bcps(data); },
                     HWR_BCPD                => { self.clock(); self.ppu.write_bcpd(data); },
@@ -635,15 +650,33 @@ impl SOC {
     }
 
     fn clock_hdma(&mut self) {
-        if let Some(active_hdma) = &self.hdma {
-            // 6BC0 -> 1800
-            // 6BC0 -> 1C00
-            // 0011 1111
-
+        // @todo - HDMA transfer is currently quickly hacked together to move memory either
+        // instantly in case of General-Purpose DMA or 16 bytes at a time at the start of HBlank for
+        // HBlank DMA. This doesn't respect actual timings that should halt the cpu and transfer only a few bytes
+        // per every M-cycle. Transfer timings: https://gbdev.io/pandocs/CGB_Registers.html#transfer-timings
+        if let Some(active_hdma) = &mut self.hdma {
             if active_hdma.hblank_dma {
-                todo!("hblank transfer");
+                if self.ppu.get_hblank_cycle() && !self.cpu_halted {
+                    let bytes_to_transfer: u16 =
+                        std::cmp::min(0x10, active_hdma.initial - active_hdma.count);
+
+                    for offset in active_hdma.count..active_hdma.count + bytes_to_transfer {
+                        let src_addr = active_hdma.src + offset;
+                        let dst_addr = active_hdma.dst + offset;
+
+                        let byte = dma_read!(self, src_addr);
+
+                        self.ppu.write_vram(dst_addr, byte);
+                    }
+
+                    active_hdma.count += bytes_to_transfer;
+
+                    if active_hdma.initial - active_hdma.count == 0 {
+                        self.hdma = None;
+                    }
+                }
             } else {
-                for offset in 0..active_hdma.remaining {
+                for offset in 0..active_hdma.initial {
                     let src_addr = active_hdma.src + offset;
                     let dst_addr = active_hdma.dst + offset;
 
@@ -659,5 +692,9 @@ impl SOC {
 
     pub fn get_rom_path(&self) -> String {
         self.ctx.rom_path.clone()
+    }
+
+    pub fn set_cpu_halted(&mut self, halted: bool) {
+        self.cpu_halted = halted;
     }
 }

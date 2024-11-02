@@ -135,6 +135,9 @@ pub struct PPU {
     */
     bcps: u8,
     ocps: u8,
+
+    // Used for HDMA HBlank transfer
+    hblank_cycle: bool,
 }
 
 impl Display for PPU {
@@ -195,11 +198,16 @@ impl PPU {
             cgb_ob_palettes: [0; 0x40],
             bcps: 0x88,
             ocps: 0x90,
+            hblank_cycle: false,
         }
     }
 
     pub fn get_framebuffer(&self) -> &FrameBuffer {
         &self.rt
+    }
+
+    pub fn get_hblank_cycle(&self) -> bool {
+        self.hblank_cycle
     }
 
     pub fn reset(&mut self) {
@@ -240,6 +248,8 @@ impl PPU {
     }
 
     pub fn clock(&mut self, ctx: &mut soc::ClockContext) {
+        self.hblank_cycle = false;
+
         if !self.lcdc_enable {
             return;
         }
@@ -280,6 +290,8 @@ impl PPU {
                 self.stat_mode = PpuMode::PpuHBlank;
             }
             PpuMode::PpuHBlank => {
+                // @todo - Better integrated handling for hdma
+                self.hblank_cycle = true;
                 self.ly += 1;
                 self.update_lyc_eq_ly();
 
@@ -874,8 +886,12 @@ impl PPU {
                     continue;
                 }
 
+                let obj_priority_bg_clr0 = self.bg_scanline_mask[x as usize] & 0x3 == 0;
+
                 if !cgb_bg_wnd_prio_master_disable {
-                    if self.bg_scanline_mask[x as usize] & CGB_BG_PRIO_BIT != 0 {
+                    if self.bg_scanline_mask[x as usize] & CGB_BG_PRIO_BIT != 0
+                        && !obj_priority_bg_clr0
+                    {
                         // On CGB, if bg map attr bit 7 is set, BG always has priority
                         // https://gbdev.io/pandocs/Tile_Maps.html#bg-map-attributes-cgb-mode-only
                         // @todo CGB: Test CGB_BG_PRIO_BIT
@@ -902,7 +918,7 @@ impl PPU {
 
                 if !cgb_bg_wnd_prio_master_disable
                     && sprite_bgpriority != 0
-                    && self.bg_scanline_mask[x as usize] != 0
+                    && !obj_priority_bg_clr0
                 {
                     // According to pandocs, sprites with higher priority sprite but bg-over-obj
                     // will "mask" lower priority sprites, and draw background over them. Copy background pixel

@@ -257,6 +257,7 @@ impl CPU {
         // https://gbdev.io/pandocs/halt.html
         // The CPU wakes up as soon as an interrupt is pending, that is, when the bitwise AND of IE and IF is non-zero.
         self.halted = false;
+        soc.set_cpu_halted(false);
 
         if !self.ime {
             return false;

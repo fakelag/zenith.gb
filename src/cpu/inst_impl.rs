@@ -466,6 +466,7 @@ impl cpu::CPU {
     pub fn opcode_halt(&mut self, soc: &mut SOC, _instr: &Instruction, _opcode: u8) {
         if self.ime || soc.active_interrupts() == 0 {
             self.halted = true;
+            soc.set_cpu_halted(true);
             return;
         }
 
