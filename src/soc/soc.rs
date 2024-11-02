@@ -73,8 +73,11 @@ pub struct SOC {
     ppu: ppu::PPU,
     serial: serial::Serial,
 
+    // C000	CFFF	4 KiB Work RAM (WRAM)
+    // D000	DFFF	4 KiB Work RAM (WRAM) CGB: bank 1–7 (svbk)
     wram: Vec<u8>,
     hram: Vec<u8>,
+    svbk: u8,
 
     p1_select_buttons: bool,
     p1_select_dpad: bool,
@@ -131,8 +134,9 @@ impl SOC {
             enable_saving,
             run_for_cycles,
             cycles: 0,
-            wram: vec![0; 0x4000],
+            wram: vec![0; 0x12000],
             hram: vec![0; 0x7F],
+            svbk: 0,
             mbc: Box::new(MbcRomOnly::new()),
             active_dma: None,
             dma_request: None,
@@ -212,8 +216,12 @@ impl SOC {
             0xA000..=0xBFFF => {
                 self.mbc.read(address)
             }
-            0xC000..=0xDFFF => {
+            0xC000..=0xCFFF => {
                 self.wram[usize::from(address - 0xC000)]
+            }
+            0xD000..=0xDFFF => {
+                let bank_offset = (self.svbk as u16) * 0x2000;
+                self.wram[usize::from(address - 0xC000 + bank_offset)]
             }
             0xE000..=0xFDFF => {
                 // Echo RAM
@@ -298,6 +306,7 @@ impl SOC {
                     HWR_BCPD            => self.ppu.read_bcpd(),
                     HWR_OCPS            => self.ppu.read_ocps(),
                     HWR_OCPD            => self.ppu.read_ocpd(),
+                    HWR_SVBK            => { if self.ctx.cgb { self.svbk } else { 0xFF } }
                     HWR_FF72            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff72 } else { 0xFF },
                     HWR_FF73            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff73 } else { 0xFF },
                     HWR_FF74            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff74 } else { 0xFF },
@@ -331,9 +340,14 @@ impl SOC {
                 self.clock();
                 self.mbc.write(address, data);
             }
-            0xC000..=0xDFFF => {
+            0xC000..=0xCFFF => {
                 self.clock();
                 self.wram[usize::from(address - 0xC000)] = data;
+            }
+            0xD000..=0xDFFF => {
+                self.clock();
+                let bank_offset = (self.svbk as u16) * 0x2000;
+                self.wram[usize::from(address - 0xC000 + bank_offset)] = data;
             }
             0xE000..=0xFDFF => {
                 // Echo RAM
@@ -435,17 +449,17 @@ impl SOC {
                     HWR_BCPD                => { self.clock(); self.ppu.write_bcpd(data); },
                     HWR_OCPS                => { self.clock(); self.ppu.write_ocps(data); },
                     HWR_OCPD                => { self.clock(); self.ppu.write_ocpd(data); },
-                    HWR_FF72                => { self.clock(); if self.ctx.cgb { self.hwr_ff72 = data } },
-                    HWR_FF73                => { self.clock(); if self.ctx.cgb { self.hwr_ff73 = data } },
-                    HWR_FF74                => { self.clock(); if self.ctx.cgb { self.hwr_ff74 = data } },
-                    HWR_FF75                => { self.clock(); if self.ctx.cgb { self.hwr_ff75 = data & 0x70 } },
                     HWR_SVBK                => {
                         self.clock();
                         if !self.ctx.cgb {
                             return;
                         }
-                        todo!("svbk={data}");
+                        self.svbk = data & 0x7;
                     }
+                    HWR_FF72                => { self.clock(); if self.ctx.cgb { self.hwr_ff72 = data } },
+                    HWR_FF73                => { self.clock(); if self.ctx.cgb { self.hwr_ff73 = data } },
+                    HWR_FF74                => { self.clock(); if self.ctx.cgb { self.hwr_ff74 = data } },
+                    HWR_FF75                => { self.clock(); if self.ctx.cgb { self.hwr_ff75 = data & 0x70 } },
                     _                       => { self.clock(); /* unused */},
                 }
             }
