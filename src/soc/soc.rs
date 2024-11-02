@@ -11,7 +11,7 @@ use crate::{
     serial::serial,
     timer::timer::Timer,
     util::util,
-    GbButton, GbCtx, InputReceiver,
+    CompatibilityMode, GbButton, GbCtx, InputReceiver,
 };
 
 use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
@@ -161,7 +161,7 @@ impl SOC {
             hwr_ff75: 0,
         };
 
-        if soc.ctx.cgb {
+        if soc.ctx.comp_mode != CompatibilityMode::ModeDmg {
             soc.p1_select_buttons = true;
             soc.p1_select_dpad = true;
         }
@@ -284,12 +284,12 @@ impl SOC {
                     HWR_BCPD            => self.ppu.read_bcpd(),
                     HWR_OCPS            => self.ppu.read_ocps(),
                     HWR_OCPD            => self.ppu.read_ocpd(),
-                    HWR_FF72            => if self.ctx.cgb { self.hwr_ff72 } else { 0xFF },
-                    HWR_FF73            => if self.ctx.cgb { self.hwr_ff73 } else { 0xFF },
-                    HWR_FF74            => if self.ctx.cgb { self.hwr_ff74 } else { 0xFF },
-                    HWR_FF75            => if self.ctx.cgb { self.hwr_ff75 | 0x8F } else { 0xFF },
-                    HWR_FF76            => if self.ctx.cgb { 0x00 } else { 0xFF },
-                    HWR_FF77            => if self.ctx.cgb { 0x00 } else { 0xFF },
+                    HWR_FF72            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff72 } else { 0xFF },
+                    HWR_FF73            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff73 } else { 0xFF },
+                    HWR_FF74            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff74 } else { 0xFF },
+                    HWR_FF75            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff75 | 0x8F } else { 0xFF },
+                    HWR_FF76            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { 0x00 } else { 0xFF },
+                    HWR_FF77            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { 0x00 } else { 0xFF },
                     _                   => 0xFF,
                 }
             }
@@ -402,13 +402,18 @@ impl SOC {
                     HWR_HDMA4               => { self.clock(); util::set_low(&mut self.hdma_dst, data); }
                     HWR_HDMA5               => {
                         self.clock();
+
+                        if !self.ctx.cgb {
+                            return;
+                        }
+
                         self.hdma = Some(Box::new(Hdma {
                             dst: self.hdma_dst & 0x1FF0,
                             src: self.hdma_src & 0xFFF0,
                             remaining: (u16::from(data & 0x1F) * 16 + 1),
                             hblank_dma: data & 0x80 != 0
                         }));
-                        println!("start hdma: {} -> {} | {}", self.hdma_src, self.hdma_dst, data)
+                        println!("[{}] start hdma: {} -> {} | {}", self.get_rom_path(), self.hdma_src, self.hdma_dst, data)
                     }
                     HWR_BCPS                => { self.clock(); self.ppu.write_bcps(data); },
                     HWR_BCPD                => { self.clock(); self.ppu.write_bcpd(data); },
@@ -418,7 +423,13 @@ impl SOC {
                     HWR_FF73                => { self.clock(); if self.ctx.cgb { self.hwr_ff73 = data } },
                     HWR_FF74                => { self.clock(); if self.ctx.cgb { self.hwr_ff74 = data } },
                     HWR_FF75                => { self.clock(); if self.ctx.cgb { self.hwr_ff75 = data & 0x70 } },
-                    HWR_SVBK                => { self.clock(); todo!("svbk={data}"); }
+                    HWR_SVBK                => {
+                        self.clock();
+                        if !self.ctx.cgb {
+                            return;
+                        }
+                        todo!("svbk={data}");
+                    }
                     _                       => { self.clock(); /* unused */},
                 }
             }

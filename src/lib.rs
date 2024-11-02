@@ -47,13 +47,6 @@ const GB_SCREEN_WIDTH: u32 = 160;
 const GB_SCREEN_HEIGHT: u32 = 144;
 const WINDOW_SIZE_MULT: u32 = 4;
 
-const PALETTE: [sdl2::pixels::Color; 4] = [
-    sdl2::pixels::Color::RGB(0x88, 0xa0, 0x48),
-    sdl2::pixels::Color::RGB(0x48, 0x68, 0x30),
-    sdl2::pixels::Color::RGB(0x28, 0x40, 0x20),
-    sdl2::pixels::Color::RGB(0x18, 0x28, 0x08),
-];
-
 pub fn sdl2_create_window(sdl_ctx: &sdl2::Sdl) -> sdl2::render::Canvas<sdl2::video::Window> {
     let video_subsystem = sdl_ctx.video().unwrap();
 
@@ -154,7 +147,7 @@ pub fn sdl2_enable_controller(
         .ok_or_else(|| format!("Couldn't find any controllers"))?;
 
     _ = controller.set_rumble(0, 20_000, 500);
-    _ = controller.set_led(PALETTE[0].r, PALETTE[0].g, PALETTE[0].b);
+    _ = controller.set_led(0x88, 0xa0, 0x48);
 
     return Ok(controller);
 }
@@ -234,6 +227,20 @@ fn controller_axis_gb_btn(axis: sdl2::controller::Axis) -> Option<(GbButton, GbB
     }
 }
 
+fn rgb_from_gb_color(gb_color: u16) -> (u8, u8, u8) {
+    let red_intensity = gb_color & 0x1F;
+    let green_intensity = (gb_color & 0x3E0) >> 5;
+    let blue_intensity = (gb_color & 0x7C00) >> 10;
+
+    const INTENSITY: f64 = 8.22580;
+
+    (
+        (INTENSITY * f64::from(red_intensity as u8)) as u8,
+        (INTENSITY * f64::from(green_intensity as u8)) as u8,
+        (INTENSITY * f64::from(blue_intensity as u8)) as u8,
+    )
+}
+
 fn vsync_canvas(
     rt: &FrameBuffer,
     texture: &mut sdl2::render::Texture,
@@ -249,24 +256,11 @@ fn vsync_canvas(
                     let color = rt[y][x];
                     let index = y * size + x * 3;
 
-                    let red_intensity = color & 0x1F;
-                    let green_intensity = (color & 0x3E0) >> 5;
-                    let blue_intensity = (color & 0x7C00) >> 10;
+                    let (r, g, b) = rgb_from_gb_color(color);
 
-                    const INTENSITY: f64 = 8.22580;
-
-                    buffer[index] = (INTENSITY * f64::from(red_intensity as u8)) as u8;
-                    buffer[index + 1] = (INTENSITY * f64::from(green_intensity as u8)) as u8;
-                    buffer[index + 2] = (INTENSITY * f64::from(blue_intensity as u8)) as u8;
-                    // match color {
-                    //     0..=3 => {
-                    //         let c = PALETTE[color as usize];
-                    //         buffer[index] = c.r;
-                    //         buffer[index + 1] = c.g;
-                    //         buffer[index + 2] = c.b;
-                    //     }
-                    //     _ => unreachable!(),
-                    // }
+                    buffer[index] = r;
+                    buffer[index + 1] = g;
+                    buffer[index + 2] = b;
                 }
             }
         })
@@ -309,14 +303,14 @@ fn screenshot(rt: &FrameBuffer, rom_filename: &str) {
     for x in 0..160 {
         for y in 0..144 {
             let gb_color = rt[y][x];
-            let palette_color = PALETTE[gb_color as usize];
+            let rgb_color = rgb_from_gb_color(gb_color);
             bmp_img.set_pixel(
                 x as u32,
                 y as u32,
                 bmp::Pixel {
-                    r: palette_color.r,
-                    g: palette_color.g,
-                    b: palette_color.b,
+                    r: rgb_color.0,
+                    g: rgb_color.1,
+                    b: rgb_color.2,
                 },
             );
         }
@@ -570,7 +564,7 @@ mod tests {
 
         let mut frame_count: u64 = 0;
         let mut release_inputs: Vec<(u64, GbButton)> = Vec::new();
-        let mut last_frame: Option<[[u8; 160]; 144]> = None;
+        let mut last_frame: Option<FrameBuffer> = None;
         let rom_filepath = Path::new(&rom_path_string);
         let rom_filename = rom_filepath
             .file_name()
@@ -634,12 +628,12 @@ mod tests {
                         'img_check: for x in 0..160 {
                             for y in 0..144 {
                                 let gb_color = rt[y][x];
-                                let palette_color = PALETTE[gb_color as usize];
+                                let rgb_color = rgb_from_gb_color(gb_color);
 
                                 let snapshot_pixel = img.get_pixel(x as u32, y as u32);
-                                if snapshot_pixel.r != palette_color.r
-                                    || snapshot_pixel.g != palette_color.g
-                                    || snapshot_pixel.b != palette_color.b
+                                if snapshot_pixel.r != rgb_color.0
+                                    || snapshot_pixel.g != rgb_color.1
+                                    || snapshot_pixel.b != rgb_color.2
                                 {
                                     match_snapshot = false;
                                     break 'img_check;
@@ -665,14 +659,14 @@ mod tests {
                 for x in 0..160 {
                     for y in 0..144 {
                         let gb_color = frame[y][x];
-                        let palette_color = PALETTE[gb_color as usize];
+                        let rgb_color = rgb_from_gb_color(gb_color);
                         bmp_img.set_pixel(
                             x as u32,
                             y as u32,
                             bmp::Pixel {
-                                r: palette_color.r,
-                                g: palette_color.g,
-                                b: palette_color.b,
+                                r: rgb_color.0,
+                                g: rgb_color.1,
+                                b: rgb_color.2,
                             },
                         );
                     }
@@ -753,6 +747,8 @@ mod tests {
             (snapshot_runner,   "tests/roms/blargg/mem_timing-2/",                  None,           None),
             (snapshot_runner,   "tests/roms/mts/manual-only/sprite_priority.gb",    None,           None),
             (mts_runner,        "tests/roms/mts/acceptance/boot_regs-dmgABC.gb",    None,           Some(CompatibilityMode::ModeDmg)),
+            (mts_runner,        "tests/roms/mts/acceptance/boot_hwio-dmgABCmgb.gb", None,           Some(CompatibilityMode::ModeDmg)),
+            (mts_runner,        "tests/roms/mts/acceptance/bits/unused_hwio-GS.gb", None,           Some(CompatibilityMode::ModeDmg)),
             (mts_runner,        "tests/roms/mts/acceptance/bits/",                  None,           None),
             (mts_runner,        "tests/roms/mts/acceptance/instr/",                 None,           None),
             (mts_runner,        "tests/roms/mts/acceptance/interrupts/",            None,           None),
@@ -765,8 +761,8 @@ mod tests {
             (mts_runner,        "tests/roms/mts/emulator-only/mbc5/",               None,           None),
             (mts_runner,        "tests/roms/mts/misc/bits/",                        None,           None),
             (mts_runner,        "tests/roms/mts/misc/ppu/",                         None,           None),
-            (mts_runner,        "tests/roms/mts/misc/boot_hwio-C.gb",               None,           Some(CompatibilityMode::ModeCgb)),
-            (mts_runner,        "tests/roms/mts/misc/boot_regs-cgb.gb",             None,           Some(CompatibilityMode::ModeCgbDmg)),
+            (mts_runner,        "tests/roms/mts/misc/boot_hwio-C.gb",               None,           None),
+            (mts_runner,        "tests/roms/mts/misc/boot_regs-cgb.gb",             None,           None),
 
             // (mts_runner, "tests/roms/mts/acceptance/serial/", None),
         );

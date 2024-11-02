@@ -9,7 +9,7 @@ use crate::{
         soc::{self, ClockContext},
     },
     util::util,
-    GbCtx,
+    CompatibilityMode, GbCtx,
 };
 
 pub type FrameBuffer = [[u16; 160]; 144];
@@ -440,7 +440,7 @@ impl PPU {
     }
 
     pub fn read_vbk(&self) -> u8 {
-        if self.ctx.cgb {
+        if self.ctx.comp_mode != CompatibilityMode::ModeDmg {
             (self.vbk as u8) | 0xFE
         } else {
             0xFF
@@ -456,7 +456,7 @@ impl PPU {
     }
 
     pub fn read_bcps(&self) -> u8 {
-        if !self.ctx.cgb {
+        if self.ctx.comp_mode == CompatibilityMode::ModeDmg {
             return 0xFF;
         }
         return self.bcps | 0x40;
@@ -500,7 +500,7 @@ impl PPU {
     }
 
     pub fn read_ocps(&self) -> u8 {
-        if !self.ctx.cgb {
+        if self.ctx.comp_mode == CompatibilityMode::ModeDmg {
             return 0xFF;
         }
         return self.ocps | 0x40;
@@ -514,7 +514,7 @@ impl PPU {
     }
 
     pub fn read_ocpd(&self) -> u8 {
-        if !self.ctx.cgb {
+        if self.ctx.comp_mode == CompatibilityMode::ModeDmg {
             return 0xFF;
         }
 
@@ -693,6 +693,27 @@ impl PPU {
         palette_color
     }
 
+    fn get_dmg_color(dmg_color: u8) -> u16 {
+        const INTENSITY: f64 = 8.22580;
+
+        const DMG_PALETTE: [u16; 4] = [
+            (((0x88 as f64 / INTENSITY) as u16) << 0)
+                | (((0xa0 as f64 / INTENSITY) as u16) << 5)
+                | (((0x48 as f64 / INTENSITY) as u16) << 10),
+            (((0x48 as f64 / INTENSITY) as u16) << 0)
+                | (((0x68 as f64 / INTENSITY) as u16) << 5)
+                | (((0x30 as f64 / INTENSITY) as u16) << 10),
+            (((0x28 as f64 / INTENSITY) as u16) << 0)
+                | (((0x40 as f64 / INTENSITY) as u16) << 5)
+                | (((0x20 as f64 / INTENSITY) as u16) << 10),
+            (((0x18 as f64 / INTENSITY) as u16) << 0)
+                | (((0x28 as f64 / INTENSITY) as u16) << 5)
+                | (((0x08 as f64 / INTENSITY) as u16) << 10),
+        ];
+
+        DMG_PALETTE[(dmg_color & 0x3) as usize]
+    }
+
     fn draw_background(&mut self) {
         self.fetcher_x = 0;
 
@@ -744,9 +765,8 @@ impl PPU {
                     rt_scanline[x] =
                         PPU::get_cgb_color(&self.cgb_bg_palettes, cgb_attrs & 0x7, bg_pixel);
                 } else {
-                    // @todo CGB: dmg 2 bit colors w/ cgb 15 bit colors
                     let palette_color = (self.bgp >> (bg_pixel * 2)) & 0x3;
-                    rt_scanline[x] = palette_color as u16;
+                    rt_scanline[x] = PPU::get_dmg_color(palette_color);
                 }
 
                 x += 1;
@@ -819,9 +839,8 @@ impl PPU {
                     rt_scanline[x] =
                         PPU::get_cgb_color(&self.cgb_bg_palettes, cgb_attrs & 0x7, win_pixel);
                 } else {
-                    // @todo CGB: dmg 2 bit colors w/ cgb 15 bit colors
                     let palette_color = (self.bgp >> (win_pixel * 2)) & 0x3;
-                    rt_scanline[x] = palette_color as u16;
+                    rt_scanline[x] = PPU::get_dmg_color(palette_color);
                 }
 
                 x += 1;
@@ -892,7 +911,7 @@ impl PPU {
                     if !self.ctx.cgb {
                         let bg_clr = self.bg_scanline_mask[x as usize] & 0x7;
                         let bg_pixel = (self.bgp >> (bg_clr * 2)) & 0x3;
-                        self.rt[self.ly as usize][x as usize] = bg_pixel as u16;
+                        self.rt[self.ly as usize][x as usize] = PPU::get_dmg_color(bg_pixel);
                     } else {
                         // @todo CGB: bg-over-obj masking
                     }
@@ -910,9 +929,8 @@ impl PPU {
                         self.obp1
                     };
 
-                    // @todo CGB: dmg 2 bit colors w/ cgb 15 bit colors
                     let palette_color = (sprite_palette >> (sprite_color * 2)) & 0x3;
-                    self.rt[self.ly as usize][x as usize] = palette_color as u16;
+                    self.rt[self.ly as usize][x as usize] = PPU::get_dmg_color(palette_color);
                 }
             }
         }
