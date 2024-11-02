@@ -74,8 +74,7 @@ pub struct PPU {
     draw_length: u16,
     stat_interrupt: bool,
 
-    vram_0: Box<[u8; 0x2000]>,
-    vram_1: Box<[u8; 0x2000]>,
+    vram: Box<[u8; 0x4000]>,
     oam: Box<[u8; 0xA0]>,
     sprite_buffer: Vec<Sprite>,
 
@@ -166,8 +165,7 @@ impl PPU {
             draw_length: 0,
             stat_interrupt: false,
             vbk: false,
-            vram_0: vec![0; 0x2000].into_boxed_slice().try_into().unwrap(),
-            vram_1: vec![0; 0x2000].into_boxed_slice().try_into().unwrap(),
+            vram: vec![0; 0x4000].into_boxed_slice().try_into().unwrap(),
             oam: vec![0; 0xA0].into_boxed_slice().try_into().unwrap(),
             sprite_buffer: Vec::with_capacity(10),
             rt: [[0; 160]; 144],
@@ -441,12 +439,7 @@ impl PPU {
         match self.stat_mode {
             PpuMode::PpuDraw => {}
             _ => {
-                let vram_addr = (addr & 0x1FFF) as usize;
-                if self.vbk {
-                    self.vram_1[vram_addr] = data;
-                } else {
-                    self.vram_0[vram_addr] = data;
-                }
+                self.vram[PPU::vram_addr(self.vbk, addr)] = data;
             }
         }
     }
@@ -563,12 +556,12 @@ impl PPU {
     read_write!(read_obp0, clock_write_obp0, obp0);
     read_write!(read_obp1, clock_write_obp1, obp1);
 
+    fn vram_addr(bank_1: bool, addr: u16) -> usize {
+        return ((addr & 0x1FFF) + ((bank_1 as u16) * 0x2000)) as usize;
+    }
+
     fn read_vram_banked(&self, bank_1: bool, addr: u16) -> u8 {
-        if bank_1 {
-            self.vram_1[addr as usize]
-        } else {
-            self.vram_0[addr as usize]
-        }
+        self.vram[PPU::vram_addr(bank_1, addr)]
     }
 
     fn update_lyc_eq_ly(&mut self) {
