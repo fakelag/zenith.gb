@@ -421,7 +421,8 @@ impl SOC {
                             return;
                         }
 
-                        let count = u16::from(data & 0x7F + 1) * 0x10;
+                        let length_bits = data & 0x7F;
+                        let count = u16::from(length_bits + 1) * 0x10;
                         self.hdma = Some(Box::new(Hdma {
                             dst: self.hdma_dst & 0x1FF0,
                             src: self.hdma_src & 0xFFF0,
