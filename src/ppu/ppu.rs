@@ -274,8 +274,6 @@ impl PPU {
             PpuMode::PpuOamScan => {
                 if self.wy == self.ly {
                     self.draw_window = true;
-                } else if self.draw_window {
-                    self.window_line_counter += 1;
                 }
 
                 self.cycles_mode = self.mode_draw();
@@ -856,6 +854,8 @@ impl PPU {
             }
             skip_pixels = 0;
         }
+
+        self.window_line_counter += 1;
 
         return Some(wx_sub7);
     }
