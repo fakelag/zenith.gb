@@ -890,7 +890,6 @@ impl PPU {
             return;
         }
 
-        // @todo CGB: Test bg wnd priority master toggle
         // https://gbdev.io/pandocs/LCDC.html#cgb-mode-bg-and-window-master-priority
         let cgb_bg_wnd_prio_master_disable = self.ctx.cgb && !self.lcdc_bit_0;
 
@@ -912,7 +911,6 @@ impl PPU {
                     {
                         // On CGB, if bg map attr bit 7 is set, BG always has priority
                         // https://gbdev.io/pandocs/Tile_Maps.html#bg-map-attributes-cgb-mode-only
-                        // @todo CGB: Test CGB_BG_PRIO_BIT
                         continue;
                     }
                 }
