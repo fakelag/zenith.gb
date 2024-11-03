@@ -6,7 +6,7 @@ use std::{
 use crate::{
     soc::{
         interrupt,
-        soc::{self, ClockContext},
+        soc::{self},
     },
     util::util,
     CompatibilityMode, GbCtx,

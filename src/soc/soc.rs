@@ -57,7 +57,11 @@ macro_rules! dma_read {
             0x0000..=0x7FFF => $self.mbc.read($address),
             0x8000..=0x9FFF => $self.ppu.read_vram($address), // not clocked
             0xA000..=0xBFFF => $self.mbc.read($address),
-            0xC000..=0xDFFF => $self.wram[usize::from($address - 0xC000)],
+            0xC000..=0xCFFF => $self.wram[usize::from($address - 0xC000)],
+            0xD000..=0xDFFF => {
+                let bank_offset = (($self.svbk as u16) * 0x2000);
+                $self.wram[usize::from($address - 0xC000 + bank_offset)]
+            }
             0xE000..=0xFDFF => $self.wram[usize::from($address - 0xE000)],
             0xFE00..=0xFFFF => {
                 unreachable!()
@@ -308,7 +312,7 @@ impl SOC {
                     HWR_HDMA5           => {
                         if let Some(active_hdma) = &self.hdma {
                             if active_hdma.hblank_dma {
-                                let blocks_left = (active_hdma.initial - active_hdma.count - 1) / 0x10;
+                                let blocks_left = ((active_hdma.initial - active_hdma.count) / 0x10) - 1;
                                 return (blocks_left as u8) & 0x7F;
                             }
                         }
