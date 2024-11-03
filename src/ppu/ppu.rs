@@ -748,7 +748,7 @@ impl PPU {
         if !self.ctx.cgb && !self.lcdc_bit_0 {
             for x in 0..160 {
                 self.bg_scanline_mask[x] = 0;
-                self.rt[self.ly as usize][x as usize] = 0;
+                self.rt[self.ly as usize][x as usize] = PPU::get_dmg_color(0);
             }
             return;
         }
