@@ -751,6 +751,7 @@ mod tests {
             (snapshot_runner,   "tests/roms/blargg/mem_timing-2/",                  None,           None),
             (snapshot_runner,   "tests/roms/magen/",                                None,           None),
             (snapshot_runner,   "tests/roms/mts/manual-only/sprite_priority.gb",    None,           None),
+            (snapshot_runner,   "tests/roms/acid/",                                 None,           None),
             (mts_runner,        "tests/roms/mts/acceptance/boot_regs-dmgABC.gb",    None,           Some(CompatibilityMode::ModeDmg)),
             (mts_runner,        "tests/roms/mts/acceptance/boot_hwio-dmgABCmgb.gb", None,           Some(CompatibilityMode::ModeDmg)),
             (mts_runner,        "tests/roms/mts/acceptance/bits/unused_hwio-GS.gb", None,           Some(CompatibilityMode::ModeDmg)),
