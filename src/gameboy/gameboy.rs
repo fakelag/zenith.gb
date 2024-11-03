@@ -89,9 +89,6 @@ impl Gameboy {
             comp_mode,
         });
 
-        #[cfg(not(test))]
-        println!("starting in {:?}", comp_mode);
-
         let gb = Self {
             soc: soc::SOC::new(
                 &cartridge,

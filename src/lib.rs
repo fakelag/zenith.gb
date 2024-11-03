@@ -93,7 +93,6 @@ impl sdl2::audio::AudioCallback for GbAudio {
                 out.copy_from_slice(&samples);
             }
             Err(_err) => {
-                // println!("recv err {:?}", time::Instant::now());
                 for i in 0..APU_SAMPLES {
                     out[i] = Self::Channel::SILENCE;
                 }

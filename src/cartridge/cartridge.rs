@@ -88,9 +88,6 @@ impl CartridgeHeader {
             panic!("Invalid header checksum");
         }
 
-        #[cfg(not(test))]
-        println!("cgb_flag={}", hdr.cgb_flag);
-
         hdr
     }
 
