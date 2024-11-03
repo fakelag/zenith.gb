@@ -114,6 +114,9 @@ pub struct SOC {
     hwr_ff75: u8,
 
     cpu_halted: bool,
+
+    cpu_speed: bool,
+    cpu_speed_armed: bool,
 }
 
 impl SOC {
@@ -168,6 +171,8 @@ impl SOC {
             hwr_ff75: 0,
 
             cpu_halted: false,
+            cpu_speed: false,
+            cpu_speed_armed: false,
         };
 
         if soc.ctx.comp_mode != CompatibilityMode::ModeDmg {
@@ -292,6 +297,13 @@ impl SOC {
                     HWR_OBP1            => self.ppu.read_obp1(),
                     HWR_WY              => self.ppu.read_wy(),
                     HWR_WX              => self.ppu.read_wx(),
+                    HWR_KEY1            => {
+                        if self.ctx.cgb {
+                            (self.cpu_speed_armed as u8) | ((self.cpu_speed as u8) << 7)
+                        } else {
+                            0xFF
+                        }
+                    }
                     HWR_VBK             => self.ppu.read_vbk(),
                     HWR_HDMA5           => {
                         if let Some(active_hdma) = &self.hdma {
@@ -413,18 +425,25 @@ impl SOC {
                     HWR_NR50                => { self.clock(); self.apu.write_nr50(data) },
                     HWR_NR51                => { self.clock(); self.apu.write_nr51(data) },
                     HWR_NR52                => { self.clock(); self.apu.write_nr52(data) },
-                    HWR_LCDC                => self.clock_ppu_write(PPU::clock_write_lcdc, data),
-                    HWR_STAT                => self.clock_ppu_write(PPU::clock_write_stat, data),
-                    HWR_LY                  => self.clock_ppu_write(PPU::clock_write_ly, data),
-                    HWR_SCY                 => self.clock_ppu_write(PPU::clock_write_scy, data),
-                    HWR_SCX                 => self.clock_ppu_write(PPU::clock_write_scx, data),
-                    HWR_LYC                 => self.clock_ppu_write(PPU::clock_write_lyc, data),
-                    HWR_BGP                 => self.clock_ppu_write(PPU::clock_write_bgp, data),
-                    HWR_OBP0                => self.clock_ppu_write(PPU::clock_write_obp0, data),
-                    HWR_OBP1                => self.clock_ppu_write(PPU::clock_write_obp1, data),
-                    HWR_WY                  => self.clock_ppu_write(PPU::clock_write_wy, data),
-                    HWR_WX                  => self.clock_ppu_write(PPU::clock_write_wx, data),
-                    HWR_VBK                 => self.clock_ppu_write(PPU::clock_write_vbk, data),
+                    HWR_LCDC                => { self.clock(); self.ppu.write_lcdc(data) },
+                    HWR_STAT                => { self.clock(); self.ppu.write_stat(data) },
+                    HWR_LY                  => { self.clock(); self.ppu.write_ly(data) },
+                    HWR_SCY                 => { self.clock(); self.ppu.write_scy(data) },
+                    HWR_SCX                 => { self.clock(); self.ppu.write_scx(data) },
+                    HWR_LYC                 => { self.clock(); self.ppu.write_lyc(data) },
+                    HWR_BGP                 => { self.clock(); self.ppu.write_bgp(data) },
+                    HWR_OBP0                => { self.clock(); self.ppu.write_obp0(data) },
+                    HWR_OBP1                => { self.clock(); self.ppu.write_obp1(data) },
+                    HWR_WY                  => { self.clock(); self.ppu.write_wy(data) },
+                    HWR_WX                  => { self.clock(); self.ppu.write_wx(data) },
+                    HWR_KEY1                => {
+                        self.clock();
+                        if !self.ctx.cgb {
+                            return;
+                        }
+                        self.cpu_speed_armed = data & 0x1 != 0;
+                    }
+                    HWR_VBK                 => { self.clock(); self.ppu.write_vbk(data) },
                     HWR_HDMA1               => { self.clock(); util::set_high(&mut self.hdma_src, data); }
                     HWR_HDMA2               => { self.clock(); util::set_low(&mut self.hdma_src, data); }
                     HWR_HDMA3               => { self.clock(); util::set_high(&mut self.hdma_dst, data); }
@@ -477,18 +496,22 @@ impl SOC {
     }
 
     pub fn clock(&mut self) {
+        let cycle = self.cycles;
+        let double_speed = self.cpu_speed;
+
         self.clock_dma();
+        SOC::clock_4_mhz(double_speed, cycle, || self.clock_hdma());
 
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
             events: &mut self.event_bits,
         };
 
-        self.ppu.clock(&mut ctx);
+        SOC::clock_4_mhz(double_speed, cycle, || self.ppu.clock(&mut ctx));
         self.timer.clock(&mut ctx);
 
-        self.mbc.clock();
-        self.apu.clock();
+        SOC::clock_4_mhz(double_speed, cycle, || self.mbc.clock());
+        SOC::clock_4_mhz(double_speed, cycle, || self.apu.clock());
         self.serial.clock(&mut ctx);
 
         self.cycles += 1;
@@ -499,40 +522,22 @@ impl SOC {
         clock_cb: fn(&mut Timer, data: u8, ctx: &mut ClockContext),
         data: u8,
     ) {
+        let cycle = self.cycles;
+        let double_speed = self.cpu_speed;
+
         self.clock_dma();
+        SOC::clock_4_mhz(double_speed, cycle, || self.clock_hdma());
 
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
             events: &mut self.event_bits,
         };
 
-        self.ppu.clock(&mut ctx);
+        SOC::clock_4_mhz(double_speed, cycle, || self.ppu.clock(&mut ctx));
         clock_cb(&mut self.timer, data, &mut ctx);
 
-        self.mbc.clock();
-        self.apu.clock();
-        self.serial.clock(&mut ctx);
-
-        self.cycles += 1;
-    }
-
-    pub fn clock_ppu_write(
-        &mut self,
-        clock_cb: fn(&mut PPU, data: u8, ctx: &mut ClockContext),
-        data: u8,
-    ) {
-        self.clock_dma();
-
-        let mut ctx = ClockContext {
-            interrupts: &mut self.r#if,
-            events: &mut self.event_bits,
-        };
-
-        clock_cb(&mut self.ppu, data, &mut ctx);
-        self.timer.clock(&mut ctx);
-
-        self.mbc.clock();
-        self.apu.clock();
+        SOC::clock_4_mhz(double_speed, cycle, || self.mbc.clock());
+        SOC::clock_4_mhz(double_speed, cycle, || self.apu.clock());
         self.serial.clock(&mut ctx);
 
         self.cycles += 1;
@@ -624,6 +629,14 @@ impl SOC {
         exit
     }
 
+    fn clock_4_mhz(double_speed: bool, cycle: u64, mut cb: impl FnMut()) {
+        if !double_speed || cycle & 0x1 == 0 {
+            // Clock every other cycle When running in 8 MHz mode or
+            // every cycle in 4 MHz mode
+            cb();
+        }
+    }
+
     fn clock_dma(&mut self) {
         // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
         // instead of the actual value at the given memory address,
@@ -662,8 +675,6 @@ impl SOC {
             };
             self.active_dma = Some(dma);
         }
-
-        self.clock_hdma();
     }
 
     fn clock_hdma(&mut self) {
@@ -713,5 +724,16 @@ impl SOC {
 
     pub fn set_cpu_halted(&mut self, halted: bool) {
         self.cpu_halted = halted;
+    }
+
+    pub fn cgb_speed_switch(&mut self) {
+        if !self.cpu_speed_armed {
+            return;
+        }
+        // @todo - Timing for div reset, does it happen on the current or next M-cycle
+        self.timer.reset_div();
+
+        self.cpu_speed_armed = false;
+        self.cpu_speed = !self.cpu_speed;
     }
 }

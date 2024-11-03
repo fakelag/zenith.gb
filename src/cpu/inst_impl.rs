@@ -373,15 +373,9 @@ impl cpu::CPU {
 
     pub fn opcode_stop(&mut self, soc: &mut SOC, _instr: &Instruction, opcode: u8) {
         debug_assert!(opcode == 0x10);
+        // @todo CGB: Enter CPU very low power mode when in DMG mode (but nobody used it)
 
-        // DIV is reset on stop
-        // @todo - stop mode
-        // soc.div().set(0);
-
-        println!("{}\nrom_path={}", self, soc.get_rom_path());
-        todo!("0x10");
-
-        // @todo CGB: Enter CPU very low power mode. Also used to switch between double and normal speed CPU modes in GBC.
+        soc.cgb_speed_switch();
     }
 
     pub fn opcode_jr_e8(&mut self, soc: &mut SOC, _instr: &Instruction, _opcode: u8) {

@@ -39,8 +39,7 @@ macro_rules! read_write {
             self.$var_name
         }
 
-        pub fn $write_name(&mut self, data: u8, ctx: &mut soc::ClockContext) {
-            self.clock(ctx);
+        pub fn $write_name(&mut self, data: u8) {
             self.$var_name = data;
         }
     };
@@ -138,6 +137,8 @@ pub struct PPU {
 
     // Used for HDMA HBlank transfer
     hblank_cycle: bool,
+
+    check_interrupt: bool,
 }
 
 impl Display for PPU {
@@ -200,6 +201,7 @@ impl PPU {
             bcps: 0x88,
             ocps: 0x90,
             hblank_cycle: false,
+            check_interrupt: false,
         }
     }
 
@@ -252,6 +254,9 @@ impl PPU {
         self.hblank_cycle = false;
 
         if !self.lcdc_enable {
+            if self.check_interrupt {
+                self.handle_stat_interrupt(ctx);
+            }
             return;
         }
 
@@ -261,6 +266,9 @@ impl PPU {
         self.cycles_mode -= 1;
 
         if self.cycles_mode > 0 {
+            if self.check_interrupt {
+                self.handle_stat_interrupt(ctx);
+            }
             return;
         }
 
@@ -343,17 +351,15 @@ impl PPU {
             | (self.lcdc_bit_0 as u8)
     }
 
-    pub fn clock_write_lcdc(&mut self, data: u8, ctx: &mut ClockContext) {
-        self.clock(ctx);
-
+    pub fn write_lcdc(&mut self, data: u8) {
         let enable_next = data & (1 << 7) != 0;
 
         if self.lcdc_enable && !enable_next {
             self.reset();
-            self.handle_stat_interrupt(ctx);
+            self.check_interrupt = true;
         } else if !self.lcdc_enable && enable_next {
             self.update_lyc_eq_ly();
-            self.handle_stat_interrupt(ctx);
+            self.check_interrupt = true;
         }
 
         self.lcdc_enable = enable_next;
@@ -376,38 +382,34 @@ impl PPU {
             | 0x80
     }
 
-    pub fn clock_write_stat(&mut self, data: u8, ctx: &mut ClockContext) {
-        self.clock(ctx);
-
+    pub fn write_stat(&mut self, data: u8) {
         self.stat_lyc_select = data & (1 << 6) != 0;
         self.stat_mode2_select = data & (1 << 5) != 0;
         self.stat_mode1_select = data & (1 << 4) != 0;
         self.stat_mode0_select = data & (1 << 3) != 0;
 
-        self.handle_stat_interrupt(ctx);
+        // self.handle_stat_interrupt(ctx);
+        self.check_interrupt = true;
     }
 
     pub fn read_ly(&self) -> u8 {
         self.ly
     }
 
-    pub fn clock_write_ly(&mut self, _data: u8, ctx: &mut ClockContext) {
+    pub fn write_ly(&mut self, _data: u8) {
         // noop
-        // self.ly = 0;
-        self.clock(ctx);
     }
 
     pub fn read_lyc(&self) -> u8 {
         self.lyc
     }
 
-    pub fn clock_write_lyc(&mut self, data: u8, ctx: &mut ClockContext) {
-        self.clock(ctx);
-
+    pub fn write_lyc(&mut self, data: u8) {
         self.lyc = data;
         if self.lcdc_enable {
             self.update_lyc_eq_ly();
-            self.handle_stat_interrupt(ctx);
+            // self.handle_stat_interrupt(ctx);
+            self.check_interrupt = true;
         }
     }
 
@@ -453,9 +455,7 @@ impl PPU {
         }
     }
 
-    pub fn clock_write_vbk(&mut self, data: u8, ctx: &mut ClockContext) {
-        self.clock(ctx);
-
+    pub fn write_vbk(&mut self, data: u8) {
         if self.ctx.cgb {
             self.vbk = data & 0x1 != 0;
         }
@@ -563,13 +563,13 @@ impl PPU {
         self.opri = data & 0x1 != 0;
     }
 
-    read_write!(read_scy, clock_write_scy, scy);
-    read_write!(read_scx, clock_write_scx, scx);
-    read_write!(read_wy, clock_write_wy, wy);
-    read_write!(read_wx, clock_write_wx, wx);
-    read_write!(read_bgp, clock_write_bgp, bgp);
-    read_write!(read_obp0, clock_write_obp0, obp0);
-    read_write!(read_obp1, clock_write_obp1, obp1);
+    read_write!(read_scy, write_scy, scy);
+    read_write!(read_scx, write_scx, scx);
+    read_write!(read_wy, write_wy, wy);
+    read_write!(read_wx, write_wx, wx);
+    read_write!(read_bgp, write_bgp, bgp);
+    read_write!(read_obp0, write_obp0, obp0);
+    read_write!(read_obp1, write_obp1, obp1);
 
     fn vram_addr(bank_1: bool, addr: u16) -> usize {
         return ((addr & 0x1FFF) + ((bank_1 as u16) * 0x2000)) as usize;
@@ -1058,5 +1058,6 @@ impl PPU {
         }
 
         self.stat_interrupt = stat_interrupt != 0;
+        self.check_interrupt = false;
     }
 }

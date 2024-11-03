@@ -41,6 +41,7 @@ pub const HWR_OBP1: u16 = 0xFF49;
 pub const HWR_WY: u16 = 0xFF4A;
 pub const HWR_WX: u16 = 0xFF4B;
 
+pub const HWR_KEY1: u16 = 0xFF4D;
 pub const HWR_VBK: u16 = 0xFF4F;
 
 pub const HWR_HDMA1: u16 = 0xFF51;

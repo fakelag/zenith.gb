@@ -749,6 +749,7 @@ mod tests {
             (snapshot_runner,   "tests/roms/blargg/dmg_sound/",                     None,           None),
             (snapshot_runner,   "tests/roms/blargg/mem_timing/",                    None,           None),
             (snapshot_runner,   "tests/roms/blargg/mem_timing-2/",                  None,           None),
+            (snapshot_runner,   "tests/roms/blargg/interrupt_time/",                None,           None),
             (snapshot_runner,   "tests/roms/magen/",                                None,           None),
             (snapshot_runner,   "tests/roms/mts/manual-only/sprite_priority.gb",    None,           None),
             (snapshot_runner,   "tests/roms/acid/",                                 None,           None),

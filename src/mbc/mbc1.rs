@@ -128,6 +128,9 @@ impl mbc::MBC for MBC1 {
     fn write(&mut self, address: u16, data: u8) {
         match address {
             0x0..=0x1FFF => {
+                if self.ram.len() == 0 {
+                    return;
+                }
                 self.ram_enabled = data & 0xF == 0xA;
             }
             0x2000..=0x3FFF => {
