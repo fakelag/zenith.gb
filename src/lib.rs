@@ -739,9 +739,8 @@ mod tests {
 
         #[rustfmt::skip]
         let test_roms: Vec<(RunnerFn, &str, Option<Vec<GbButton>>, Option<CompatibilityMode>)>  = vec!(
-            // @todo - CGB double speed (used by cpu_instrs.gb multirom),
-            // compatibility mode can be removed once this is done
-            (snapshot_runner,   "tests/roms/blargg/cpu_instrs/",                    None,           Some(CompatibilityMode::ModeDmg)),
+            (snapshot_runner,   "tests/roms/blargg/cpu_instrs/cpu_instrs.gb",       None,           None),
+            (snapshot_runner,   "tests/roms/blargg/cpu_instrs/",                    None,           Some(CompatibilityMode::ModeCgbDmg)),
             (snapshot_runner,   "tests/roms/rtc3test/rtc3test.0.gb",                submenu(0),     None),
             (snapshot_runner,   "tests/roms/rtc3test/rtc3test.1.gb",                submenu(1),     None),
             (snapshot_runner,   "tests/roms/rtc3test/rtc3test.2.gb",                submenu(2),     None),
