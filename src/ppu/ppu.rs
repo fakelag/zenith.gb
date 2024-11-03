@@ -629,19 +629,24 @@ impl PPU {
 
     fn fetch_sprite_tile_tuple(&self, sprite_oam: &Sprite) -> (u8, u8) {
         let ly = self.ly;
-        let obj_mask: u8 = if self.lcdc_obj_size { 0xF } else { 0x7 };
+        let (obj_size_mask, obj_tile_mask): (u8, u8) = if self.lcdc_obj_size {
+            // Bit 0 is ignored for 8x16 sprites
+            (0xF, 0xFE)
+        } else {
+            (0x7, 0xFF)
+        };
 
         let y_with_flip = if sprite_oam.attr & OAM_BIT_Y_FLIP == 0 {
             ly.wrapping_sub(sprite_oam.y)
         } else {
-            let obj_height = obj_mask + 1;
+            let obj_height = obj_size_mask + 1;
             obj_height
                 .wrapping_sub(ly.wrapping_sub(sprite_oam.y))
                 .wrapping_sub(1)
         };
 
-        let line_offset = u16::from((y_with_flip & obj_mask) * 2);
-        let tile_base = (u16::from(sprite_oam.tile) * 16) + line_offset;
+        let line_offset = u16::from((y_with_flip & obj_size_mask) * 2);
+        let tile_base = (u16::from(sprite_oam.tile & obj_tile_mask) * 16) + line_offset;
 
         let bank_1 = self.ctx.cgb && sprite_oam.attr & OAM_BIT_CGB_BANK != 0;
 
