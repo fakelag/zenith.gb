@@ -53,6 +53,7 @@ pub const HWR_BCPS: u16 = 0xFF68;
 pub const HWR_BCPD: u16 = 0xFF69;
 pub const HWR_OCPS: u16 = 0xFF6A;
 pub const HWR_OCPD: u16 = 0xFF6B;
+pub const HWR_OPRI: u16 = 0xFF7C;
 
 pub const HWR_SVBK: u16 = 0xFF70;
 

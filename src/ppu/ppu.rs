@@ -124,6 +124,7 @@ pub struct PPU {
 
     // CGB registers
     vbk: bool,
+    opri: bool,
 
     /*
         This register is used to address a byte in the CGB’s background palette RAM.
@@ -152,6 +153,7 @@ impl PPU {
         sync_video: bool,
         ctx: std::rc::Rc<GbCtx>,
     ) -> Self {
+        let cgb = ctx.cgb;
         Self {
             ctx,
             frame_chan,
@@ -192,6 +194,7 @@ impl PPU {
             bgp: 0xFC,
             obp0: 0xFF,
             obp1: 0xFF,
+            opri: !cgb,
             cgb_bg_palettes: [0xFF; 0x40],
             cgb_ob_palettes: [0xFF; 0x40],
             bcps: 0x88,
@@ -546,6 +549,20 @@ impl PPU {
         }
     }
 
+    pub fn read_opri(&self) -> u8 {
+        if !self.ctx.cgb {
+            return 0xFF;
+        }
+        return (self.opri as u8) | 0xFE;
+    }
+
+    pub fn write_opri(&mut self, data: u8) {
+        if !self.ctx.cgb {
+            return;
+        }
+        self.opri = data & 0x1 != 0;
+    }
+
     read_write!(read_scy, clock_write_scy, scy);
     read_write!(read_scx, clock_write_scx, scx);
     read_write!(read_wy, clock_write_wy, wy);
@@ -592,7 +609,10 @@ impl PPU {
         }
 
         self.sprite_buffer.reverse();
-        self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
+
+        if self.opri {
+            self.sprite_buffer.sort_by(|a, b| b.x.cmp(&a.x));
+        }
     }
 
     fn fetch_bg_tile_number(&mut self, is_window: bool) -> (u8, u8) {

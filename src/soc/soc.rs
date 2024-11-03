@@ -306,6 +306,7 @@ impl SOC {
                     HWR_BCPD            => self.ppu.read_bcpd(),
                     HWR_OCPS            => self.ppu.read_ocps(),
                     HWR_OCPD            => self.ppu.read_ocpd(),
+                    HWR_OPRI            => self.ppu.read_opri(),
                     HWR_SVBK            => { if self.ctx.cgb { self.svbk } else { 0xFF } }
                     HWR_FF72            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff72 } else { 0xFF },
                     HWR_FF73            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff73 } else { 0xFF },
@@ -449,6 +450,7 @@ impl SOC {
                     HWR_BCPD                => { self.clock(); self.ppu.write_bcpd(data); },
                     HWR_OCPS                => { self.clock(); self.ppu.write_ocps(data); },
                     HWR_OCPD                => { self.clock(); self.ppu.write_ocpd(data); },
+                    HWR_OPRI                => { self.clock(); self.ppu.write_opri(data); },
                     HWR_SVBK                => {
                         self.clock();
                         if !self.ctx.cgb {
