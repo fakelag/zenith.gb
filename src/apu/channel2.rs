@@ -1,3 +1,5 @@
+use crate::GbCtx;
+
 use super::{envelope::Envelope, lengthcounter::LengthCounter, Channel};
 
 const LENGTH_COUNTER_INIT: u16 = 64;
@@ -29,13 +31,13 @@ pub struct Channel2 {
 }
 
 impl Channel2 {
-    pub fn new() -> Self {
+    pub fn new(ctx: std::rc::Rc<GbCtx>) -> Self {
         Self {
             freq_timer: 0,
             duty_cycle: 0,
             reg_frequency: 0,
             envelope: Envelope::new(0, false, 0),
-            length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
+            length_counter: LengthCounter::new(LENGTH_COUNTER_INIT, ctx),
             is_enabled: false,
             reg_waveduty: 0,
             reg_dac_enable: false,

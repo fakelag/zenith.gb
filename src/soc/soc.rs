@@ -11,7 +11,7 @@ use crate::{
     serial::serial,
     timer::timer::Timer,
     util::util,
-    GbButton, InputReceiver,
+    CompatibilityMode, GbButton, GbCtx, InputReceiver,
 };
 
 use super::{hw_reg::*, interrupt::INTERRUPT_BIT_JOYPAD};
@@ -26,6 +26,14 @@ struct DmaTransfer {
     src: u16,
     count: u8,
     cycles: u16, // 160 + 1
+}
+
+struct Hdma {
+    src: u16,
+    dst: u16,
+    initial: u16,
+    count: u16,
+    hblank_dma: bool,
 }
 
 pub struct ClockContext<'a> {
@@ -43,6 +51,25 @@ impl ClockContext<'_> {
     }
 }
 
+macro_rules! dma_read {
+    ($self:ident, $address:ident) => {
+        match $address {
+            0x0000..=0x7FFF => $self.mbc.read($address),
+            0x8000..=0x9FFF => $self.ppu.read_vram($address), // not clocked
+            0xA000..=0xBFFF => $self.mbc.read($address),
+            0xC000..=0xCFFF => $self.wram[usize::from($address - 0xC000)],
+            0xD000..=0xDFFF => {
+                let bank_offset = (($self.svbk as u16) * 0x2000);
+                $self.wram[usize::from($address - 0xC000 + bank_offset)]
+            }
+            0xE000..=0xFDFF => $self.wram[usize::from($address - 0xE000)],
+            0xFE00..=0xFFFF => {
+                unreachable!()
+            }
+        }
+    };
+}
+
 pub struct SOC {
     pub cycles: u64,
     apu: apu::APU,
@@ -50,8 +77,11 @@ pub struct SOC {
     ppu: ppu::PPU,
     serial: serial::Serial,
 
+    // C000	CFFF	4 KiB Work RAM (WRAM)
+    // D000	DFFF	4 KiB Work RAM (WRAM) CGB: bank 1–7 (svbk)
     wram: Vec<u8>,
     hram: Vec<u8>,
+    svbk: u8,
 
     p1_select_buttons: bool,
     p1_select_dpad: bool,
@@ -73,6 +103,24 @@ pub struct SOC {
     last_saved_at: std::time::Instant,
 
     run_for_cycles: Option<u64>,
+
+    ctx: std::rc::Rc<GbCtx>,
+
+    // vram dma
+    hdma_src: u16,
+    hdma_dst: u16,
+    hdma: Option<Box<Hdma>>,
+
+    // Undocumented registers
+    hwr_ff72: u8,
+    hwr_ff73: u8,
+    hwr_ff74: u8,
+    hwr_ff75: u8,
+
+    cpu_halted: bool,
+
+    cpu_speed: bool,
+    cpu_speed_armed: bool,
 }
 
 impl SOC {
@@ -85,14 +133,17 @@ impl SOC {
         sync_audio: bool,
         sync_video: bool,
         run_for_cycles: Option<u64>,
+        ctx: std::rc::Rc<GbCtx>,
     ) -> SOC {
         let mut soc = Self {
+            ctx: ctx.clone(),
             input_recv,
             enable_saving,
             run_for_cycles,
             cycles: 0,
-            wram: vec![0; 0x4000],
+            wram: vec![0; 0x12000],
             hram: vec![0; 0x7F],
+            svbk: 0,
             mbc: Box::new(MbcRomOnly::new()),
             active_dma: None,
             dma_request: None,
@@ -106,13 +157,32 @@ impl SOC {
             ie: 0x0,
             dma: 0xFF,
 
-            apu: apu::APU::new(sound_chan, sync_audio),
-            ppu: ppu::PPU::new(frame_chan, sync_video),
+            apu: apu::APU::new(sound_chan, sync_audio, ctx.clone()),
+            ppu: ppu::PPU::new(frame_chan, sync_video, ctx.clone()),
             timer: Timer::new(),
             serial: serial::Serial::new(),
 
             last_saved_at: time::Instant::now(),
+
+            hdma_dst: 0,
+            hdma_src: 0,
+            hdma: None,
+
+            hwr_ff72: 0,
+            hwr_ff73: 0,
+            // @todo techically should be 0, but mts expects ff
+            hwr_ff74: 0xFF,
+            hwr_ff75: 0,
+
+            cpu_halted: false,
+            cpu_speed: false,
+            cpu_speed_armed: false,
         };
+
+        if soc.ctx.comp_mode != CompatibilityMode::ModeDmg {
+            soc.p1_select_buttons = true;
+            soc.p1_select_dpad = true;
+        }
 
         soc.load(&cartridge);
         soc
@@ -155,8 +225,12 @@ impl SOC {
             0xA000..=0xBFFF => {
                 self.mbc.read(address)
             }
-            0xC000..=0xDFFF => {
+            0xC000..=0xCFFF => {
                 self.wram[usize::from(address - 0xC000)]
+            }
+            0xD000..=0xDFFF => {
+                let bank_offset = (self.svbk as u16) * 0x2000;
+                self.wram[usize::from(address - 0xC000 + bank_offset)]
             }
             0xE000..=0xFDFF => {
                 // Echo RAM
@@ -227,6 +301,35 @@ impl SOC {
                     HWR_OBP1            => self.ppu.read_obp1(),
                     HWR_WY              => self.ppu.read_wy(),
                     HWR_WX              => self.ppu.read_wx(),
+                    HWR_KEY1            => {
+                        if self.ctx.cgb {
+                            (self.cpu_speed_armed as u8) | ((self.cpu_speed as u8) << 7)
+                        } else {
+                            0xFF
+                        }
+                    }
+                    HWR_VBK             => self.ppu.read_vbk(),
+                    HWR_HDMA5           => {
+                        if let Some(active_hdma) = &self.hdma {
+                            if active_hdma.hblank_dma {
+                                let blocks_left = ((active_hdma.initial - active_hdma.count) / 0x10) - 1;
+                                return (blocks_left as u8) & 0x7F;
+                            }
+                        }
+                        return 0xFF;
+                    }
+                    HWR_BCPS            => self.ppu.read_bcps(),
+                    HWR_BCPD            => self.ppu.read_bcpd(),
+                    HWR_OCPS            => self.ppu.read_ocps(),
+                    HWR_OCPD            => self.ppu.read_ocpd(),
+                    HWR_OPRI            => self.ppu.read_opri(),
+                    HWR_SVBK            => { if self.ctx.cgb { self.svbk } else { 0xFF } }
+                    HWR_FF72            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff72 } else { 0xFF },
+                    HWR_FF73            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff73 } else { 0xFF },
+                    HWR_FF74            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff74 } else { 0xFF },
+                    HWR_FF75            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { self.hwr_ff75 | 0x8F } else { 0xFF },
+                    HWR_FF76            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { 0x00 } else { 0xFF },
+                    HWR_FF77            => if self.ctx.comp_mode != CompatibilityMode::ModeDmg { 0x00 } else { 0xFF },
                     _                   => 0xFF,
                 }
             }
@@ -254,9 +357,14 @@ impl SOC {
                 self.clock();
                 self.mbc.write(address, data);
             }
-            0xC000..=0xDFFF => {
+            0xC000..=0xCFFF => {
                 self.clock();
                 self.wram[usize::from(address - 0xC000)] = data;
+            }
+            0xD000..=0xDFFF => {
+                self.clock();
+                let bank_offset = (self.svbk as u16) * 0x2000;
+                self.wram[usize::from(address - 0xC000 + bank_offset)] = data;
             }
             0xE000..=0xFDFF => {
                 // Echo RAM
@@ -321,17 +429,62 @@ impl SOC {
                     HWR_NR50                => { self.clock(); self.apu.write_nr50(data) },
                     HWR_NR51                => { self.clock(); self.apu.write_nr51(data) },
                     HWR_NR52                => { self.clock(); self.apu.write_nr52(data) },
-                    HWR_LCDC                => self.clock_ppu_write(PPU::clock_write_lcdc, data),
-                    HWR_STAT                => self.clock_ppu_write(PPU::clock_write_stat, data),
-                    HWR_LY                  => self.clock_ppu_write(PPU::clock_write_ly, data),
-                    HWR_SCY                 => self.clock_ppu_write(PPU::clock_write_scy, data),
-                    HWR_SCX                 => self.clock_ppu_write(PPU::clock_write_scx, data),
-                    HWR_LYC                 => self.clock_ppu_write(PPU::clock_write_lyc, data),
-                    HWR_BGP                 => self.clock_ppu_write(PPU::clock_write_bgp, data),
-                    HWR_OBP0                => self.clock_ppu_write(PPU::clock_write_obp0, data),
-                    HWR_OBP1                => self.clock_ppu_write(PPU::clock_write_obp1, data),
-                    HWR_WY                  => self.clock_ppu_write(PPU::clock_write_wy, data),
-                    HWR_WX                  => self.clock_ppu_write(PPU::clock_write_wx, data),
+                    HWR_LCDC                => { self.clock(); self.ppu.write_lcdc(data) },
+                    HWR_STAT                => { self.clock(); self.ppu.write_stat(data) },
+                    HWR_LY                  => { self.clock(); self.ppu.write_ly(data) },
+                    HWR_SCY                 => { self.clock(); self.ppu.write_scy(data) },
+                    HWR_SCX                 => { self.clock(); self.ppu.write_scx(data) },
+                    HWR_LYC                 => { self.clock(); self.ppu.write_lyc(data) },
+                    HWR_BGP                 => { self.clock(); self.ppu.write_bgp(data) },
+                    HWR_OBP0                => { self.clock(); self.ppu.write_obp0(data) },
+                    HWR_OBP1                => { self.clock(); self.ppu.write_obp1(data) },
+                    HWR_WY                  => { self.clock(); self.ppu.write_wy(data) },
+                    HWR_WX                  => { self.clock(); self.ppu.write_wx(data) },
+                    HWR_KEY1                => {
+                        self.clock();
+                        if !self.ctx.cgb {
+                            return;
+                        }
+                        self.cpu_speed_armed = data & 0x1 != 0;
+                    }
+                    HWR_VBK                 => { self.clock(); self.ppu.write_vbk(data) },
+                    HWR_HDMA1               => { self.clock(); util::set_high(&mut self.hdma_src, data); }
+                    HWR_HDMA2               => { self.clock(); util::set_low(&mut self.hdma_src, data); }
+                    HWR_HDMA3               => { self.clock(); util::set_high(&mut self.hdma_dst, data); }
+                    HWR_HDMA4               => { self.clock(); util::set_low(&mut self.hdma_dst, data); }
+                    HWR_HDMA5               => {
+                        self.clock();
+
+                        if !self.ctx.cgb {
+                            return;
+                        }
+
+                        let length_bits = data & 0x7F;
+                        let count = u16::from(length_bits + 1) * 0x10;
+                        self.hdma = Some(Box::new(Hdma {
+                            dst: self.hdma_dst & 0x1FF0,
+                            src: self.hdma_src & 0xFFF0,
+                            initial: count,
+                            count: 0,
+                            hblank_dma: data & 0x80 != 0
+                        }));
+                    }
+                    HWR_BCPS                => { self.clock(); self.ppu.write_bcps(data); },
+                    HWR_BCPD                => { self.clock(); self.ppu.write_bcpd(data); },
+                    HWR_OCPS                => { self.clock(); self.ppu.write_ocps(data); },
+                    HWR_OCPD                => { self.clock(); self.ppu.write_ocpd(data); },
+                    HWR_OPRI                => { self.clock(); self.ppu.write_opri(data); },
+                    HWR_SVBK                => {
+                        self.clock();
+                        if !self.ctx.cgb {
+                            return;
+                        }
+                        self.svbk = data & 0x7;
+                    }
+                    HWR_FF72                => { self.clock(); if self.ctx.cgb { self.hwr_ff72 = data } },
+                    HWR_FF73                => { self.clock(); if self.ctx.cgb { self.hwr_ff73 = data } },
+                    HWR_FF74                => { self.clock(); if self.ctx.cgb { self.hwr_ff74 = data } },
+                    HWR_FF75                => { self.clock(); if self.ctx.cgb { self.hwr_ff75 = data & 0x70 } },
                     _                       => { self.clock(); /* unused */},
                 }
             }
@@ -347,18 +500,22 @@ impl SOC {
     }
 
     pub fn clock(&mut self) {
-        self.clock_oam_dma();
+        let cycle = self.cycles;
+        let double_speed = self.cpu_speed;
+
+        self.clock_dma();
+        SOC::clock_4_mhz(double_speed, cycle, || self.clock_hdma());
 
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
             events: &mut self.event_bits,
         };
 
-        self.ppu.clock(&mut ctx);
+        SOC::clock_4_mhz(double_speed, cycle, || self.ppu.clock(&mut ctx));
         self.timer.clock(&mut ctx);
 
-        self.mbc.clock();
-        self.apu.clock();
+        SOC::clock_4_mhz(double_speed, cycle, || self.mbc.clock());
+        SOC::clock_4_mhz(double_speed, cycle, || self.apu.clock());
         self.serial.clock(&mut ctx);
 
         self.cycles += 1;
@@ -369,40 +526,22 @@ impl SOC {
         clock_cb: fn(&mut Timer, data: u8, ctx: &mut ClockContext),
         data: u8,
     ) {
-        self.clock_oam_dma();
+        let cycle = self.cycles;
+        let double_speed = self.cpu_speed;
+
+        self.clock_dma();
+        SOC::clock_4_mhz(double_speed, cycle, || self.clock_hdma());
 
         let mut ctx = ClockContext {
             interrupts: &mut self.r#if,
             events: &mut self.event_bits,
         };
 
-        self.ppu.clock(&mut ctx);
+        SOC::clock_4_mhz(double_speed, cycle, || self.ppu.clock(&mut ctx));
         clock_cb(&mut self.timer, data, &mut ctx);
 
-        self.mbc.clock();
-        self.apu.clock();
-        self.serial.clock(&mut ctx);
-
-        self.cycles += 1;
-    }
-
-    pub fn clock_ppu_write(
-        &mut self,
-        clock_cb: fn(&mut PPU, data: u8, ctx: &mut ClockContext),
-        data: u8,
-    ) {
-        self.clock_oam_dma();
-
-        let mut ctx = ClockContext {
-            interrupts: &mut self.r#if,
-            events: &mut self.event_bits,
-        };
-
-        clock_cb(&mut self.ppu, data, &mut ctx);
-        self.timer.clock(&mut ctx);
-
-        self.mbc.clock();
-        self.apu.clock();
+        SOC::clock_4_mhz(double_speed, cycle, || self.mbc.clock());
+        SOC::clock_4_mhz(double_speed, cycle, || self.apu.clock());
         self.serial.clock(&mut ctx);
 
         self.cycles += 1;
@@ -494,7 +633,15 @@ impl SOC {
         exit
     }
 
-    fn clock_oam_dma(&mut self) {
+    fn clock_4_mhz(double_speed: bool, cycle: u64, mut cb: impl FnMut()) {
+        if !double_speed || cycle & 0x1 == 0 {
+            // Clock every other cycle When running in 8 MHz mode or
+            // every cycle in 4 MHz mode
+            cb();
+        }
+    }
+
+    fn clock_dma(&mut self) {
         // @todo - When the CPU attempts to read a byte from ROM/RAM during a DMA transfer,
         // instead of the actual value at the given memory address,
         // the byte that is currently being transferred by the DMA transfer is returned.
@@ -512,16 +659,7 @@ impl SOC {
 
             debug_assert!(address < 0xFE00 || address > 0xFE9F);
 
-            let byte = match address {
-                0x0000..=0x7FFF => self.mbc.read(address),
-                0x8000..=0x9FFF => self.ppu.read_vram(address), // not clocked
-                0xA000..=0xBFFF => self.mbc.read(address),
-                0xC000..=0xDFFF => self.wram[usize::from(address - 0xC000)],
-                0xE000..=0xFDFF => self.wram[usize::from(address - 0xE000)],
-                0xFE00..=0xFFFF => {
-                    unreachable!()
-                }
-            };
+            let byte = dma_read!(self, address);
 
             self.ppu.oam_dma(0xFE00 + c, byte);
 
@@ -541,5 +679,65 @@ impl SOC {
             };
             self.active_dma = Some(dma);
         }
+    }
+
+    fn clock_hdma(&mut self) {
+        // @todo - HDMA transfer is currently quickly hacked together to move memory either
+        // instantly in case of General-Purpose DMA or 16 bytes at a time at the start of HBlank for
+        // HBlank DMA. This doesn't respect actual timings that should halt the cpu and transfer only a few bytes
+        // per every M-cycle. Transfer timings: https://gbdev.io/pandocs/CGB_Registers.html#transfer-timings
+        if let Some(active_hdma) = &mut self.hdma {
+            if active_hdma.hblank_dma {
+                if self.ppu.get_hblank_cycle() && !self.cpu_halted {
+                    let bytes_to_transfer: u16 =
+                        std::cmp::min(0x10, active_hdma.initial - active_hdma.count);
+
+                    for offset in active_hdma.count..active_hdma.count + bytes_to_transfer {
+                        let src_addr = active_hdma.src + offset;
+                        let dst_addr = active_hdma.dst + offset;
+
+                        let byte = dma_read!(self, src_addr);
+
+                        self.ppu.write_vram(dst_addr, byte);
+                    }
+
+                    active_hdma.count += bytes_to_transfer;
+
+                    if active_hdma.initial - active_hdma.count == 0 {
+                        self.hdma = None;
+                    }
+                }
+            } else {
+                for offset in 0..active_hdma.initial {
+                    let src_addr = active_hdma.src + offset;
+                    let dst_addr = active_hdma.dst + offset;
+
+                    let byte = dma_read!(self, src_addr);
+
+                    self.ppu.write_vram(dst_addr, byte);
+                }
+
+                self.hdma = None;
+            }
+        }
+    }
+
+    pub fn get_rom_path(&self) -> String {
+        self.ctx.rom_path.clone()
+    }
+
+    pub fn set_cpu_halted(&mut self, halted: bool) {
+        self.cpu_halted = halted;
+    }
+
+    pub fn cgb_speed_switch(&mut self) {
+        if !self.cpu_speed_armed {
+            return;
+        }
+        // @todo - Timing for div reset, does it happen on the current or next M-cycle
+        self.timer.reset_div();
+
+        self.cpu_speed_armed = false;
+        self.cpu_speed = !self.cpu_speed;
     }
 }

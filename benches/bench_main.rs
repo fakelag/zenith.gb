@@ -10,6 +10,7 @@ pub fn run_bench(rom_path: &str, num_cycles: u64) {
         rom_path,
         EmulatorConfig {
             bp_chan: None,
+            comp_mode: None,
             sound_chan: Some(sound_send),
             frame_chan: Some(frame_send),
             input_recv: None,

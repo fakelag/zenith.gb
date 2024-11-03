@@ -108,4 +108,8 @@ impl Timer {
             self.tima = data;
         }
     }
+
+    pub fn reset_div(&mut self) {
+        self.div = 0;
+    }
 }

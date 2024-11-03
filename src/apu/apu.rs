@@ -1,6 +1,6 @@
 use std::sync::mpsc::SyncSender;
 
-use crate::{GB_DEFAULT_FPS, TARGET_FPS};
+use crate::{GbCtx, GB_DEFAULT_FPS, TARGET_FPS};
 
 use super::{
     audiocvt::AudioCVT, channel1::Channel1, channel2::Channel2, channel3::Channel3,
@@ -44,17 +44,24 @@ pub struct APU {
     left_vol: u8,
     left_vin: bool,
     right_vin: bool,
+
+    ctx: std::rc::Rc<GbCtx>,
 }
 
 impl APU {
-    pub fn new(sound_chan: Option<ApuSoundSender>, sync_audio: bool) -> Self {
+    pub fn new(
+        sound_chan: Option<ApuSoundSender>,
+        sync_audio: bool,
+        ctx: std::rc::Rc<GbCtx>,
+    ) -> Self {
         let mut apu = Self {
+            ctx: ctx.clone(),
             sync_audio,
             sample_output: None,
-            channel1: Channel1::new(),
-            channel2: Channel2::new(),
-            channel3: Channel3::new(),
-            channel4: Channel4::new(),
+            channel1: Channel1::new(ctx.clone()),
+            channel2: Channel2::new(ctx.clone()),
+            channel3: Channel3::new(ctx.clone()),
+            channel4: Channel4::new(ctx.clone()),
             sample_counter: SAMPLE_COUNTER_START,
             frame_sequencer: FRAME_SEQUENCER_START,
             frame_sequencer_step: 0,
@@ -291,7 +298,10 @@ impl APU {
     }
 
     pub fn write_nr11(&mut self, data: u8) {
-        // @todo CGB: Audio disabled prevents writing to length counters
+        if !self.audio_enabled && self.ctx.cgb {
+            return;
+        }
+
         self.channel1.write_nr11(if self.audio_enabled {
             data
         } else {
@@ -321,7 +331,10 @@ impl APU {
     }
 
     pub fn write_nr21(&mut self, data: u8) {
-        // @todo CGB: Audio disabled prevents writing to length counters
+        if !self.audio_enabled && self.ctx.cgb {
+            return;
+        }
+
         self.channel2.write_nr21(if self.audio_enabled {
             data
         } else {
@@ -362,7 +375,10 @@ impl APU {
     }
 
     pub fn write_nr31(&mut self, data: u8) {
-        // @todo CGB: Audio disabled prevents writing to length counters
+        if !self.audio_enabled && self.ctx.cgb {
+            return;
+        }
+
         self.channel3.write_nr31(data);
     }
 
@@ -388,7 +404,10 @@ impl APU {
     }
 
     pub fn write_nr41(&mut self, data: u8) {
-        // @todo CGB: Audio disabled prevents writing to length counters
+        if !self.audio_enabled && self.ctx.cgb {
+            return;
+        }
+
         self.channel4.write_nr41(data);
     }
 

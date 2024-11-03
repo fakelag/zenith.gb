@@ -9,7 +9,7 @@ pub struct Cartridge {
 impl Cartridge {
     pub fn new(file_path: &str) -> Self {
         let data = fs::read(file_path).unwrap();
-        let header = read_cartridge_header(&data).unwrap();
+        let header = CartridgeHeader::new(&data);
         Self {
             data,
             header,
@@ -59,38 +59,42 @@ impl Default for CartridgeHeader {
     }
 }
 
-fn read_cartridge_header(data: &Vec<u8>) -> std::io::Result<CartridgeHeader> {
-    let mut hdr = CartridgeHeader::default();
+impl CartridgeHeader {
+    pub fn new(data: &Vec<u8>) -> Self {
+        let mut hdr = CartridgeHeader::default();
 
-    hdr.entrypoint = data[0x100..0x104].try_into().unwrap();
-    hdr.logo = data[0x104..0x134].try_into().unwrap();
-    hdr.title = data[0x134..0x144].try_into().unwrap();
-    hdr.cgb_flag = data[0x143].try_into().unwrap();
-    hdr.lic_code_new = data[0x144..0x146].try_into().unwrap();
-    hdr.sgb_flag = data[0x146].try_into().unwrap();
-    hdr.cart_type = data[0x147].try_into().unwrap();
-    hdr.rom_size = data[0x148].try_into().unwrap();
-    hdr.ram_size = data[0x149].try_into().unwrap();
-    hdr.dst_code = data[0x14A].try_into().unwrap();
-    hdr.lic_code_old = data[0x14B].try_into().unwrap();
-    hdr.rom_version_mask = data[0x14C].try_into().unwrap();
-    hdr.header_checksum = data[0x14D].try_into().unwrap();
-    hdr.global_checksum = data[0x14E..0x150].try_into().unwrap();
+        hdr.entrypoint = data[0x100..0x104].try_into().unwrap();
+        hdr.logo = data[0x104..0x134].try_into().unwrap();
+        hdr.title = data[0x134..0x144].try_into().unwrap();
+        hdr.cgb_flag = data[0x143].try_into().unwrap();
+        hdr.lic_code_new = data[0x144..0x146].try_into().unwrap();
+        hdr.sgb_flag = data[0x146].try_into().unwrap();
+        hdr.cart_type = data[0x147].try_into().unwrap();
+        hdr.rom_size = data[0x148].try_into().unwrap();
+        hdr.ram_size = data[0x149].try_into().unwrap();
+        hdr.dst_code = data[0x14A].try_into().unwrap();
+        hdr.lic_code_old = data[0x14B].try_into().unwrap();
+        hdr.rom_version_mask = data[0x14C].try_into().unwrap();
+        hdr.header_checksum = data[0x14D].try_into().unwrap();
+        hdr.global_checksum = data[0x14E..0x150].try_into().unwrap();
 
-    let mut checksum: u8 = 0;
-    for address in 0x0134..0x014D {
-        checksum = checksum.wrapping_sub(data[address]).wrapping_sub(1);
+        let mut checksum: u8 = 0;
+        for address in 0x0134..0x014D {
+            checksum = checksum.wrapping_sub(data[address]).wrapping_sub(1);
+        }
+        hdr.header_checksum_verified = checksum;
+
+        if hdr.header_checksum_verified != hdr.header_checksum {
+            panic!("Invalid header checksum");
+        }
+
+        #[cfg(not(test))]
+        println!("cgb_flag={}", hdr.cgb_flag);
+
+        hdr
     }
-    hdr.header_checksum_verified = checksum;
 
-    if hdr.header_checksum_verified != hdr.header_checksum {
-        panic!("Invalid header checksum");
+    pub fn is_cgb(&self) -> bool {
+        self.cgb_flag & 0x80 != 0
     }
-
-    // https://gbdev.io/pandocs/The_Cartridge_Header.html#0143--cgb-flag
-    // if hdr.cgb_flag == 0xC0 {
-    //     panic!("Cartridge is CGB only");
-    // }
-
-    Ok(hdr)
 }
