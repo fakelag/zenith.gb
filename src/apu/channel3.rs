@@ -1,3 +1,5 @@
+use crate::GbCtx;
+
 use super::{lengthcounter::LengthCounter, Channel};
 
 const LENGTH_COUNTER_INIT: u16 = 256;
@@ -17,14 +19,17 @@ pub struct Channel3 {
 
     wave_ram: [u8; 16],
     sample: u8,
+
+    ctx: std::rc::Rc<GbCtx>,
 }
 
 impl Channel3 {
-    pub fn new() -> Self {
+    pub fn new(ctx: std::rc::Rc<GbCtx>) -> Self {
         Self {
+            ctx: ctx.clone(),
             freq_timer: 0,
             last_sample_step: 0,
-            length_counter: LengthCounter::new(LENGTH_COUNTER_INIT),
+            length_counter: LengthCounter::new(LENGTH_COUNTER_INIT, ctx),
             sample_index: 0,
             is_enabled: false,
             reg_dac_enable: false,
@@ -44,8 +49,7 @@ impl Channel3 {
         // To avoid this corruption you should stop the wave by writing 0 then $80 to NR30 before triggering it again.
         // The game Duck Tales encounters this issue part way through most songs.
 
-        // @todo CGB: corruption occurs on DMG only
-        if self.freq_timer == 2 && self.is_enabled() {
+        if self.freq_timer == 2 && self.is_enabled() && !self.ctx.cgb {
             let next_byte_index = (self.sample_index / 2) as u8;
 
             if next_byte_index < 4 {
@@ -106,8 +110,7 @@ impl Channel3 {
 
     pub fn write_wave_ram(&mut self, addr: usize, data: u8) {
         if self.is_enabled() {
-            // @todo CGB: self.last_sample_step is irrelevant on CGB. Write to last_sample_index occurs always
-            if self.last_sample_step < 2 {
+            if self.last_sample_step < 2 || self.ctx.cgb {
                 let last_sample_index = if self.sample_index == 0 {
                     31
                 } else {
@@ -144,8 +147,7 @@ impl Channel3 {
 
     pub fn read_wave_ram(&mut self, addr: usize) -> u8 {
         if self.is_enabled() {
-            // @todo CGB: self.last_sample_step is irrelevant on CGB. Read from last_sample_index occurs always
-            if self.last_sample_step < 2 {
+            if self.last_sample_step < 2 || self.ctx.cgb {
                 let last_sample_index = if self.sample_index == 0 {
                     31
                 } else {

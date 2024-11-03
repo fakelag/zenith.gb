@@ -1,13 +1,17 @@
+use crate::GbCtx;
+
 pub struct LengthCounter {
     frame_seq_step: u8,
     initial_count: u16,
     count: u16,
     enabled: bool,
+    ctx: std::rc::Rc<GbCtx>,
 }
 
 impl LengthCounter {
-    pub fn new(initial_count: u16) -> Self {
+    pub fn new(initial_count: u16, ctx: std::rc::Rc<GbCtx>) -> Self {
         Self {
+            ctx,
             frame_seq_step: 0,
             initial_count,
             count: 1,
@@ -86,7 +90,8 @@ impl LengthCounter {
         self.enabled = false;
         self.frame_seq_step = 0;
 
-        // @todo CGB: resets count to initial
-        // self.count = self.initial_count;
+        if self.ctx.cgb {
+            self.count = self.initial_count;
+        }
     }
 }

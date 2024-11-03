@@ -153,8 +153,8 @@ impl SOC {
             ie: 0x0,
             dma: 0xFF,
 
-            apu: apu::APU::new(sound_chan, sync_audio),
-            ppu: ppu::PPU::new(frame_chan, sync_video, ctx),
+            apu: apu::APU::new(sound_chan, sync_audio, ctx.clone()),
+            ppu: ppu::PPU::new(frame_chan, sync_video, ctx.clone()),
             timer: Timer::new(),
             serial: serial::Serial::new(),
 

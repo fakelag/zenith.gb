@@ -747,6 +747,7 @@ mod tests {
             (snapshot_runner,   "tests/roms/rtc3test/rtc3test.2.gb",                submenu(2),     None),
             (snapshot_runner,   "tests/roms/blargg/instr_timing/",                  None,           None),
             (snapshot_runner,   "tests/roms/blargg/dmg_sound/",                     None,           None),
+            (snapshot_runner,   "tests/roms/blargg/cgb_sound/",                     None,           None),
             (snapshot_runner,   "tests/roms/blargg/mem_timing/",                    None,           None),
             (snapshot_runner,   "tests/roms/blargg/mem_timing-2/",                  None,           None),
             (snapshot_runner,   "tests/roms/blargg/interrupt_time/",                None,           None),
