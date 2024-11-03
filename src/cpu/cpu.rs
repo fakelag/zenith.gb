@@ -218,7 +218,7 @@ impl CPU {
         }
 
         let inst = if self.opcode == 0xCB {
-            self.opcode = self.clock_consume_byte_from_pc(soc);
+            self.clock_fetch(soc);
             inst_def::get_instruction_cb(self.opcode)
         } else {
             inst_def::get_instruction(self.opcode)

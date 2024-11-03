@@ -66,3 +66,12 @@ pub const HWR_FF76: u16 = 0xFF76;
 pub const HWR_FF77: u16 = 0xFF77;
 
 pub const HWR_IE: u16 = 0xFFFF;
+
+// @todo CGB: KEY0:
+// KEY0 FF4C CPU mode register
+// Bits 2 and 3
+// CPU mode select
+// 00: CGB mode (Mode used by carts supporting CGB)
+// 01: DMG/MGB mode (Mode used by DMG/MGB-only carts)
+// 10: PGB1 mode (STOP the CPU, with the LCD operated by an external signal)
+// 11: PGB2 mode (CPU still running, with the LCD operated by an external signal)
