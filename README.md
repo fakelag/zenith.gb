@@ -1,24 +1,18 @@
 ## Zenith.gb
 
 <p align="center">
-
-![image 1](img/clr1.png)
-
+    <img src="img/clr1.png" />
 </p>
 
 Zenith is a Nintendo Game Boy emulator and research project written in Rust. Currently it is in a fully playable state including graphics, audio, save states, controller support and even Game Boy Printer functionality through serial cable emulation. It passes all cpu [instruction and timing tests](https://github.com/retrio/gb-test-roms).
 
 ### DMG Screenshots
 
-<p align="center">
-
 |                       |                       |                       |
 | :-------------------: | :-------------------: | :-------------------: |
 | ![image 1](img/4.png) | ![image 2](img/2.png) | ![image 7](img/7.png) |
 | ![image 4](img/1.png) | ![image 5](img/5.png) | ![image 6](img/6.png) |
 | ![image 3](img/3.png) | ![image 8](img/8.png) | ![image 9](img/9.png) |
-
-</p>
 
 ### Keybinds
 
