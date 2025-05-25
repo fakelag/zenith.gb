@@ -2,6 +2,7 @@
 /rom
 /dev
 *.dll
+SDL2.lib
 /tests/snapshots/verify
 /tests/roms/**/*.sym
 /tests/roms/**/*.tmp
